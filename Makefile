@@ -91,10 +91,13 @@ db-sync-grants: ## Run authz_sync_db_grants() to sync PG roles/grants from SSOT
 	@echo "DB grants synced."
 
 db-pgbouncer-config: ## Generate pgbouncer config from SSOT
-	@$(PSQL) -c "SELECT authz_sync_pgbouncer_config('postgres', 5432, 'nexus_authz');"
+	@$(PSQL) -c "SELECT authz_sync_pgbouncer_config('postgres', 5432, 'nexus_data');"
 
 db-pathc-psql: ## Connect as a Path C role (usage: make db-pathc-psql ROLE=nexus_pe_ro PASS=dev_pe_pass)
-	@PGPASSWORD=$(PASS) psql -h localhost -p 5432 -U $(ROLE) -d nexus_authz
+	@PGPASSWORD=$(PASS) psql -h localhost -p 5432 -U $(ROLE) -d nexus_data
+
+db-data-psql: ## Open interactive psql to nexus_data (business DB)
+	$(COMPOSE) exec postgres psql -U nexus_admin -d nexus_data
 
 logs-pgbouncer: ## Tail pgbouncer logs
 	$(COMPOSE) logs -f pgbouncer

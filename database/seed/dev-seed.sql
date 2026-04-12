@@ -665,9 +665,9 @@ INSERT INTO authz_data_source (
     owner_subject, registered_by
 ) VALUES
 ('ds:local',
- 'Local Dev Database',
- 'POC local PostgreSQL — authz tables and business data in same instance',
- 'postgresql', 'localhost', 5432, 'nexus_authz', '{public}',
+ 'Local Business Database',
+ 'nexus_data — business data (lot_status, sales_order) separated from authz policy store',
+ 'postgresql', 'localhost', 5432, 'nexus_data', '{public}',
  'nexus_admin', 'nexus_dev_password',
  'user:sys_admin', 'system');
 

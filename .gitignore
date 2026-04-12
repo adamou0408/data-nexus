@@ -16,8 +16,8 @@ dist/
 build/
 *.egg
 
-# Data files (local)
-data/
+# Data files (local, top-level only)
+/data/
 *.csv
 *.json.local
 

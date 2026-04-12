@@ -44,6 +44,10 @@
 - [x] Data Source Registry: CRUD + test + discover API (`/api/datasources`)
 - [x] Data Source Registry: Dynamic pool management in `db.ts`
 - [x] rls-simulate.ts + pool.ts use dynamic data source pools
+- [x] ARCH-01: Business DB separation (nexus_authz + nexus_data in same PG instance)
+- [x] ARCH-01: Migrations split into `migrations/` (authz) and `migrations/data/` (business)
+- [x] ARCH-01: Seed data split into `seed/` (authz) and `seed/data/` (business)
+- [x] ARCH-01: pgbouncer + pg_hba point pool roles at nexus_data
 
 ### Remaining
 - [ ] AuthZ Admin CRUD pages (subjects, roles, resources, policies editor)

@@ -13,6 +13,8 @@ services:
       - ../../database/seed:/docker-entrypoint-initdb.d/seed:ro
       - ./init-db.sh:/docker-entrypoint-initdb.d/00-init-db.sh:ro
       - ./pg_hba_custom.conf:/var/lib/postgresql/pg_hba.conf:ro
+    # Note: init-db.sh creates nexus_data as second DB in the same instance.
+    # Authz migrations run on nexus_authz, data migrations (migrations/data/) run on nexus_data.
     command: ["postgres", "-c", "hba_file=/var/lib/postgresql/pg_hba.conf"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nexus_admin -d nexus_authz"]
