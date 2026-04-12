@@ -78,10 +78,10 @@ browseRouter.get('/audit-logs', async (req, res) => {
       params.push(subject);
     }
     if (action) {
-      query += ` AND action = $${idx++}`;
+      query += ` AND action_id = $${idx++}`;
       params.push(action);
     }
-    query += ` ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx++}`;
+    query += ` ORDER BY timestamp DESC LIMIT $${idx++} OFFSET $${idx++}`;
     params.push(limit, offset);
     const result = await pool.query(query, params);
     res.json(result.rows);

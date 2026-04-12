@@ -59,30 +59,30 @@ export function AuditTab() {
                   <th className="p-3">Subject</th>
                   <th className="p-3">Action</th>
                   <th className="p-3">Resource</th>
-                  <th className="p-3">Result</th>
-                  <th className="p-3">Details</th>
+                  <th className="p-3">Decision</th>
+                  <th className="p-3">Context</th>
                 </tr>
               </thead>
               <tbody>
                 {logs.map((log, i) => (
                   <tr key={i} className="border-t hover:bg-gray-50">
                     <td className="p-3 text-xs whitespace-nowrap">
-                      {log.created_at ? new Date(String(log.created_at)).toLocaleString() : '-'}
+                      {log.timestamp ? new Date(String(log.timestamp)).toLocaleString() : '-'}
                     </td>
                     <td className="p-3 font-mono text-xs">{String(log.subject_id ?? '-')}</td>
-                    <td className="p-3 text-xs">{String(log.action ?? '-')}</td>
+                    <td className="p-3 text-xs">{String(log.action_id ?? '-')}</td>
                     <td className="p-3 font-mono text-xs">{String(log.resource_id ?? '-')}</td>
                     <td className="p-3">
-                      {log.result === 'allow' ? (
+                      {log.decision === 'allow' ? (
                         <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold">ALLOW</span>
-                      ) : log.result === 'deny' ? (
+                      ) : log.decision === 'deny' ? (
                         <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs font-bold">DENY</span>
                       ) : (
-                        <span className="text-gray-400 text-xs">{String(log.result ?? '-')}</span>
+                        <span className="text-gray-400 text-xs">{String(log.decision ?? '-')}</span>
                       )}
                     </td>
                     <td className="p-3 text-xs text-gray-500 max-w-[300px] truncate">
-                      {log.details ? JSON.stringify(log.details) : '-'}
+                      {log.context ? JSON.stringify(log.context) : '-'}
                     </td>
                   </tr>
                 ))}
