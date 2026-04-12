@@ -94,6 +94,12 @@ export const api = {
   poolAssignmentDelete: (id: number) =>
     request(`/pool/assignments/${id}`, { method: 'DELETE' }),
   poolCredentials: () => request<PoolCredential[]>('/pool/credentials'),
+  poolTables: () => request<{ table_name: string; column_count: string }[]>('/pool/schema'),
+  poolTableSchema: (table: string) =>
+    request<{ table: string; columns: TableColumn[]; sample_data: Record<string, unknown>[] }>(
+      `/pool/schema/${encodeURIComponent(table)}`
+    ),
+  poolFunctions: () => request<SqlFunction[]>('/pool/functions'),
   poolSyncGrants: () => request<{ actions: { action: string; detail: string }[] }>('/pool/sync/grants', { method: 'POST' }),
   poolSyncPgbouncer: () => request<{ config: string }>('/pool/sync/pgbouncer', { method: 'POST' }),
   poolCredentialRotate: (pg_role: string, new_password: string) =>
@@ -133,4 +139,21 @@ export type PoolCredential = {
   is_active: boolean;
   last_rotated: string;
   rotate_interval: string | { days?: number };
+};
+
+export type TableColumn = {
+  column_name: string;
+  data_type: string;
+  is_nullable: string;
+  column_default: string | null;
+  character_maximum_length: number | null;
+  numeric_precision: number | null;
+};
+
+export type SqlFunction = {
+  function_name: string;
+  arguments: string;
+  return_type: string;
+  description: string | null;
+  volatility: string;
 };
