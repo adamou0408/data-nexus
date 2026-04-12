@@ -587,19 +587,19 @@ for (const { action: sql } of grantSqls) {
 
 | 步驟 | 工作項目 | 狀態 | 負責人 | 備註 |
 |------|---------|------|--------|------|
-| Step 0 | 建立 feature branch | ⬜ 未開始 | — | |
-| Step 1 | docker-compose 新增 nexus_data DB | ⬜ 未開始 | — | 建議方案 A（同 instance） |
-| Step 2 | 拆分 init scripts | ⬜ 未開始 | — | |
-| Step 3a | 建立 `database/migrations/data/V001__business_tables.sql` | ⬜ 未開始 | — | V014 內容搬移 |
-| Step 3b | 建立 `database/migrations/data/V002__path_c_rls.sql` | ⬜ 未開始 | — | V019 GRANTs + RLS 部分 |
-| Step 3c | 更新 `database/migrations/authz/V019` | ⬜ 未開始 | — | 僅保留 sync_log 記錄 |
-| Step 4 | 更新 pgbouncer.ini + pg_hba_custom.conf | ⬜ 未開始 | — | |
-| Step 5 | 拆分 `services/authz-api/src/db.ts` | ⬜ 未開始 | — | authzPool + dataPool |
-| Step 6 | 更新 `rls-simulate.ts` 使用雙 pool | ⬜ 未開始 | — | |
-| Step 7 | 更新 `pool.ts` sync grants 使用 dataPool | ⬜ 未開始 | — | Path C 最複雜處 |
-| Step 8 | 環境變數 + .env 更新 | ⬜ 未開始 | — | DATA_DB_NAME 等 |
-| 驗證 | 7.1-7.6 全部通過 | ⬜ 未開始 | — | |
-| 收尾 | 更新 CLAUDE.md、startup guide、docker-compose 說明 | ⬜ 未開始 | — | |
+| Step 0 | 建立 feature branch | ✅ 完成 | — | 直接在 master 實作（POC 階段） |
+| Step 1 | docker-compose 新增 nexus_data DB | ✅ 完成 | — | 方案 A（同 instance，init-db.sh 建第二 DB） |
+| Step 2 | 拆分 init scripts | ✅ 完成 | — | init-db.sh 分別跑 authz + data migrations |
+| Step 3a | 建立 `database/migrations/data/V001__business_tables.sql` | ✅ 完成 | — | V014 內容搬移 |
+| Step 3b | 建立 `database/migrations/data/V002__path_c_rls.sql` | ✅ 完成 | — | V019 GRANTs + RLS 部分 |
+| Step 3c | 更新 `database/migrations/authz/V019` | ⬜ 未開始 | — | 原 V019 保留（backward compat），新部署用 data/V002 |
+| Step 4 | 更新 pgbouncer.ini + pg_hba_custom.conf | ✅ 完成 | — | pool roles 指向 nexus_data |
+| Step 5 | 拆分 `services/authz-api/src/db.ts` | ✅ 完成 | — | 改為 Data Source Registry 動態 pool（超越原設計） |
+| Step 6 | 更新 `rls-simulate.ts` 使用雙 pool | ✅ 完成 | — | 透過 resolveDataSource() 動態切換 |
+| Step 7 | 更新 `pool.ts` sync grants 使用 dataPool | ✅ 完成 | — | pgbouncer config 從 DS registry 讀取連線資訊 |
+| Step 8 | 環境變數 + .env 更新 | ✅ 完成 | — | DS 連線資訊存在 authz_data_source，不需 env |
+| 驗證 | 7.1-7.6 全部通過 | ⬜ 未開始 | — | 需 `make db-reset` 後驗證 |
+| 收尾 | 更新 CLAUDE.md、startup guide、docker-compose 說明 | ✅ 完成 | — | PROGRESS.md 已更新 |
 
 **狀態圖示**：⬜ 未開始　🔄 進行中　✅ 完成　⚠️ 阻塞中
 
