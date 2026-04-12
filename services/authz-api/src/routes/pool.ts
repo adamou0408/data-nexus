@@ -202,68 +202,6 @@ poolRouter.post('/credentials/:pg_role/rotate', async (req, res) => {
   }
 });
 
-// --- Schema & Functions ---
-
-// List columns for a table
-poolRouter.get('/schema/:table', async (req, res) => {
-  const tableName = req.params.table;
-  try {
-    const cols = await pool.query(`
-      SELECT column_name, data_type, is_nullable, column_default,
-             character_maximum_length, numeric_precision
-      FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = $1
-      ORDER BY ordinal_position
-    `, [tableName]);
-    // Also fetch sample data (limit 20)
-    const sample = await pool.query(
-      `SELECT * FROM "${tableName}" LIMIT 20`
-    ).catch(() => ({ rows: [] }));
-    res.json({ table: tableName, columns: cols.rows, sample_data: sample.rows });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-// List all user-accessible tables
-poolRouter.get('/schema', async (_req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT table_name,
-        (SELECT count(*) FROM information_schema.columns c
-         WHERE c.table_schema = 'public' AND c.table_name = t.table_name) AS column_count
-      FROM information_schema.tables t
-      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-      ORDER BY table_name
-    `);
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-// List authz-related SQL functions
-poolRouter.get('/functions', async (_req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT p.proname AS function_name,
-             pg_get_function_arguments(p.oid) AS arguments,
-             pg_get_function_result(p.oid) AS return_type,
-             d.description,
-             CASE p.provolatile WHEN 'i' THEN 'IMMUTABLE' WHEN 's' THEN 'STABLE' ELSE 'VOLATILE' END AS volatility
-      FROM pg_proc p
-      JOIN pg_namespace n ON n.oid = p.pronamespace
-      LEFT JOIN pg_description d ON d.objoid = p.oid
-      WHERE n.nspname = 'public'
-        AND (p.proname LIKE 'authz_%' OR p.proname LIKE '_authz_%' OR p.proname LIKE 'fn_mask_%')
-      ORDER BY p.proname
-    `);
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
 // --- Sync operations ---
 
 // Trigger DB grant sync

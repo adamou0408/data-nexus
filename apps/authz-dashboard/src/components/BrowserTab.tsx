@@ -18,25 +18,19 @@ export function BrowserTab() {
   const [data, setData] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const load = async () => {
+  useEffect(() => {
+    const fetchers = { subjects: api.subjects, roles: api.roles, resources: api.resources, policies: api.policies, actions: api.actions };
     setLoading(true);
-    try {
-      const fetchers = { subjects: api.subjects, roles: api.roles, resources: api.resources, policies: api.policies, actions: api.actions };
-      setData(await fetchers[section]());
-    } catch { /* ignore */ }
-    setLoading(false);
-  };
-
-  useEffect(() => { load(); }, [section]);
+    fetchers[section]().then(setData).catch(() => {}).finally(() => setLoading(false));
+  }, [section]);
 
   return (
     <div className="space-y-6">
       <div className="page-header">
-        <h1 className="page-title">Data Browser</h1>
-        <p className="page-desc">Browse all AuthZ entities — subjects, roles, resources, policies, and actions</p>
+        <h1 className="page-title">Entity Browser</h1>
+        <p className="page-desc">Browse AuthZ entities — subjects, roles, resources, policies, and actions</p>
       </div>
 
-      {/* Section tabs */}
       <div className="flex gap-2 flex-wrap">
         {sections.map(s => (
           <button key={s.id} onClick={() => setSection(s.id)}
@@ -50,7 +44,6 @@ export function BrowserTab() {
         ))}
       </div>
 
-      {/* Data */}
       <div className="card">
         {loading ? (
           <div className="card-body text-center py-12 text-slate-400">Loading...</div>
@@ -211,3 +204,4 @@ function ActionsTable({ data }: { data: Record<string, unknown>[] }) {
     </table>
   );
 }
+

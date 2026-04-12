@@ -10,6 +10,8 @@ import { PoolTab } from './components/PoolTab';
 import { BrowserTab } from './components/BrowserTab';
 import { AuditTab } from './components/AuditTab';
 import { WorkbenchTab } from './components/WorkbenchTab';
+import { TablesTab } from './components/TablesTab';
+import { FunctionsTab } from './components/FunctionsTab';
 
 function AppInner() {
   const [tab, setTab] = useState<TabId>('overview');
@@ -18,7 +20,7 @@ function AppInner() {
   const isAdmin = config?.resolved_roles?.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN') ?? false;
 
   useEffect(() => {
-    if ((tab === 'pool' || tab === 'audit') && !isAdmin) {
+    if ((tab === 'pool' || tab === 'audit' || tab === 'browser') && !isAdmin) {
       setTab('overview');
     }
   }, [isAdmin, tab]);
@@ -29,6 +31,8 @@ function AppInner() {
       {tab === 'resolve' && <ResolveTab />}
       {tab === 'check' && <CheckTab />}
       {tab === 'matrix' && <MatrixTab />}
+      {tab === 'tables' && <TablesTab />}
+      {tab === 'functions' && <FunctionsTab />}
       {tab === 'rls' && <RlsTab />}
       {tab === 'workbench' && <WorkbenchTab />}
       {tab === 'pool' && <PoolTab />}

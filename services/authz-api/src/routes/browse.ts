@@ -64,6 +64,77 @@ browseRouter.get('/actions', async (_req, res) => {
   }
 });
 
+// --- Business Data: Tables & Functions ---
+
+// List business data tables (exclude authz_* internal tables)
+browseRouter.get('/tables', async (_req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT table_name,
+        (SELECT count(*) FROM information_schema.columns c
+         WHERE c.table_schema = 'public' AND c.table_name = t.table_name) AS column_count
+      FROM information_schema.tables t
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        AND table_name NOT LIKE 'authz_%'
+      ORDER BY table_name
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Get schema + sample data for a business table
+browseRouter.get('/tables/:table', async (req, res) => {
+  const tableName = req.params.table;
+  // Block access to authz internal tables
+  if (tableName.startsWith('authz_')) {
+    return res.status(403).json({ error: 'Cannot browse internal authz tables' });
+  }
+  try {
+    const cols = await pool.query(`
+      SELECT column_name, data_type, is_nullable, column_default,
+             character_maximum_length, numeric_precision
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = $1
+      ORDER BY ordinal_position
+    `, [tableName]);
+    if (cols.rows.length === 0) {
+      return res.status(404).json({ error: 'Table not found' });
+    }
+    const sample = await pool.query(
+      `SELECT * FROM "${tableName}" LIMIT 20`
+    ).catch(() => ({ rows: [] }));
+    res.json({ table: tableName, columns: cols.rows, sample_data: sample.rows });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// List business-facing SQL functions (mask functions, excludes internal _authz_* helpers)
+browseRouter.get('/functions', async (_req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT p.proname AS function_name,
+             pg_get_function_arguments(p.oid) AS arguments,
+             pg_get_function_result(p.oid) AS return_type,
+             d.description,
+             CASE p.provolatile WHEN 'i' THEN 'IMMUTABLE' WHEN 's' THEN 'STABLE' ELSE 'VOLATILE' END AS volatility
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      LEFT JOIN pg_description d ON d.objoid = p.oid
+      WHERE n.nspname = 'public'
+        AND (p.proname LIKE 'fn_mask_%'
+             OR p.proname IN ('authz_check', 'authz_filter', 'authz_resolve',
+                              'authz_resolve_web_acl', 'authz_check_from_cache'))
+      ORDER BY p.proname
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 browseRouter.get('/audit-logs', async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit as string) || 50, 500);
   const offset = parseInt(req.query.offset as string) || 0;

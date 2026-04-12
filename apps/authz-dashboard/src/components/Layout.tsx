@@ -4,13 +4,13 @@ import {
   Shield, Search, Grid3X3, Database, Table2,
   Server, List, FileText, LayoutDashboard,
   ChevronDown, LogOut, Loader2, User,
-  Menu, X,
+  Menu, X, Code2, Wrench,
 } from 'lucide-react';
 
 export type TabId =
   | 'overview' | 'resolve' | 'check' | 'matrix'
-  | 'rls' | 'workbench'
-  | 'pool' | 'browser' | 'audit';
+  | 'tables' | 'functions' | 'rls' | 'workbench'
+  | 'browser' | 'pool' | 'audit';
 
 type NavItem = {
   id: TabId;
@@ -32,7 +32,7 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: 'AuthZ Tools',
+    label: 'My Access',
     items: [
       { id: 'resolve', label: 'Permission Resolver', icon: <Shield size={18} /> },
       { id: 'check', label: 'Permission Checker', icon: <Search size={18} /> },
@@ -40,17 +40,19 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: 'Data & Security',
+    label: 'Data Explorer',
     items: [
+      { id: 'tables', label: 'Tables & Schema', icon: <Table2 size={18} /> },
+      { id: 'functions', label: 'SQL Functions', icon: <Code2 size={18} /> },
       { id: 'rls', label: 'RLS Simulator', icon: <Database size={18} /> },
-      { id: 'workbench', label: 'Data Workbench', icon: <Table2 size={18} /> },
+      { id: 'workbench', label: 'Data Workbench', icon: <Wrench size={18} /> },
     ],
   },
   {
     label: 'Administration',
     items: [
+      { id: 'browser', label: 'Entity Browser', icon: <List size={18} />, adminOnly: true },
       { id: 'pool', label: 'Connection Pools', icon: <Server size={18} />, adminOnly: true },
-      { id: 'browser', label: 'Data Browser', icon: <List size={18} /> },
       { id: 'audit', label: 'Audit Log', icon: <FileText size={18} />, adminOnly: true },
     ],
   },

@@ -1,14 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { api, PoolProfile, PoolAssignment, PoolCredential, TableColumn, SqlFunction } from '../api';
-import { Server, Key, RefreshCw, Play, ChevronRight, Plus, Pencil, Trash2, X, RotateCw, Table2, Code2 } from 'lucide-react';
+import { api, PoolProfile, PoolAssignment, PoolCredential } from '../api';
+import { Server, Key, RefreshCw, Play, ChevronRight, Plus, Pencil, Trash2, X, RotateCw } from 'lucide-react';
 
-type Section = 'profiles' | 'credentials' | 'tables' | 'functions' | 'sync';
+type Section = 'profiles' | 'credentials' | 'sync';
 
 const sectionDefs: { id: Section; label: string; icon: React.ReactNode }[] = [
   { id: 'profiles',    label: 'Pool Profiles', icon: <Server size={14} /> },
   { id: 'credentials', label: 'Credentials',   icon: <Key size={14} /> },
-  { id: 'tables',      label: 'Tables',        icon: <Table2 size={14} /> },
-  { id: 'functions',   label: 'Functions',     icon: <Code2 size={14} /> },
   { id: 'sync',        label: 'Sync Ops',      icon: <RefreshCw size={14} /> },
 ];
 
@@ -37,8 +35,6 @@ export function PoolTab() {
 
       {section === 'profiles' && <ProfilesSection />}
       {section === 'credentials' && <CredentialsSection />}
-      {section === 'tables' && <TablesSection />}
-      {section === 'functions' && <FunctionsSection />}
       {section === 'sync' && <SyncSection />}
     </div>
   );
@@ -503,225 +499,6 @@ function CredentialsSection() {
                         <RotateCw size={12} /> Rotate
                       </button>
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ── Tables Section ── */
-
-function TablesSection() {
-  const [tables, setTables] = useState<{ table_name: string; column_count: string }[]>([]);
-  const [selectedTable, setSelectedTable] = useState<string | null>(null);
-  const [columns, setColumns] = useState<TableColumn[]>([]);
-  const [sampleData, setSampleData] = useState<Record<string, unknown>[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [detailLoading, setDetailLoading] = useState(false);
-
-  useEffect(() => {
-    setLoading(true);
-    api.poolTables().then(setTables).catch(() => {}).finally(() => setLoading(false));
-  }, []);
-
-  const loadSchema = async (table: string) => {
-    setSelectedTable(table);
-    setDetailLoading(true);
-    try {
-      const result = await api.poolTableSchema(table);
-      setColumns(result.columns);
-      setSampleData(result.sample_data);
-    } catch { setColumns([]); setSampleData([]); }
-    finally { setDetailLoading(false); }
-  };
-
-  const typeColor = (dt: string) => {
-    if (dt.includes('int') || dt === 'numeric') return 'badge-blue';
-    if (dt.includes('char') || dt === 'text') return 'badge-green';
-    if (dt.includes('timestamp') || dt === 'date') return 'badge-purple';
-    if (dt === 'boolean') return 'badge-amber';
-    if (dt === 'jsonb' || dt === 'json') return 'badge-indigo';
-    return 'badge-slate';
-  };
-
-  return (
-    <div className="space-y-4">
-      {/* Table List */}
-      <div className="card">
-        <div className="card-header">
-          <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
-            <Table2 size={16} className="text-blue-600" />
-            Database Tables
-          </h3>
-          <span className="text-xs text-slate-400">{tables.length} tables</span>
-        </div>
-        {loading ? (
-          <div className="card-body text-center py-8 text-slate-400">Loading...</div>
-        ) : (
-          <div className="card-body">
-            <div className="flex gap-2 flex-wrap">
-              {tables.map(t => (
-                <button key={t.table_name} onClick={() => loadSchema(t.table_name)}
-                  className={`btn btn-sm font-mono text-xs gap-1 ${
-                    selectedTable === t.table_name
-                      ? 'bg-blue-600 text-white hover:bg-blue-700'
-                      : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-50'
-                  }`}>
-                  {t.table_name}
-                  <span className={`text-[10px] ${selectedTable === t.table_name ? 'text-blue-200' : 'text-slate-400'}`}>
-                    ({t.column_count})
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Column Schema */}
-      {selectedTable && (
-        <div className="card">
-          <div className="card-header">
-            <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
-              Columns
-              <ChevronRight size={14} className="text-slate-400" />
-              <span className="code">{selectedTable}</span>
-            </h3>
-          </div>
-          {detailLoading ? (
-            <div className="card-body text-center py-8 text-slate-400">Loading schema...</div>
-          ) : (
-            <div className="table-container">
-              <table className="table">
-                <thead>
-                  <tr><th>Column</th><th>Type</th><th>Nullable</th><th>Default</th></tr>
-                </thead>
-                <tbody>
-                  {columns.map(c => (
-                    <tr key={c.column_name}>
-                      <td className="font-mono text-xs font-bold text-slate-900">{c.column_name}</td>
-                      <td>
-                        <span className={`badge text-[10px] ${typeColor(c.data_type)}`}>
-                          {c.data_type}
-                          {c.character_maximum_length ? `(${c.character_maximum_length})` : ''}
-                        </span>
-                      </td>
-                      <td className="text-xs">
-                        {c.is_nullable === 'YES'
-                          ? <span className="text-slate-400">NULL</span>
-                          : <span className="font-semibold text-slate-700">NOT NULL</span>}
-                      </td>
-                      <td className="font-mono text-xs text-slate-400 max-w-[200px] truncate">
-                        {c.column_default ?? '-'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Sample Data */}
-      {selectedTable && sampleData.length > 0 && !detailLoading && (
-        <div className="card">
-          <div className="card-header">
-            <h3 className="text-sm font-semibold text-slate-900">
-              Sample Data <span className="text-slate-400 font-normal text-xs">({sampleData.length} rows)</span>
-            </h3>
-          </div>
-          <div className="table-container max-h-[50vh]">
-            <table className="table">
-              <thead>
-                <tr>
-                  {Object.keys(sampleData[0]).map(k => (
-                    <th key={k} className="font-mono text-[10px]">{k}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sampleData.map((row, i) => (
-                  <tr key={i}>
-                    {Object.values(row).map((v, j) => (
-                      <td key={j} className="text-xs text-slate-600 max-w-[180px] truncate">
-                        {v === null ? <span className="text-slate-300 italic">null</span>
-                          : typeof v === 'object' ? JSON.stringify(v)
-                          : String(v)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ── Functions Section ── */
-
-function FunctionsSection() {
-  const [functions, setFunctions] = useState<SqlFunction[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    setLoading(true);
-    api.poolFunctions().then(setFunctions).catch(() => {}).finally(() => setLoading(false));
-  }, []);
-
-  const nameColor = (name: string) => {
-    if (name.startsWith('fn_mask_')) return 'badge-amber';
-    if (name.startsWith('_authz_')) return 'badge-slate';
-    return 'badge-blue';
-  };
-
-  return (
-    <div className="card">
-      <div className="card-header">
-        <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
-          <Code2 size={16} className="text-blue-600" />
-          SQL Functions
-        </h3>
-        <span className="text-xs text-slate-400">{functions.length} functions</span>
-      </div>
-      {loading ? (
-        <div className="card-body text-center py-8 text-slate-400">Loading...</div>
-      ) : (
-        <div className="table-container max-h-[70vh]">
-          <table className="table">
-            <thead>
-              <tr><th>Function</th><th>Arguments</th><th>Returns</th><th>Volatility</th><th>Description</th></tr>
-            </thead>
-            <tbody>
-              {functions.map(f => (
-                <tr key={f.function_name}>
-                  <td>
-                    <span className={`badge text-[10px] ${nameColor(f.function_name)}`}>
-                      {f.function_name}
-                    </span>
-                  </td>
-                  <td className="font-mono text-[11px] text-slate-600 max-w-[300px]">
-                    {f.arguments || '-'}
-                  </td>
-                  <td className="font-mono text-xs text-slate-500">{f.return_type}</td>
-                  <td>
-                    <span className={`badge text-[10px] ${
-                      f.volatility === 'STABLE' ? 'badge-green' :
-                      f.volatility === 'IMMUTABLE' ? 'badge-blue' : 'badge-slate'
-                    }`}>
-                      {f.volatility}
-                    </span>
-                  </td>
-                  <td className="text-xs text-slate-400 max-w-[200px] truncate">
-                    {f.description ?? '-'}
                   </td>
                 </tr>
               ))}
