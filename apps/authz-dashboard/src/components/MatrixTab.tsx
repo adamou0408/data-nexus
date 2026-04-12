@@ -274,7 +274,7 @@ function RoleDetailView({ role, data, permMap, groupedResources, onBack }: {
                       <div className="font-medium text-sm text-slate-900">{r.display_name}</div>
                       <div className="font-mono text-[10px] text-slate-400 mt-0.5">{r.resource_id}</div>
                       <div className="flex gap-1.5 mt-2 flex-wrap">
-                        {perms.map(p => (
+                        {perms.map((p: { action: string; effect: string }) => (
                           <span key={p.action}
                             className={`badge text-[10px] ${p.effect === 'allow' ? 'badge-green' : 'badge-red'}`}>
                             {p.action}
