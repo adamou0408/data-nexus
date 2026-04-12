@@ -199,25 +199,64 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
                   </div>
                 </div>
 
-                {/* L0 preview (top 6) */}
-                <div>
-                  <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                    Functional Access (L0)
+                {/* My Access Card (W-USER-02) */}
+                <div className="space-y-3">
+                  {/* L0 grouped by resource type */}
+                  <div>
+                    <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                      Accessible Resources
+                    </div>
+                    {(() => {
+                      const groups: Record<string, { resource: string; actions: string[] }[]> = {};
+                      for (const p of config.L0_functional) {
+                        const type = p.resource.split(':')[0] || 'other';
+                        if (!groups[type]) groups[type] = [];
+                        const existing = groups[type].find(g => g.resource === p.resource);
+                        if (existing) { existing.actions.push(p.action); }
+                        else { groups[type].push({ resource: p.resource, actions: [p.action] }); }
+                      }
+                      const typeLabels: Record<string, string> = { module: 'Modules', table: 'Tables', column: 'Columns', web_api: 'APIs', web_page: 'Pages' };
+                      return Object.entries(groups).slice(0, 4).map(([type, items]) => (
+                        <div key={type} className="mb-2">
+                          <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">{typeLabels[type] || type}</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {items.slice(0, 6).map((item, i) => (
+                              <div key={i} className="inline-flex items-center gap-1 bg-emerald-50 border border-emerald-200 rounded px-2 py-0.5">
+                                <span className="text-[10px] text-slate-700 font-mono">{item.resource.split(':').pop()}</span>
+                                <span className="text-[9px] text-emerald-600">{item.actions.join('/')}</span>
+                              </div>
+                            ))}
+                            {items.length > 6 && <span className="text-[10px] text-slate-400">+{items.length - 6}</span>}
+                          </div>
+                        </div>
+                      ));
+                    })()}
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {config.L0_functional.slice(0, 8).map((p, i) => (
-                      <div key={i} className="inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 rounded-md px-2.5 py-1">
-                        <span className="badge badge-green text-[10px]">{p.action}</span>
-                        <span className="text-xs text-slate-700 font-mono">{p.resource}</span>
+
+                  {/* L1 data scope summary */}
+                  {Object.keys(config.L1_data_scope).length > 0 && (
+                    <div>
+                      <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                        Data Scope Restrictions
                       </div>
-                    ))}
-                    {config.L0_functional.length > 8 && (
-                      <button onClick={() => onNavigate('resolve')}
-                        className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
-                        +{config.L0_functional.length - 8} more <ArrowRight size={12} />
-                      </button>
-                    )}
-                  </div>
+                      <div className="space-y-1">
+                        {Object.entries(config.L1_data_scope).slice(0, 4).map(([name, policy]: [string, any]) => (
+                          <div key={name} className="flex items-center gap-2 text-xs">
+                            <Eye size={12} className="text-amber-500 shrink-0" />
+                            <span className="font-medium text-slate-700">{name}</span>
+                            {policy?.rls_expression && (
+                              <span className="text-slate-400 font-mono text-[10px] truncate max-w-[200px]">{policy.rls_expression}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <button onClick={() => onNavigate('resolve')}
+                    className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                    View full L0-L3 details <ArrowRight size={12} />
+                  </button>
                 </div>
               </div>
             )}

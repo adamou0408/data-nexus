@@ -362,6 +362,10 @@ function ProfilesSection() {
   // Assignment form
   const [showAssignForm, setShowAssignForm] = useState(false);
   const [newSubjectId, setNewSubjectId] = useState('');
+  const [subjectOptions, setSubjectOptions] = useState<{ subject_id: string; display_name: string }[]>([]);
+
+  // W-DBA-03: Credential prompt after profile creation
+  const [credentialPrompt, setCredentialPrompt] = useState('');
 
   const loadProfiles = useCallback(async () => {
     setLoading(true);
@@ -372,6 +376,9 @@ function ProfilesSection() {
   }, []);
 
   useEffect(() => { loadProfiles(); }, [loadProfiles]);
+  useEffect(() => {
+    api.subjects().then((s: any[]) => setSubjectOptions(s.map(x => ({ subject_id: x.subject_id, display_name: x.display_name })))).catch(() => {});
+  }, []);
 
   const loadAssignments = async (profileId: string) => {
     setSelected(profileId);
@@ -389,6 +396,9 @@ function ProfilesSection() {
       }
       setShowForm(false); setEditingProfile(null);
       await loadProfiles();
+      if (isCreate) {
+        setCredentialPrompt(`Profile "${form.profile_id}" created. Please set up initial credentials for PG role "${form.pg_role}" in the Credentials section.`);
+      }
     } catch (e) {
       setFormError(e instanceof Error ? e.message : 'Save failed');
     } finally { setSaving(false); }
@@ -444,6 +454,15 @@ function ProfilesSection() {
           saving={saving}
           error={formError}
         />
+      )}
+
+      {/* W-DBA-03: Credential setup prompt after profile creation */}
+      {credentialPrompt && (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 flex items-start gap-2">
+          <Key size={14} className="text-amber-600 mt-0.5 shrink-0" />
+          <div className="flex-1 text-sm text-amber-800">{credentialPrompt}</div>
+          <button onClick={() => setCredentialPrompt('')} className="text-amber-400 hover:text-amber-600"><X size={14} /></button>
+        </div>
       )}
 
       {/* Profiles Table */}
@@ -527,10 +546,13 @@ function ProfilesSection() {
             {showAssignForm && (
               <div className="flex gap-2 items-end mb-4 pb-4 border-b border-slate-100">
                 <div className="flex-1">
-                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Subject ID</label>
-                  <input value={newSubjectId} onChange={e => setNewSubjectId(e.target.value)}
-                    placeholder="user:wang_pe" className="input font-mono"
-                    onKeyDown={e => e.key === 'Enter' && handleAssign()} />
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Subject</label>
+                  <select value={newSubjectId} onChange={e => setNewSubjectId(e.target.value)} className="select font-mono text-xs">
+                    <option value="">-- Select subject --</option>
+                    {subjectOptions.map(s => (
+                      <option key={s.subject_id} value={s.subject_id}>{s.subject_id} — {s.display_name}</option>
+                    ))}
+                  </select>
                 </div>
                 <button onClick={handleAssign} disabled={!newSubjectId.trim()} className="btn-primary btn-sm">Assign</button>
                 <button onClick={() => setShowAssignForm(false)} className="btn-secondary btn-sm">Cancel</button>

@@ -667,9 +667,19 @@ INSERT INTO authz_data_source (
 ('ds:local',
  'Local Business Database',
  'nexus_data — business data (lot_status, sales_order) separated from authz policy store',
- 'postgresql', 'localhost', 5432, 'nexus_data', '{public}',
+ 'postgresql', 'postgres', 5432, 'nexus_data', '{public}',
  'nexus_admin', 'nexus_dev_password',
  'user:sys_admin', 'system');
 
 -- Link existing pool profiles to the local data source
 UPDATE authz_db_pool_profile SET data_source_id = 'ds:local';
+
+-- Tag business table/column resources with data_source_id
+UPDATE authz_resource SET attributes = attributes || '{"data_source_id": "ds:local"}'::jsonb
+WHERE resource_type IN ('table', 'column')
+  AND (resource_id LIKE 'table:lot_status%'
+    OR resource_id LIKE 'column:lot_status%'
+    OR resource_id LIKE 'table:sales_order%'
+    OR resource_id LIKE 'column:sales_order%'
+    OR resource_id LIKE 'table:price_book%'
+    OR resource_id LIKE 'column:price_book%');

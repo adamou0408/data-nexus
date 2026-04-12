@@ -54,6 +54,12 @@
 - [x] W-USER-01: WorkbenchTab row statistics + denied column tooltip
 - [x] Phase 6: PoolTab Data Sources section (register, test, discover)
 - [x] Phase 7: MatrixTab data source filter dropdown
+- [x] W-USER-02: OverviewTab My Access Card (L0 grouped by type + L1 scope summary)
+- [x] W-DBA-03: Profile create → credential setup prompt
+- [x] W-IT-02: Assignment subject dropdown (replaces freetext input)
+- [x] W-IT-03/04, W-DBA-04: Already implemented via action-items API
+- [x] Business DB: resource attributes tagged with data_source_id
+- [x] Business DB: ds:local host corrected for Docker networking
 
 ### Remaining
 - [ ] AuthZ Admin CRUD pages (subjects, roles, resources, policies editor)
