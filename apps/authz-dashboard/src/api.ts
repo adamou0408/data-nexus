@@ -45,4 +45,67 @@ export const api = {
   resources: () => request<Record<string, unknown>[]>('/browse/resources'),
   policies: () => request<Record<string, unknown>[]>('/browse/policies'),
   actions: () => request<Record<string, unknown>[]>('/browse/actions'),
+  auditLogs: (params?: { subject?: string; action?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.subject) qs.set('subject', params.subject);
+    if (params?.action) qs.set('action', params.action);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.offset) qs.set('offset', String(params.offset));
+    return request<Record<string, unknown>[]>(`/browse/audit-logs?${qs}`);
+  },
+
+  // Path B: Web ACL
+  resolveWebAcl: (user_id: string, groups: string[]) =>
+    request('/resolve/web-acl', { method: 'POST', body: JSON.stringify({ user_id, groups }) }),
+
+  // Path C: Pool management
+  poolProfiles: () => request<PoolProfile[]>('/pool/profiles'),
+  poolProfile: (id: string) => request<PoolProfile>(`/pool/profiles/${encodeURIComponent(id)}`),
+  poolProfileCreate: (data: Partial<PoolProfile>) =>
+    request<PoolProfile>('/pool/profiles', { method: 'POST', body: JSON.stringify(data) }),
+  poolProfileUpdate: (id: string, data: Partial<PoolProfile>) =>
+    request<PoolProfile>(`/pool/profiles/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  poolProfileDelete: (id: string) =>
+    request(`/pool/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  poolAssignments: (profileId: string) =>
+    request<PoolAssignment[]>(`/pool/profiles/${encodeURIComponent(profileId)}/assignments`),
+  poolAssignmentCreate: (data: { subject_id: string; profile_id: string }) =>
+    request<PoolAssignment>('/pool/assignments', { method: 'POST', body: JSON.stringify(data) }),
+  poolAssignmentDelete: (id: number) =>
+    request(`/pool/assignments/${id}`, { method: 'DELETE' }),
+  poolCredentials: () => request<PoolCredential[]>('/pool/credentials'),
+  poolSyncGrants: () => request<{ actions: { action: string; detail: string }[] }>('/pool/sync/grants', { method: 'POST' }),
+  poolSyncPgbouncer: () => request<{ config: string }>('/pool/sync/pgbouncer', { method: 'POST' }),
+};
+
+export type PoolProfile = {
+  profile_id: string;
+  pg_role: string;
+  allowed_schemas: string[];
+  allowed_tables: string[] | null;
+  denied_columns: Record<string, string[]> | null;
+  connection_mode: 'readonly' | 'readwrite' | 'admin';
+  max_connections: number;
+  ip_whitelist: string[] | null;
+  valid_hours: string | null;
+  rls_applies: boolean;
+  description: string | null;
+  is_active: boolean;
+  assignment_count?: string;
+};
+
+export type PoolAssignment = {
+  id: number;
+  subject_id: string;
+  profile_id: string;
+  subject_name: string;
+  granted_by: string;
+  is_active: boolean;
+};
+
+export type PoolCredential = {
+  pg_role: string;
+  is_active: boolean;
+  last_rotated: string;
+  rotate_interval: string;
 };

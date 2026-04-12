@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { api } from '../api';
 import { JsonView } from './JsonView';
 
-const TEST_USERS = [
+const TEST_USERS: { id: string; label: string; groups: string[]; attrs: Record<string, string> }[] = [
   { id: 'wang_pe',      label: 'Wang (PE-SSD)',       groups: ['PE_SSD'],   attrs: { product_line: 'SSD', site: 'HQ' } },
   { id: 'chen_pe',      label: 'Chen (PE-eMMC)',      groups: ['PE_EMMC'],  attrs: { product_line: 'eMMC', site: 'HQ' } },
   { id: 'lin_pm',       label: 'Lin (PM-SSD)',        groups: ['PM_SSD'],   attrs: { product_line: 'SSD' } },
@@ -153,8 +153,8 @@ export function ResolveTab() {
         </div>
       )}
 
-      {r && r.error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-lg">{String(r.error)}</div>
+      {'error' in (r ?? {}) && (
+        <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-lg">{String(r!.error)}</div>
       )}
 
       {r && <JsonView data={r} />}

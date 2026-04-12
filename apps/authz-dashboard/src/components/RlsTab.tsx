@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api';
 
-const TEST_USERS = [
+const TEST_USERS: { id: string; label: string; groups: string[]; attrs: Record<string, string> }[] = [
   { id: 'wang_pe',      label: 'Wang PE-SSD (SSD only)',    groups: ['PE_SSD'],      attrs: { product_line: 'SSD', site: 'HQ' } },
   { id: 'chen_pe',      label: 'Chen PE-eMMC (eMMC only)',  groups: ['PE_EMMC'],     attrs: { product_line: 'eMMC', site: 'HQ' } },
   { id: 'lin_pm',       label: 'Lin PM-SSD (SSD only)',     groups: ['PM_SSD'],      attrs: { product_line: 'SSD' } },
@@ -15,7 +15,7 @@ const TEST_USERS = [
   { id: 'yang_finance', label: 'Yang Finance (all data)',   groups: ['FINANCE_TEAM'],attrs: {} },
   { id: 'chang_vp',     label: 'Chang VP (all data)',       groups: ['VP_OFFICE'],   attrs: {} },
   { id: 'tsai_bi',      label: 'Tsai BI (all data)',        groups: ['BI_TEAM'],     attrs: {} },
-  { id: 'sys_admin',    label: 'SysAdmin (all data)',       groups: [] as string[],  attrs: {} },
+  { id: 'sys_admin',    label: 'SysAdmin (all data)',       groups: [],              attrs: {} },
 ];
 
 const TABLES = [

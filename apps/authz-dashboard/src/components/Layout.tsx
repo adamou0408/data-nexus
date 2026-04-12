@@ -5,7 +5,9 @@ const tabs = [
   { id: 'check', label: 'Permission Checker' },
   { id: 'matrix', label: 'Permission Matrix' },
   { id: 'rls', label: 'RLS Simulator' },
+  { id: 'pool', label: 'Pool Management' },
   { id: 'browser', label: 'Data Browser' },
+  { id: 'audit', label: 'Audit Log' },
 ] as const;
 
 export type TabId = (typeof tabs)[number]['id'];
