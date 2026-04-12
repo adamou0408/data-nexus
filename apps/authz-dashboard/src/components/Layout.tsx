@@ -35,7 +35,6 @@ const navGroups: NavGroup[] = [
     label: 'My Access',
     items: [
       { id: 'resolve', label: 'Permission Resolver', icon: <Shield size={18} /> },
-      { id: 'check', label: 'Permission Checker', icon: <Search size={18} /> },
       { id: 'matrix', label: 'Permission Matrix', icon: <Grid3X3 size={18} /> },
     ],
   },
@@ -43,9 +42,15 @@ const navGroups: NavGroup[] = [
     label: 'Data Explorer',
     items: [
       { id: 'tables', label: 'Tables & Schema', icon: <Table2 size={18} /> },
-      { id: 'functions', label: 'SQL Functions', icon: <Code2 size={18} /> },
-      { id: 'rls', label: 'RLS Simulator', icon: <Database size={18} /> },
       { id: 'workbench', label: 'Data Workbench', icon: <Wrench size={18} /> },
+    ],
+  },
+  {
+    label: 'AuthZ Tools',
+    items: [
+      { id: 'check', label: 'Permission Checker', icon: <Search size={18} />, adminOnly: true },
+      { id: 'rls', label: 'RLS Simulator', icon: <Database size={18} />, adminOnly: true },
+      { id: 'functions', label: 'SQL Functions', icon: <Code2 size={18} />, adminOnly: true },
     ],
   },
   {

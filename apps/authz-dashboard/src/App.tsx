@@ -20,7 +20,8 @@ function AppInner() {
   const isAdmin = config?.resolved_roles?.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN') ?? false;
 
   useEffect(() => {
-    if ((tab === 'pool' || tab === 'audit' || tab === 'browser') && !isAdmin) {
+    const adminTabs: TabId[] = ['pool', 'audit', 'browser', 'check', 'rls', 'functions'];
+    if (adminTabs.includes(tab) && !isAdmin) {
       setTab('overview');
     }
   }, [isAdmin, tab]);
