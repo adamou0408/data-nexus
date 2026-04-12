@@ -1,6 +1,11 @@
-import { Router } from 'express';
+import { Router, Request } from 'express';
 import { Pool } from 'pg';
 import { pool as authzPool, evictDataSourcePool } from '../db';
+import { audit } from '../audit';
+
+function getUserId(req: Request): string {
+  return (req as any).authzUser?.user_id || 'unknown';
+}
 
 export const datasourceRouter = Router();
 
@@ -90,6 +95,7 @@ datasourceRouter.post('/', async (req, res) => {
       owner_subject, registered_by,
     ]);
 
+    audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_register', resource_id: source_id, decision: 'allow', context: { host, port, database_name } });
     res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -131,9 +137,8 @@ datasourceRouter.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Data source not found' });
     }
 
-    // Evict cached pool so next request uses updated config
     evictDataSourcePool(req.params.id);
-
+    audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_update', resource_id: req.params.id, decision: 'allow' });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -152,6 +157,7 @@ datasourceRouter.delete('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Data source not found' });
     }
     evictDataSourcePool(req.params.id);
+    audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_deactivate', resource_id: req.params.id, decision: 'allow' });
     res.json({ deactivated: req.params.id });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -293,6 +299,8 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
         'UPDATE authz_data_source SET last_synced_at = now() WHERE source_id = $1',
         [ds.source_id]
       );
+
+      audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_discover', resource_id: ds.source_id, decision: 'allow', context: { tables_found: tables.length, resources_created: created.length } });
 
       res.json({
         source_id: ds.source_id,
