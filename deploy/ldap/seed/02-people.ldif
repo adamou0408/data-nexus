@@ -1,0 +1,295 @@
+# ============================================================
+# Phison Data Nexus — LDAP People (18 users + 1 service account)
+# Aligned with database/seed/dev-seed.sql authz_subject entries
+# ============================================================
+
+# --- PE Engineers ---
+
+dn: uid=wang_pe,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: wang_pe
+cn: Wang (PE-SSD)
+sn: Wang
+givenName: PE-SSD Engineer
+mail: wang_pe@phison.com
+employeeNumber: P2024001
+departmentNumber: PE
+title: Product Engineer
+userPassword: dev123
+
+dn: uid=chen_pe,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: chen_pe
+cn: Chen (PE-eMMC)
+sn: Chen
+givenName: PE-eMMC Engineer
+mail: chen_pe@phison.com
+employeeNumber: P2024002
+departmentNumber: PE
+title: Product Engineer
+userPassword: dev123
+
+dn: uid=su_pe,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: su_pe
+cn: Su (PE-SD)
+sn: Su
+givenName: PE-SD Engineer
+mail: su_pe@phison.com
+employeeNumber: P2024003
+departmentNumber: PE
+title: Product Engineer
+userPassword: dev123
+
+# --- PM Managers ---
+
+dn: uid=lin_pm,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: lin_pm
+cn: Lin (PM-SSD)
+sn: Lin
+givenName: PM-SSD Manager
+mail: lin_pm@phison.com
+employeeNumber: P2024010
+departmentNumber: PM
+title: Product Manager
+userPassword: dev123
+
+dn: uid=kuo_pm,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: kuo_pm
+cn: Kuo (PM-eMMC)
+sn: Kuo
+givenName: PM-eMMC Manager
+mail: kuo_pm@phison.com
+employeeNumber: P2024011
+departmentNumber: PM
+title: Product Manager
+userPassword: dev123
+
+# --- QA ---
+
+dn: uid=huang_qa,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: huang_qa
+cn: Huang (QA)
+sn: Huang
+givenName: QA Engineer
+mail: huang_qa@phison.com
+employeeNumber: P2024020
+departmentNumber: QA
+title: QA Engineer
+userPassword: dev123
+
+# --- Sales ---
+
+dn: uid=lee_sales,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: lee_sales
+cn: Lee (Sales-TW)
+sn: Lee
+givenName: Sales Taiwan
+mail: lee_sales@phison.com
+employeeNumber: P2024030
+departmentNumber: SALES
+title: Sales Representative
+userPassword: dev123
+
+dn: uid=zhang_sales,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: zhang_sales
+cn: Zhang (Sales-CN)
+sn: Zhang
+givenName: Sales China
+mail: zhang_sales@phison.com
+employeeNumber: P2024031
+departmentNumber: SALES
+title: Sales Representative
+userPassword: dev123
+
+dn: uid=smith_sales,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: smith_sales
+cn: Smith (Sales-US)
+sn: Smith
+givenName: Sales US
+mail: smith_sales@phison.com
+employeeNumber: P2024032
+departmentNumber: SALES
+title: Sales Representative
+userPassword: dev123
+
+# --- FAE ---
+
+dn: uid=wu_fae,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: wu_fae
+cn: Wu (FAE-TW)
+sn: Wu
+givenName: FAE Taiwan
+mail: wu_fae@phison.com
+employeeNumber: P2024040
+departmentNumber: FAE
+title: Field Application Engineer
+userPassword: dev123
+
+dn: uid=zhou_fae,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: zhou_fae
+cn: Zhou (FAE-CN)
+sn: Zhou
+givenName: FAE China
+mail: zhou_fae@phison.com
+employeeNumber: P2024041
+departmentNumber: FAE
+title: Field Application Engineer
+userPassword: dev123
+
+# --- R&D / Firmware ---
+
+dn: uid=liu_fw,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: liu_fw
+cn: Liu (FW Engineer)
+sn: Liu
+givenName: FW Engineer
+mail: liu_fw@phison.com
+employeeNumber: P2024050
+departmentNumber: RD
+title: Firmware Engineer
+userPassword: dev123
+
+dn: uid=tseng_rd,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: tseng_rd
+cn: Tseng (IC Design)
+sn: Tseng
+givenName: IC Designer
+mail: tseng_rd@phison.com
+employeeNumber: P2024051
+departmentNumber: RD
+title: IC Design Engineer
+userPassword: dev123
+
+# --- OP ---
+
+dn: uid=hsu_op,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: hsu_op
+cn: Hsu (OP-SSD Line)
+sn: Hsu
+givenName: SSD Operator
+mail: hsu_op@phison.com
+employeeNumber: P2024060
+departmentNumber: OP
+title: Production Operator
+userPassword: dev123
+
+# --- BI ---
+
+dn: uid=tsai_bi,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: tsai_bi
+cn: Tsai (BI Analyst)
+sn: Tsai
+givenName: BI Analyst
+mail: tsai_bi@phison.com
+employeeNumber: P2024070
+departmentNumber: BI
+title: BI Analyst
+userPassword: dev123
+
+# --- Finance ---
+
+dn: uid=yang_finance,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: yang_finance
+cn: Yang (Finance)
+sn: Yang
+givenName: Finance
+mail: yang_finance@phison.com
+employeeNumber: P2024080
+departmentNumber: FINANCE
+title: Financial Analyst
+userPassword: dev123
+
+# --- VP / Executive ---
+
+dn: uid=chang_vp,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: chang_vp
+cn: Chang (VP)
+sn: Chang
+givenName: Vice President
+mail: chang_vp@phison.com
+employeeNumber: P2024090
+departmentNumber: EXEC
+title: Vice President
+userPassword: dev123
+
+# --- Admin ---
+
+dn: uid=sys_admin,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: sys_admin
+cn: SysAdmin
+sn: Admin
+givenName: System Administrator
+mail: sys_admin@phison.com
+employeeNumber: P2024099
+departmentNumber: IT
+title: System Administrator
+userPassword: dev123
+
+# --- Service Account ---
+
+dn: uid=etl_pipeline,ou=people,dc=phison,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: etl_pipeline
+cn: ETL Pipeline
+sn: Pipeline
+givenName: ETL Service
+mail: etl_pipeline@phison.com
+employeeNumber: SVC001
+departmentNumber: IT
+title: Service Account
+description: ETL pipeline service account
+userPassword: dev_etl_svc

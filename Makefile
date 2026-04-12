@@ -5,9 +5,12 @@
 COMPOSE := docker compose -f deploy/docker-compose/docker-compose.yml
 PSQL    := $(COMPOSE) exec -T postgres psql -U nexus_admin -d nexus_authz
 
+COMPOSE_LDAP := docker compose -f deploy/docker-compose/docker-compose.yml -f deploy/docker-compose/docker-compose.ldap.yml
+
 .PHONY: help up down restart status logs \
         db-reset db-psql db-migrate db-seed db-shell \
-        verify clean dev dev-api dev-ui
+        verify clean dev dev-api dev-ui \
+        up-ldap down-ldap ldap-up ldap-down ldap-sync
 
 # ── Help ─────────────────────────────────────────────────────
 
@@ -109,10 +112,41 @@ dev-ui: ## Start dashboard UI dev server (port 5173)
 
 install: ## Install all npm dependencies
 	cd services/authz-api && npm install
+	cd services/identity-sync && npm install
 	cd apps/authz-dashboard && npm install
+
+# ── LDAP ─────────────────────────────────────────────────────
+
+up-ldap: ## Start all services including LDAP
+	$(COMPOSE_LDAP) up -d
+	@echo "Waiting for PostgreSQL..."
+	@$(COMPOSE_LDAP) exec -T postgres sh -c 'until pg_isready -U nexus_admin -d nexus_authz; do sleep 1; done'
+	@echo "Waiting for OpenLDAP..."
+	@$(COMPOSE_LDAP) exec -T openldap sh -c 'ldapsearch -x -H ldap://localhost -b "dc=phison,dc=com" -D "cn=admin,dc=phison,dc=com" -w nexus_ldap_dev "(objectClass=organization)" > /dev/null 2>&1'
+	@echo "All services ready. phpLDAPadmin: http://localhost:8090"
+
+down-ldap: ## Stop all services including LDAP
+	$(COMPOSE_LDAP) down
+
+ldap-up: ## Start only LDAP containers
+	$(COMPOSE_LDAP) up -d openldap phpldapadmin
+	@echo "OpenLDAP: ldap://localhost:389  |  phpLDAPadmin: http://localhost:8090"
+
+ldap-down: ## Stop only LDAP containers
+	$(COMPOSE_LDAP) stop openldap phpldapadmin
+
+ldap-sync: ## Run LDAP → DB sync
+	cd services/identity-sync && npx tsx src/ldap-sync.ts
+
+ldap-search: ## Search LDAP directory (quick verify)
+	$(COMPOSE_LDAP) exec openldap ldapsearch -x -H ldap://localhost -b "dc=phison,dc=com" -D "cn=admin,dc=phison,dc=com" -w nexus_ldap_dev "(objectClass=groupOfNames)" cn member
 
 # ── Cleanup ──────────────────────────────────────────────────
 
 clean: ## Stop services and remove volumes
 	$(COMPOSE) down -v
 	@echo "Cleaned."
+
+clean-ldap: ## Stop all services including LDAP and remove volumes
+	$(COMPOSE_LDAP) down -v
+	@echo "Cleaned (including LDAP volumes)."

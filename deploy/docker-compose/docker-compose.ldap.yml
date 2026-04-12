@@ -1,0 +1,43 @@
+# ============================================================
+# OpenLDAP + phpLDAPadmin for Phison Data Nexus
+# Usage: docker compose -f docker-compose.yml -f docker-compose.ldap.yml up -d
+# ============================================================
+
+services:
+  openldap:
+    image: osixia/openldap:1.5.0
+    container_name: nexus-ldap
+    environment:
+      LDAP_ORGANISATION: "Phison Electronics"
+      LDAP_DOMAIN: "phison.com"
+      LDAP_ADMIN_PASSWORD: "nexus_ldap_dev"
+      LDAP_BASE_DN: "dc=phison,dc=com"
+      LDAP_SEED_INTERNAL_LDIF_PATH: "/ldif-seed"
+    ports:
+      - "389:389"
+      - "636:636"
+    volumes:
+      - ldap_data:/var/lib/ldap
+      - ldap_config:/etc/ldap/slapd.d
+      - ../ldap/seed:/ldif-seed:ro
+    healthcheck:
+      test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost", "-b", "dc=phison,dc=com", "-D", "cn=admin,dc=phison,dc=com", "-w", "nexus_ldap_dev", "(objectClass=organization)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  phpldapadmin:
+    image: osixia/phpldapadmin:0.9.0
+    container_name: nexus-ldap-admin
+    environment:
+      PHPLDAPADMIN_LDAP_HOSTS: openldap
+      PHPLDAPADMIN_HTTPS: "false"
+    ports:
+      - "8090:80"
+    depends_on:
+      openldap:
+        condition: service_healthy
+
+volumes:
+  ldap_data:
+  ldap_config:

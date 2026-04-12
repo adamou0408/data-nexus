@@ -1,0 +1,13 @@
+# ============================================================
+# Phison Data Nexus — LDAP Organizational Units
+# ============================================================
+
+dn: ou=people,dc=phison,dc=com
+objectClass: organizationalUnit
+ou: people
+description: Phison employees
+
+dn: ou=groups,dc=phison,dc=com
+objectClass: organizationalUnit
+ou: groups
+description: Phison department and team groups

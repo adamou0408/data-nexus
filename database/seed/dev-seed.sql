@@ -6,56 +6,56 @@
 -- ============================================================
 -- 1. LDAP Groups (simulating Phison AD groups)
 -- ============================================================
-INSERT INTO authz_subject (subject_id, subject_type, display_name, attributes) VALUES
+INSERT INTO authz_subject (subject_id, subject_type, display_name, ldap_dn, attributes) VALUES
     -- PE groups by product line
-    ('group:PE_SSD',      'ldap_group', 'PE - SSD Controller Team',   '{"product_line": "SSD", "site": "HQ", "dept": "PE"}'),
-    ('group:PE_EMMC',     'ldap_group', 'PE - eMMC/UFS Team',         '{"product_line": "eMMC", "site": "HQ", "dept": "PE"}'),
-    ('group:PE_SD',       'ldap_group', 'PE - SD Controller Team',    '{"product_line": "SD", "site": "HQ", "dept": "PE"}'),
+    ('group:PE_SSD',      'ldap_group', 'PE - SSD Controller Team',   'cn=PE_SSD,ou=groups,dc=phison,dc=com',      '{"product_line": "SSD", "site": "HQ", "dept": "PE"}'),
+    ('group:PE_EMMC',     'ldap_group', 'PE - eMMC/UFS Team',         'cn=PE_EMMC,ou=groups,dc=phison,dc=com',     '{"product_line": "eMMC", "site": "HQ", "dept": "PE"}'),
+    ('group:PE_SD',       'ldap_group', 'PE - SD Controller Team',    'cn=PE_SD,ou=groups,dc=phison,dc=com',       '{"product_line": "SD", "site": "HQ", "dept": "PE"}'),
     -- PM groups by product line
-    ('group:PM_SSD',      'ldap_group', 'PM - SSD Product Mgmt',      '{"product_line": "SSD", "dept": "PM"}'),
-    ('group:PM_EMMC',     'ldap_group', 'PM - eMMC Product Mgmt',     '{"product_line": "eMMC", "dept": "PM"}'),
+    ('group:PM_SSD',      'ldap_group', 'PM - SSD Product Mgmt',      'cn=PM_SSD,ou=groups,dc=phison,dc=com',      '{"product_line": "SSD", "dept": "PM"}'),
+    ('group:PM_EMMC',     'ldap_group', 'PM - eMMC Product Mgmt',     'cn=PM_EMMC,ou=groups,dc=phison,dc=com',     '{"product_line": "eMMC", "dept": "PM"}'),
     -- QA (cross product line)
-    ('group:QA_ALL',      'ldap_group', 'QA - All Products',          '{"dept": "QA"}'),
+    ('group:QA_ALL',      'ldap_group', 'QA - All Products',          'cn=QA_ALL,ou=groups,dc=phison,dc=com',      '{"dept": "QA"}'),
     -- Sales by region
-    ('group:SALES_TW',    'ldap_group', 'Sales - Taiwan / HQ',        '{"region": "TW", "dept": "SALES"}'),
-    ('group:SALES_CN',    'ldap_group', 'Sales - China',              '{"region": "CN", "dept": "SALES"}'),
-    ('group:SALES_US',    'ldap_group', 'Sales - US / Europe',        '{"region": "US", "dept": "SALES"}'),
+    ('group:SALES_TW',    'ldap_group', 'Sales - Taiwan / HQ',        'cn=SALES_TW,ou=groups,dc=phison,dc=com',    '{"region": "TW", "dept": "SALES"}'),
+    ('group:SALES_CN',    'ldap_group', 'Sales - China',              'cn=SALES_CN,ou=groups,dc=phison,dc=com',    '{"region": "CN", "dept": "SALES"}'),
+    ('group:SALES_US',    'ldap_group', 'Sales - US / Europe',        'cn=SALES_US,ou=groups,dc=phison,dc=com',    '{"region": "US", "dept": "SALES"}'),
     -- FAE by region
-    ('group:FAE_TW',      'ldap_group', 'FAE - Taiwan',               '{"region": "TW", "dept": "FAE"}'),
-    ('group:FAE_CN',      'ldap_group', 'FAE - China',                '{"region": "CN", "dept": "FAE"}'),
+    ('group:FAE_TW',      'ldap_group', 'FAE - Taiwan',               'cn=FAE_TW,ou=groups,dc=phison,dc=com',     '{"region": "TW", "dept": "FAE"}'),
+    ('group:FAE_CN',      'ldap_group', 'FAE - China',                'cn=FAE_CN,ou=groups,dc=phison,dc=com',     '{"region": "CN", "dept": "FAE"}'),
     -- R&D
-    ('group:RD_FW',       'ldap_group', 'R&D - Firmware Team',        '{"dept": "RD", "sub_dept": "FW"}'),
-    ('group:RD_IC',       'ldap_group', 'R&D - IC Design Team',       '{"dept": "RD", "sub_dept": "IC"}'),
+    ('group:RD_FW',       'ldap_group', 'R&D - Firmware Team',        'cn=RD_FW,ou=groups,dc=phison,dc=com',      '{"dept": "RD", "sub_dept": "FW"}'),
+    ('group:RD_IC',       'ldap_group', 'R&D - IC Design Team',       'cn=RD_IC,ou=groups,dc=phison,dc=com',      '{"dept": "RD", "sub_dept": "IC"}'),
     -- Support groups
-    ('group:BI_TEAM',     'ldap_group', 'BI / Data Analytics Team',   '{"dept": "BI"}'),
-    ('group:DBA_TEAM',    'ldap_group', 'DBA Team',                   '{"dept": "IT"}'),
-    ('group:FINANCE_TEAM','ldap_group', 'Finance Department',         '{"dept": "FINANCE"}'),
-    ('group:VP_OFFICE',   'ldap_group', 'VP / Executive Office',      '{"dept": "EXEC"}'),
-    ('group:OP_SSD',      'ldap_group', 'OP - SSD Production Line',   '{"product_line": "SSD", "site": "HQ", "dept": "OP"}');
+    ('group:BI_TEAM',     'ldap_group', 'BI / Data Analytics Team',   'cn=BI_TEAM,ou=groups,dc=phison,dc=com',    '{"dept": "BI"}'),
+    ('group:DBA_TEAM',    'ldap_group', 'DBA Team',                   'cn=DBA_TEAM,ou=groups,dc=phison,dc=com',   '{"dept": "IT"}'),
+    ('group:FINANCE_TEAM','ldap_group', 'Finance Department',         'cn=FINANCE_TEAM,ou=groups,dc=phison,dc=com','{"dept": "FINANCE"}'),
+    ('group:VP_OFFICE',   'ldap_group', 'VP / Executive Office',      'cn=VP_OFFICE,ou=groups,dc=phison,dc=com',  '{"dept": "EXEC"}'),
+    ('group:OP_SSD',      'ldap_group', 'OP - SSD Production Line',   'cn=OP_SSD,ou=groups,dc=phison,dc=com',     '{"product_line": "SSD", "site": "HQ", "dept": "OP"}');
 
 -- ============================================================
 -- 2. Test Users (simulating Phison employees)
 -- ============================================================
-INSERT INTO authz_subject (subject_id, subject_type, display_name, attributes) VALUES
-    ('user:wang_pe',      'user', 'Wang (PE-SSD)',        '{"product_line": "SSD", "site": "HQ", "employee_id": "P2024001"}'),
-    ('user:chen_pe',      'user', 'Chen (PE-eMMC)',       '{"product_line": "eMMC", "site": "HQ", "employee_id": "P2024002"}'),
-    ('user:su_pe',        'user', 'Su (PE-SD)',           '{"product_line": "SD", "site": "HQ", "employee_id": "P2024003"}'),
-    ('user:lin_pm',       'user', 'Lin (PM-SSD)',         '{"product_line": "SSD", "employee_id": "P2024010"}'),
-    ('user:kuo_pm',       'user', 'Kuo (PM-eMMC)',        '{"product_line": "eMMC", "employee_id": "P2024011"}'),
-    ('user:huang_qa',     'user', 'Huang (QA)',           '{"employee_id": "P2024020"}'),
-    ('user:lee_sales',    'user', 'Lee (Sales-TW)',       '{"region": "TW", "employee_id": "P2024030"}'),
-    ('user:zhang_sales',  'user', 'Zhang (Sales-CN)',     '{"region": "CN", "employee_id": "P2024031"}'),
-    ('user:smith_sales',  'user', 'Smith (Sales-US)',     '{"region": "US", "employee_id": "P2024032"}'),
-    ('user:wu_fae',       'user', 'Wu (FAE-TW)',          '{"region": "TW", "employee_id": "P2024040"}'),
-    ('user:zhou_fae',     'user', 'Zhou (FAE-CN)',        '{"region": "CN", "employee_id": "P2024041"}'),
-    ('user:liu_fw',       'user', 'Liu (FW Engineer)',    '{"product_line": "SSD", "employee_id": "P2024050"}'),
-    ('user:tseng_rd',     'user', 'Tseng (IC Design)',    '{"employee_id": "P2024051"}'),
-    ('user:hsu_op',       'user', 'Hsu (OP-SSD Line)',    '{"product_line": "SSD", "site": "HQ", "employee_id": "P2024060"}'),
-    ('user:tsai_bi',      'user', 'Tsai (BI Analyst)',    '{"employee_id": "P2024070"}'),
-    ('user:yang_finance', 'user', 'Yang (Finance)',       '{"employee_id": "P2024080"}'),
-    ('user:chang_vp',     'user', 'Chang (VP)',           '{"employee_id": "P2024090"}'),
-    ('user:sys_admin',    'user', 'SysAdmin',             '{"employee_id": "P2024099"}'),
-    ('svc:etl_pipeline',  'service_account', 'ETL Pipeline', '{"service": "data-pipeline"}');
+INSERT INTO authz_subject (subject_id, subject_type, display_name, ldap_dn, attributes) VALUES
+    ('user:wang_pe',      'user', 'Wang (PE-SSD)',        'uid=wang_pe,ou=people,dc=phison,dc=com',      '{"product_line": "SSD", "site": "HQ", "employee_id": "P2024001"}'),
+    ('user:chen_pe',      'user', 'Chen (PE-eMMC)',       'uid=chen_pe,ou=people,dc=phison,dc=com',      '{"product_line": "eMMC", "site": "HQ", "employee_id": "P2024002"}'),
+    ('user:su_pe',        'user', 'Su (PE-SD)',           'uid=su_pe,ou=people,dc=phison,dc=com',        '{"product_line": "SD", "site": "HQ", "employee_id": "P2024003"}'),
+    ('user:lin_pm',       'user', 'Lin (PM-SSD)',         'uid=lin_pm,ou=people,dc=phison,dc=com',       '{"product_line": "SSD", "employee_id": "P2024010"}'),
+    ('user:kuo_pm',       'user', 'Kuo (PM-eMMC)',        'uid=kuo_pm,ou=people,dc=phison,dc=com',       '{"product_line": "eMMC", "employee_id": "P2024011"}'),
+    ('user:huang_qa',     'user', 'Huang (QA)',           'uid=huang_qa,ou=people,dc=phison,dc=com',     '{"employee_id": "P2024020"}'),
+    ('user:lee_sales',    'user', 'Lee (Sales-TW)',       'uid=lee_sales,ou=people,dc=phison,dc=com',    '{"region": "TW", "employee_id": "P2024030"}'),
+    ('user:zhang_sales',  'user', 'Zhang (Sales-CN)',     'uid=zhang_sales,ou=people,dc=phison,dc=com',  '{"region": "CN", "employee_id": "P2024031"}'),
+    ('user:smith_sales',  'user', 'Smith (Sales-US)',     'uid=smith_sales,ou=people,dc=phison,dc=com',  '{"region": "US", "employee_id": "P2024032"}'),
+    ('user:wu_fae',       'user', 'Wu (FAE-TW)',          'uid=wu_fae,ou=people,dc=phison,dc=com',       '{"region": "TW", "employee_id": "P2024040"}'),
+    ('user:zhou_fae',     'user', 'Zhou (FAE-CN)',        'uid=zhou_fae,ou=people,dc=phison,dc=com',     '{"region": "CN", "employee_id": "P2024041"}'),
+    ('user:liu_fw',       'user', 'Liu (FW Engineer)',    'uid=liu_fw,ou=people,dc=phison,dc=com',       '{"product_line": "SSD", "employee_id": "P2024050"}'),
+    ('user:tseng_rd',     'user', 'Tseng (IC Design)',    'uid=tseng_rd,ou=people,dc=phison,dc=com',     '{"employee_id": "P2024051"}'),
+    ('user:hsu_op',       'user', 'Hsu (OP-SSD Line)',    'uid=hsu_op,ou=people,dc=phison,dc=com',       '{"product_line": "SSD", "site": "HQ", "employee_id": "P2024060"}'),
+    ('user:tsai_bi',      'user', 'Tsai (BI Analyst)',    'uid=tsai_bi,ou=people,dc=phison,dc=com',      '{"employee_id": "P2024070"}'),
+    ('user:yang_finance', 'user', 'Yang (Finance)',       'uid=yang_finance,ou=people,dc=phison,dc=com', '{"employee_id": "P2024080"}'),
+    ('user:chang_vp',     'user', 'Chang (VP)',           'uid=chang_vp,ou=people,dc=phison,dc=com',     '{"employee_id": "P2024090"}'),
+    ('user:sys_admin',    'user', 'SysAdmin',             'uid=sys_admin,ou=people,dc=phison,dc=com',    '{"employee_id": "P2024099"}'),
+    ('svc:etl_pipeline',  'service_account', 'ETL Pipeline', 'uid=etl_pipeline,ou=people,dc=phison,dc=com', '{"service": "data-pipeline"}');
 
 -- ============================================================
 -- 3. Role Assignments
@@ -480,8 +480,8 @@ INSERT INTO authz_policy (
 -- ============================================================
 -- 6b. AUTHZ_ADMINS group + web_api resources
 -- ============================================================
-INSERT INTO authz_subject (subject_id, subject_type, display_name, attributes) VALUES
-    ('group:AUTHZ_ADMINS', 'ldap_group', 'AuthZ Administrators', '{"dept": "IT"}');
+INSERT INTO authz_subject (subject_id, subject_type, display_name, ldap_dn, attributes) VALUES
+    ('group:AUTHZ_ADMINS', 'ldap_group', 'AuthZ Administrators', 'cn=AUTHZ_ADMINS,ou=groups,dc=phison,dc=com', '{"dept": "IT"}');
 
 INSERT INTO authz_subject_role (subject_id, role_id, granted_by) VALUES
     ('group:AUTHZ_ADMINS', 'AUTHZ_ADMIN', 'ldap_sync'),
@@ -616,3 +616,39 @@ INSERT INTO authz_pool_credentials (pg_role, password_hash) VALUES
     ('nexus_bi_ro',       'md5' || md5('dev_bi_pass'       || 'nexus_bi_ro')),
     ('nexus_etl_rw',      'md5' || md5('dev_etl_pass'      || 'nexus_etl_rw')),
     ('nexus_admin_full',  'md5' || md5('dev_admin_pass'    || 'nexus_admin_full'));
+
+-- ============================================================
+-- 9. Group Membership (user ↔ group, synced from LDAP)
+-- Requires V018__group_membership.sql migration
+-- ============================================================
+INSERT INTO authz_group_member (group_id, user_id, source) VALUES
+    -- PE groups
+    ('group:PE_SSD',        'user:wang_pe',       'ldap_sync'),
+    ('group:PE_EMMC',       'user:chen_pe',       'ldap_sync'),
+    ('group:PE_SD',         'user:su_pe',         'ldap_sync'),
+    -- PM groups
+    ('group:PM_SSD',        'user:lin_pm',        'ldap_sync'),
+    ('group:PM_EMMC',       'user:kuo_pm',        'ldap_sync'),
+    -- QA
+    ('group:QA_ALL',        'user:huang_qa',      'ldap_sync'),
+    -- Sales by region
+    ('group:SALES_TW',      'user:lee_sales',     'ldap_sync'),
+    ('group:SALES_CN',      'user:zhang_sales',   'ldap_sync'),
+    ('group:SALES_US',      'user:smith_sales',   'ldap_sync'),
+    -- FAE by region
+    ('group:FAE_TW',        'user:wu_fae',        'ldap_sync'),
+    ('group:FAE_CN',        'user:zhou_fae',      'ldap_sync'),
+    -- R&D / Firmware
+    ('group:RD_FW',         'user:liu_fw',        'ldap_sync'),
+    ('group:RD_IC',         'user:tseng_rd',      'ldap_sync'),
+    -- OP
+    ('group:OP_SSD',        'user:hsu_op',        'ldap_sync'),
+    -- BI
+    ('group:BI_TEAM',       'user:tsai_bi',       'ldap_sync'),
+    -- Finance
+    ('group:FINANCE_TEAM',  'user:yang_finance',  'ldap_sync'),
+    -- VP
+    ('group:VP_OFFICE',     'user:chang_vp',      'ldap_sync'),
+    -- DBA + AuthZ Admins (sys_admin belongs to both)
+    ('group:DBA_TEAM',      'user:sys_admin',     'ldap_sync'),
+    ('group:AUTHZ_ADMINS',  'user:sys_admin',     'ldap_sync');

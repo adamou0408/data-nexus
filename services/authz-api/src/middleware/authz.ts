@@ -1,22 +1,38 @@
 import { Request, Response, NextFunction } from 'express';
 import { pool } from '../db';
 
-// Extract user context from request headers (simulated auth)
-// In production this would come from JWT/session validation
+// Extract user context from request headers
+// Falls back to DB lookup via authz_group_member if X-User-Groups not provided
 export function extractUser(req: Request): { user_id: string; groups: string[] } | null {
   const userId = req.headers['x-user-id'] as string;
   if (!userId) return null;
-  const groups = (req.headers['x-user-groups'] as string || '').split(',').filter(Boolean);
+  const groupsHeader = req.headers['x-user-groups'] as string || '';
+  const groups = groupsHeader.split(',').filter(Boolean);
   return { user_id: userId, groups };
 }
 
+// Resolve groups from DB if not provided in headers
+async function resolveUserGroups(user: { user_id: string; groups: string[] }): Promise<{ user_id: string; groups: string[] }> {
+  if (user.groups.length > 0) return user;
+  try {
+    const result = await pool.query(
+      'SELECT authz_resolve_user_groups($1) AS groups',
+      [user.user_id]
+    );
+    const dbGroups: string[] = result.rows[0]?.groups || [];
+    return { user_id: user.user_id, groups: dbGroups };
+  } catch {
+    return user;
+  }
+}
+
 // Middleware: require authentication (any valid user)
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const user = extractUser(req);
   if (!user) {
     return res.status(401).json({ error: 'Missing X-User-Id header' });
   }
-  (req as any).authzUser = user;
+  (req as any).authzUser = await resolveUserGroups(user);
   next();
 }
 
@@ -28,17 +44,18 @@ export function requirePermission(action: string, resource: string) {
       return res.status(401).json({ error: 'Missing X-User-Id header' });
     }
     try {
+      const resolved = await resolveUserGroups(user);
       const result = await pool.query(
         'SELECT authz_check($1, $2, $3, $4) AS allowed',
-        [user.user_id, user.groups, action, resource]
+        [resolved.user_id, resolved.groups, action, resource]
       );
       if (!result.rows[0].allowed) {
         return res.status(403).json({
           error: 'Forbidden',
-          detail: `${user.user_id} lacks ${action} on ${resource}`,
+          detail: `${resolved.user_id} lacks ${action} on ${resource}`,
         });
       }
-      (req as any).authzUser = user;
+      (req as any).authzUser = resolved;
       next();
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -54,9 +71,10 @@ export function requireRole(...roles: string[]) {
       return res.status(401).json({ error: 'Missing X-User-Id header' });
     }
     try {
+      const resolved = await resolveUserGroups(user);
       const result = await pool.query(
         'SELECT _authz_resolve_roles($1, $2) AS roles',
-        [user.user_id, user.groups]
+        [resolved.user_id, resolved.groups]
       );
       const userRoles: string[] = result.rows[0].roles || [];
       const hasRole = roles.some(r => userRoles.includes(r));
@@ -66,7 +84,7 @@ export function requireRole(...roles: string[]) {
           detail: `Requires role: ${roles.join(' or ')}`,
         });
       }
-      (req as any).authzUser = user;
+      (req as any).authzUser = resolved;
       (req as any).authzRoles = userRoles;
       next();
     } catch (err) {

@@ -1,0 +1,143 @@
+# ============================================================
+# Phison Data Nexus — LDAP Groups (19 groups)
+# Aligned with database/seed/dev-seed.sql authz_subject entries
+# Each group uses groupOfNames with member DNs linking to people
+# ============================================================
+
+# --- PE Groups (Product Engineering) ---
+
+dn: cn=PE_SSD,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: PE_SSD
+description: PE - SSD Controller Team
+member: uid=wang_pe,ou=people,dc=phison,dc=com
+
+dn: cn=PE_EMMC,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: PE_EMMC
+description: PE - eMMC/UFS Team
+member: uid=chen_pe,ou=people,dc=phison,dc=com
+
+dn: cn=PE_SD,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: PE_SD
+description: PE - SD Controller Team
+member: uid=su_pe,ou=people,dc=phison,dc=com
+
+# --- PM Groups (Product Management) ---
+
+dn: cn=PM_SSD,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: PM_SSD
+description: PM - SSD Product Mgmt
+member: uid=lin_pm,ou=people,dc=phison,dc=com
+
+dn: cn=PM_EMMC,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: PM_EMMC
+description: PM - eMMC Product Mgmt
+member: uid=kuo_pm,ou=people,dc=phison,dc=com
+
+# --- QA ---
+
+dn: cn=QA_ALL,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: QA_ALL
+description: QA - All Products
+member: uid=huang_qa,ou=people,dc=phison,dc=com
+
+# --- Sales Groups (by region) ---
+
+dn: cn=SALES_TW,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: SALES_TW
+description: Sales - Taiwan / HQ
+member: uid=lee_sales,ou=people,dc=phison,dc=com
+
+dn: cn=SALES_CN,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: SALES_CN
+description: Sales - China
+member: uid=zhang_sales,ou=people,dc=phison,dc=com
+
+dn: cn=SALES_US,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: SALES_US
+description: Sales - US / Europe
+member: uid=smith_sales,ou=people,dc=phison,dc=com
+
+# --- FAE Groups (by region) ---
+
+dn: cn=FAE_TW,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: FAE_TW
+description: FAE - Taiwan
+member: uid=wu_fae,ou=people,dc=phison,dc=com
+
+dn: cn=FAE_CN,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: FAE_CN
+description: FAE - China
+member: uid=zhou_fae,ou=people,dc=phison,dc=com
+
+# --- R&D Groups ---
+
+dn: cn=RD_FW,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: RD_FW
+description: R&D - Firmware Team
+member: uid=liu_fw,ou=people,dc=phison,dc=com
+
+dn: cn=RD_IC,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: RD_IC
+description: R&D - IC Design Team
+member: uid=tseng_rd,ou=people,dc=phison,dc=com
+
+# --- BI ---
+
+dn: cn=BI_TEAM,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: BI_TEAM
+description: BI / Data Analytics Team
+member: uid=tsai_bi,ou=people,dc=phison,dc=com
+
+# --- DBA ---
+
+dn: cn=DBA_TEAM,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: DBA_TEAM
+description: DBA Team
+member: uid=sys_admin,ou=people,dc=phison,dc=com
+
+# --- Finance ---
+
+dn: cn=FINANCE_TEAM,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: FINANCE_TEAM
+description: Finance Department
+member: uid=yang_finance,ou=people,dc=phison,dc=com
+
+# --- VP / Executive ---
+
+dn: cn=VP_OFFICE,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: VP_OFFICE
+description: VP / Executive Office
+member: uid=chang_vp,ou=people,dc=phison,dc=com
+
+# --- OP (Production) ---
+
+dn: cn=OP_SSD,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: OP_SSD
+description: OP - SSD Production Line
+member: uid=hsu_op,ou=people,dc=phison,dc=com
+
+# --- AuthZ Admins ---
+
+dn: cn=AUTHZ_ADMINS,ou=groups,dc=phison,dc=com
+objectClass: groupOfNames
+cn: AUTHZ_ADMINS
+description: AuthZ Administrators
+member: uid=sys_admin,ou=people,dc=phison,dc=com
