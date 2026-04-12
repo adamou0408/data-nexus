@@ -102,6 +102,10 @@ export const api = {
       `/browse/tables/${encodeURIComponent(table)}`
     ),
   functions: () => request<SqlFunction[]>('/browse/functions'),
+  dataExplorer: (user_id: string, groups: string[], attributes: Record<string, string>, table: string) =>
+    request<DataExplorerResult>('/browse/data-explorer', {
+      method: 'POST', body: JSON.stringify({ user_id, groups, attributes, table }),
+    }),
   poolSyncGrants: () => request<{ actions: { action: string; detail: string }[] }>('/pool/sync/grants', { method: 'POST' }),
   poolSyncPgbouncer: () => request<{ config: string }>('/pool/sync/pgbouncer', { method: 'POST' }),
   poolCredentialRotate: (pg_role: string, new_password: string) =>
@@ -158,6 +162,27 @@ export type SqlFunction = {
   return_type: string;
   description: string | null;
   volatility: string;
+};
+
+export type DataExplorerColumn = {
+  column_name: string;
+  data_type: string;
+  is_nullable: string;
+  column_default: string | null;
+  character_maximum_length: number | null;
+  access: 'visible' | 'masked' | 'denied';
+  mask_type: string | null;
+  mask_function: string | null;
+};
+
+export type DataExplorerResult = {
+  table: string;
+  columns: DataExplorerColumn[];
+  rls_filter: string;
+  sample_data: Record<string, unknown>[];
+  total_count: number;
+  filtered_count: number;
+  mask_functions: { function_name: string; description: string | null; example: string }[];
 };
 
 export type ActionItem = {

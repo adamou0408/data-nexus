@@ -64,6 +64,147 @@ browseRouter.get('/actions', async (_req, res) => {
   }
 });
 
+// --- Data Explorer: permission-aware table view ---
+
+// Returns table schema + column access status + filtered sample data + mask functions
+browseRouter.post('/data-explorer', async (req, res) => {
+  const { user_id, groups = [], attributes = {}, table } = req.body;
+
+  if (!table || table.startsWith('authz_')) {
+    return res.status(400).json({ error: 'Invalid or internal table' });
+  }
+
+  try {
+    // 1. Column schema
+    const schemaResult = await pool.query(`
+      SELECT column_name, data_type, is_nullable, column_default,
+             character_maximum_length
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = $1
+      ORDER BY ordinal_position
+    `, [table]);
+
+    if (schemaResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Table not found' });
+    }
+
+    // 2. Resolve user permissions (L0/L2)
+    const resolveResult = await pool.query(
+      'SELECT authz_resolve($1, $2, $3) AS config',
+      [user_id, groups, JSON.stringify(attributes)]
+    );
+    const config = resolveResult.rows[0]?.config || {};
+    const columnMasks: Record<string, Record<string, { mask_type: string; function: string }>> = config.L2_column_masks || {};
+
+    // Build mask map for this table
+    const tableMasks: Record<string, { mask_type: string; function: string }> = {};
+    for (const [, rules] of Object.entries(columnMasks)) {
+      for (const [colKey, maskDef] of Object.entries(rules as Record<string, { mask_type: string; function: string }>)) {
+        const [maskTable, maskCol] = colKey.split('.');
+        if (maskTable === table && maskCol) {
+          tableMasks[maskCol] = maskDef;
+        }
+      }
+    }
+
+    // 3. Resolve roles + find denied columns
+    const rolesResult = await pool.query(
+      'SELECT _authz_resolve_roles($1, $2) AS roles',
+      [user_id, groups]
+    );
+    const roles: string[] = rolesResult.rows[0]?.roles || [];
+
+    const denyResult = await pool.query(`
+      SELECT rp.resource_id FROM authz_role_permission rp
+      JOIN authz_resource ar ON ar.resource_id = rp.resource_id
+      WHERE rp.role_id = ANY($1) AND rp.effect = 'deny' AND rp.is_active
+        AND ar.resource_type = 'column'
+        AND rp.resource_id LIKE $2
+    `, [roles, `column:${table}.%`]);
+
+    const deniedCols = new Set(
+      denyResult.rows.map((r: { resource_id: string }) => r.resource_id.split('.').pop())
+    );
+
+    // 4. Build enriched column info
+    const columns = schemaResult.rows.map((col: Record<string, unknown>) => {
+      const colName = col.column_name as string;
+      const mask = tableMasks[colName];
+      const denied = deniedCols.has(colName);
+      return {
+        ...col,
+        access: denied ? 'denied' : mask ? 'masked' : 'visible',
+        mask_type: denied ? null : mask?.mask_type || null,
+        mask_function: denied ? null : mask?.function || null,
+      };
+    });
+
+    // 5. RLS filter
+    const filterResult = await pool.query(
+      'SELECT authz_filter($1, $2, $3, $4) AS filter_clause',
+      [user_id, groups, JSON.stringify(attributes), `table:${table}`]
+    );
+    const filterClause = filterResult.rows[0]?.filter_clause || 'TRUE';
+
+    // 6. Build SELECT with masks/denies applied
+    const selectParts = columns.map((col: { column_name: string; data_type: string; access: string; mask_function: string | null }) => {
+      if (col.access === 'denied') return `'[DENIED]' AS ${col.column_name}`;
+      if (col.access === 'masked' && col.mask_function) {
+        const fn = col.mask_function;
+        if (fn === 'fn_mask_range') return `${fn}(${col.column_name}::numeric) AS ${col.column_name}`;
+        return `${fn}(${col.column_name}::text) AS ${col.column_name}`;
+      }
+      return col.column_name;
+    });
+
+    const dataResult = await pool.query(
+      `SELECT ${selectParts.join(', ')} FROM "${table}" WHERE ${filterClause} ORDER BY 1 LIMIT 20`
+    ).catch(() => ({ rows: [], rowCount: 0 }));
+
+    const totalResult = await pool.query(`SELECT count(*)::int AS c FROM "${table}"`).catch(() => ({ rows: [{ c: 0 }] }));
+    const filteredResult = await pool.query(`SELECT count(*)::int AS c FROM "${table}" WHERE ${filterClause}`).catch(() => ({ rows: [{ c: 0 }] }));
+
+    // 7. Get mask function definitions used on this table
+    const usedFns = [...new Set(columns.filter((c: { mask_function: string | null }) => c.mask_function).map((c: { mask_function: string }) => c.mask_function))];
+    let maskFunctions: { function_name: string; description: string | null; example: string }[] = [];
+    if (usedFns.length > 0) {
+      const fnResult = await pool.query(`
+        SELECT mf.function_name, mf.description,
+               COALESCE(mf.example_output, '') AS example
+        FROM authz_mask_function mf
+        WHERE mf.function_name = ANY($1) AND mf.is_active = TRUE
+      `, [usedFns]).catch(() => ({ rows: [] }));
+      maskFunctions = fnResult.rows;
+
+      // Fallback: if mask_function registry doesn't have entries, use pg_proc
+      if (maskFunctions.length === 0) {
+        const pgResult = await pool.query(`
+          SELECT p.proname AS function_name,
+                 d.description,
+                 '' AS example
+          FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+          LEFT JOIN pg_description d ON d.objoid = p.oid
+          WHERE n.nspname = 'public' AND p.proname = ANY($1)
+        `, [usedFns]).catch(() => ({ rows: [] }));
+        maskFunctions = pgResult.rows;
+      }
+    }
+
+    res.json({
+      table,
+      columns,
+      rls_filter: filterClause,
+      sample_data: dataResult.rows,
+      total_count: totalResult.rows[0].c,
+      filtered_count: filteredResult.rows[0].c,
+      mask_functions: maskFunctions,
+    });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // --- Business Data: Tables & Functions ---
 
 // List business data tables (exclude authz_* internal tables)

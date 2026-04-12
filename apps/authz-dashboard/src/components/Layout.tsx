@@ -9,8 +9,8 @@ import {
 
 export type TabId =
   | 'overview' | 'resolve' | 'check' | 'matrix'
-  | 'tables' | 'functions' | 'rls' | 'workbench'
-  | 'browser' | 'pool' | 'audit';
+  | 'tables' | 'rls' | 'workbench'
+  | 'functions' | 'browser' | 'pool' | 'audit';
 
 type NavItem = {
   id: TabId;
@@ -41,7 +41,7 @@ const navGroups: NavGroup[] = [
   {
     label: 'Data Explorer',
     items: [
-      { id: 'tables', label: 'Tables & Schema', icon: <Table2 size={18} /> },
+      { id: 'tables', label: 'Data Explorer', icon: <Table2 size={18} /> },
       { id: 'workbench', label: 'Data Workbench', icon: <Wrench size={18} /> },
     ],
   },
