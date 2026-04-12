@@ -5,8 +5,14 @@ export const rlsRouter = Router();
 
 // Allowed tables for RLS simulation (prevent SQL injection)
 const ALLOWED_TABLES: Record<string, { resourceType: string; orderBy: string }> = {
-  lot_status:  { resourceType: 'table:lot_status',  orderBy: 'lot_id' },
-  sales_order: { resourceType: 'table:sales_order', orderBy: 'order_id' },
+  lot_status:         { resourceType: 'table:lot_status',         orderBy: 'lot_id' },
+  sales_order:        { resourceType: 'table:sales_order',        orderBy: 'order_id' },
+  wip_inventory:      { resourceType: 'table:wip_inventory',      orderBy: 'wip_id' },
+  cp_ft_result:       { resourceType: 'table:cp_ft_result',       orderBy: 'test_id' },
+  npi_gate_checklist: { resourceType: 'table:npi_gate_checklist', orderBy: 'gate_id' },
+  reliability_report: { resourceType: 'table:reliability_report', orderBy: 'report_id' },
+  rma_record:         { resourceType: 'table:rma_record',         orderBy: 'rma_id' },
+  price_book:         { resourceType: 'table:price_book',         orderBy: 'price_id' },
 };
 
 rlsRouter.post('/simulate', async (req, res) => {
