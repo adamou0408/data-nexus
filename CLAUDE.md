@@ -21,17 +21,23 @@ Phison Data Nexus (`phison-data-nexus`) is an authorization service platform for
 
 ```
 data-nexus/
-├── src/          # Source code
-├── tests/        # Test files
-├── docs/         # Architecture docs & startup guide
-├── scripts/      # Utility scripts
-├── config/       # Configuration files
-└── deploy/       # Docker Compose & Helm charts (planned)
+├── apps/
+│   └── authz-dashboard/       # React + Vite verification dashboard (port 5173)
+├── services/
+│   └── authz-api/             # Express API wrapping PG functions (port 3001)
+├── database/
+│   ├── migrations/            # V001-V014 sequential SQL migrations
+│   └── seed/                  # Dev seed data (test users, resources, policies)
+├── deploy/
+│   └── docker-compose/        # PG 16 + Redis 7 local dev stack
+├── docs/                      # Architecture docs & startup guide
+├── scripts/                   # Utility scripts (verify-milestone1.sh)
+└── Makefile                   # Dev commands (make up/dev/verify/clean)
 ```
 
 ## Key Architecture Docs
 
-- `docs/phison-data-nexus-architecture-v2.3.md` — Full architecture spec (AuthZ service design, schema, three access paths, performance analysis, production readiness)
+- `docs/phison-data-nexus-architecture-v2.4.md` — Full architecture spec (AuthZ service design, schema, three access paths, performance analysis, production readiness)
 - `docs/nexus-startup-guide.md` — 4-milestone execution plan (local setup → production-ready)
 
 ## Development Milestones
@@ -59,12 +65,21 @@ data-nexus/
 ## Commands
 
 ```bash
-# Local development (planned)
-docker-compose -f deploy/docker-compose/docker-compose.yml up
+# Start PG + Redis
+make up
 
-# Run tests (planned)
-npm test
+# Reset database (destroy + recreate)
+make db-reset
 
-# Lint (planned)
-npm run lint
+# Start API server (port 3001)
+make dev-api
+
+# Start dashboard UI (port 5173)
+make dev-ui
+
+# Run Milestone 1 verification
+make verify
+
+# Interactive psql
+make db-psql
 ```

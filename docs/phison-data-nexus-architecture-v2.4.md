@@ -1,4 +1,4 @@
-# Phison Electronics Data Center — Authorization Service Architecture v2.3
+# Phison Electronics Data Center — Authorization Service Architecture v2.4
 
 **Repository**: `phison-data-nexus`
 **npm scope**: `@nexus/*`
@@ -19,6 +19,7 @@ This document serves two purposes:
 | v2.1 | 2026-04-10 | Added AuthZ Admin Center: program architecture positioning, self-managed resource registration, admin-specific roles (AUTHZ_ADMIN, AUTHZ_AUDITOR), page structure design, core UI components (Permission Matrix, Resource Tree, Policy Simulator, Policy Editor, Impact Analysis), change workflow (pending_review → active), hardcoded admin routing rationale, updated mega-prompt and roadmap |
 | v2.2 | 2026-04-10 | Added: supported database matrix (PostgreSQL primary + MySQL/MongoDB/MSSQL via Casbin adapter abstraction), monorepo design with Nx/Turborepo, Helm chart structure for K8s deployment, K8s-specific design considerations (Secrets management, health probes, HPA, network policies, migration jobs, PDB, sidecar vs centralized patterns), updated mega-prompt and roadmap |
 | v2.3 | 2026-04-11 | Added: Performance bottleneck analysis (6 bottlenecks ranked by severity), two-level cache architecture (L1 Redis + L2 session), authz_check_from_cache() function, audit batch insert, RLS index optimization, PG LISTEN/NOTIFY cache invalidation. Added: Production weakness analysis across 8 dimensions (operational, security, scalability, data integrity, DX, fault tolerance, compliance, evolution) with mitigations. Renamed repo to `phison-data-nexus`, npm scope `@nexus/*`, Helm chart `nexus-platform`. Updated mega-prompt and roadmap (31 phases). |
+| v2.4 | 2026-04-12 | **BUGFIX**: `authz_filter()` missing `p_user_groups` parameter — function did not evaluate `subject_condition`, causing all ABAC policies to apply to all users regardless of role/attribute match. Added `p_user_groups TEXT[]` parameter and subject_condition matching logic (role check + attribute check). Updated mega-prompt API signature. Discovered during Milestone 1 POC verification with AuthZ Dashboard. |
 
 ---
 
@@ -538,9 +539,13 @@ $$;
 -- ============================================================
 -- authz_filter: generate SQL WHERE clause for row-level filtering
 -- Used by: Path A (resolve config), Path B (API query), Path C (RLS sync)
+-- v2.4 FIX: Added p_user_groups parameter + subject_condition matching.
+--   Without this, ALL ABAC policies applied to ALL users regardless of
+--   role/attribute match (e.g., PE-only policy also filtered Admin data).
 -- ============================================================
 CREATE OR REPLACE FUNCTION authz_filter(
     p_user_id       TEXT,
+    p_user_groups   TEXT[],            -- v2.4: required for subject_condition evaluation
     p_user_attrs    JSONB,
     p_resource_type TEXT,           -- e.g., 'table:lot_status'
     p_path          CHAR(1) DEFAULT NULL  -- NULL = all paths
@@ -549,12 +554,19 @@ RETURNS TEXT
 LANGUAGE plpgsql STABLE
 AS $$
 DECLARE
+    v_roles     TEXT[];
     v_clauses   TEXT[] := '{}';
     v_policy    RECORD;
     v_expr      TEXT;
     v_attr_key  TEXT;
     v_attr_val  TEXT;
+    v_cond_key  TEXT;
+    v_cond_val  JSONB;
+    v_match     BOOLEAN;
 BEGIN
+    -- v2.4: Resolve user roles for subject_condition matching
+    v_roles := _authz_resolve_roles(p_user_id, p_user_groups);
+
     FOR v_policy IN
         SELECT ap.rls_expression, ap.subject_condition
         FROM authz_policy ap
@@ -568,6 +580,39 @@ BEGIN
               OR ap.resource_condition->>'resource_type' = split_part(p_resource_type, ':', 1)
           )
     LOOP
+        -- v2.4: Evaluate subject_condition — skip policy if user doesn't match
+        v_match := TRUE;
+        IF v_policy.subject_condition IS NOT NULL AND v_policy.subject_condition != '{}'::jsonb THEN
+            FOR v_cond_key, v_cond_val IN
+                SELECT key, value FROM jsonb_each(v_policy.subject_condition)
+            LOOP
+                IF v_cond_key = 'role' THEN
+                    -- Check if user has any of the required roles
+                    IF NOT EXISTS (
+                        SELECT 1 FROM jsonb_array_elements_text(v_cond_val) AS req_role
+                        WHERE req_role = ANY(v_roles)
+                    ) THEN
+                        v_match := FALSE;
+                        EXIT;
+                    END IF;
+                ELSE
+                    -- Check if user attribute matches any of the required values
+                    IF NOT EXISTS (
+                        SELECT 1 FROM jsonb_array_elements_text(v_cond_val) AS req_val
+                        WHERE req_val = p_user_attrs->>v_cond_key
+                    ) THEN
+                        v_match := FALSE;
+                        EXIT;
+                    END IF;
+                END IF;
+            END LOOP;
+        END IF;
+
+        -- Skip this policy if subject_condition doesn't match
+        IF NOT v_match THEN
+            CONTINUE;
+        END IF;
+
         v_expr := v_policy.rls_expression;
 
         -- Replace ${subject.xxx} placeholders with actual user attribute values
@@ -1105,7 +1150,8 @@ class PhisonAgent:
         # Step 2: Apply data scope filter
         if tool_name in DATA_QUERY_TOOLS:
             where_clause = authz_filter(
-                user_context.user_id, user_context.attributes,
+                user_context.user_id, user_context.groups,  # v2.4: groups required
+                user_context.attributes,
                 params.get("target_table"), 'A'
             )
             params["additional_filter"] = where_clause
@@ -1383,7 +1429,7 @@ Every layer's output is a structured config serving as the next layer's input co
 Shared (all paths):
 - `_authz_resolve_roles(user_id, groups[])` → roles[] — internal helper
 - `authz_check(user_id, groups[], action, resource)` → boolean — with resource hierarchy walk + deny override
-- `authz_filter(user_id, user_attrs, resource_type, path?)` → SQL WHERE clause — replaces ${subject.xxx} placeholders
+- `authz_filter(user_id, groups[], user_attrs, resource_type, path?)` → SQL WHERE clause — evaluates subject_condition (role + attribute match) per policy, replaces ${subject.xxx} placeholders (v2.4: added groups[] for subject_condition evaluation)
 
 Path A adapter:
 - `authz_resolve(user_id, groups[], attrs)` → full JSON config with L0_functional, L1_data_scope, L2_column_masks, L3_actions
