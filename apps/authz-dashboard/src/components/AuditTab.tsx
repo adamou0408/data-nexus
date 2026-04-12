@@ -8,6 +8,7 @@ export function AuditTab() {
   const [logs, setLogs] = useState<Record<string, unknown>[]>([]);
   const [subjectFilter, setSubjectFilter] = useState('');
   const [actionFilter, setActionFilter] = useState('');
+  const [pathFilter, setPathFilter] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -18,6 +19,7 @@ export function AuditTab() {
       const result = await api.auditLogs({
         subject: subjectFilter || undefined,
         action: actionFilter || undefined,
+        path: pathFilter || undefined,
         limit: PAGE_SIZE + 1,
         offset: p * PAGE_SIZE,
       });
@@ -25,7 +27,7 @@ export function AuditTab() {
       setLogs(result.slice(0, PAGE_SIZE));
     } catch { setLogs([]); }
     setLoading(false);
-  }, [subjectFilter, actionFilter]);
+  }, [subjectFilter, actionFilter, pathFilter]);
 
   useEffect(() => { load(page); }, [page, load]);
 
@@ -48,7 +50,15 @@ export function AuditTab() {
             Access Decisions
           </h2>
         </div>
-        <div className="card-body border-b border-slate-100">
+        <div className="card-body border-b border-slate-100 space-y-3">
+          <div className="flex gap-1.5">
+            {[{ value: '', label: 'All' }, { value: 'A', label: 'Path A (Data)' }, { value: 'B', label: 'Path B (Admin)' }, { value: 'C', label: 'Path C (DB)' }].map(opt => (
+              <button key={opt.value} onClick={() => { setPathFilter(opt.value); setPage(0); }}
+                className={`btn btn-xs gap-1 ${pathFilter === opt.value ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-50'}`}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-3 items-end">
             <div>
               <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Subject ID</label>

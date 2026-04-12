@@ -71,10 +71,11 @@ export const api = {
     if (isAdmin) qs.set('is_admin', 'true');
     return request<ActionItem[]>(`/browse/action-items?${qs}`);
   },
-  auditLogs: (params?: { subject?: string; action?: string; limit?: number; offset?: number }) => {
+  auditLogs: (params?: { subject?: string; action?: string; path?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();
     if (params?.subject) qs.set('subject', params.subject);
     if (params?.action) qs.set('action', params.action);
+    if (params?.path) qs.set('path', params.path);
     if (params?.limit) qs.set('limit', String(params.limit));
     if (params?.offset) qs.set('offset', String(params.offset));
     return request<Record<string, unknown>[]>(`/browse/audit-logs?${qs}`);
@@ -110,6 +111,24 @@ export const api = {
     request<DataExplorerResult>('/browse/data-explorer', {
       method: 'POST', body: JSON.stringify({ user_id, groups, attributes, table }),
     }),
+  // Data Source Registry
+  datasources: () => request<DataSource[]>('/datasources'),
+  datasource: (id: string) => request<DataSource>(`/datasources/${encodeURIComponent(id)}`),
+  datasourceCreate: (data: Partial<DataSource> & { connector_password: string }) =>
+    request<DataSource>('/datasources', { method: 'POST', body: JSON.stringify(data) }),
+  datasourceUpdate: (id: string, data: Partial<DataSource>) =>
+    request<DataSource>(`/datasources/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  datasourceDelete: (id: string) =>
+    request(`/datasources/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  datasourceTest: (id: string) =>
+    request<{ status: string; version?: string; error?: string }>(`/datasources/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+  datasourceDiscover: (id: string) =>
+    request<{ source_id: string; tables_found: number; columns_found: number; resources_created: number; created: string[] }>(
+      `/datasources/${encodeURIComponent(id)}/discover`, { method: 'POST' }),
+  datasourceTables: (id: string) =>
+    request<{ source_id: string; database: string; tables: { table_schema: string; table_name: string; column_count: string }[] }>(
+      `/datasources/${encodeURIComponent(id)}/tables`),
+
   poolSyncGrants: () => request<{ actions: { action: string; detail: string }[] }>('/pool/sync/grants', { method: 'POST' }),
   poolSyncPgbouncer: () => request<{ config: string }>('/pool/sync/pgbouncer', { method: 'POST' }),
   poolCredentialRotate: (pg_role: string, new_password: string) =>
@@ -117,6 +136,24 @@ export const api = {
       `/pool/credentials/${encodeURIComponent(pg_role)}/rotate`,
       { method: 'POST', body: JSON.stringify({ new_password }) }
     ),
+};
+
+export type DataSource = {
+  source_id: string;
+  display_name: string;
+  description: string | null;
+  db_type: string;
+  host: string;
+  port: number;
+  database_name: string;
+  schemas: string[];
+  connector_user: string;
+  owner_subject: string | null;
+  registered_by: string;
+  is_active: boolean;
+  last_synced_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type PoolProfile = {

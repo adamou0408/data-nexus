@@ -1,17 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
-import { api, PoolProfile, PoolAssignment, PoolCredential } from '../api';
-import { Server, Key, RefreshCw, Play, ChevronRight, Plus, Pencil, Trash2, X, RotateCw } from 'lucide-react';
+import { api, PoolProfile, PoolAssignment, PoolCredential, DataSource } from '../api';
+import { Server, Key, RefreshCw, Play, ChevronRight, Plus, Pencil, Trash2, X, RotateCw, Database, Zap, Search } from 'lucide-react';
 
-type Section = 'profiles' | 'credentials' | 'sync';
+type Section = 'datasources' | 'profiles' | 'credentials' | 'sync';
 
 const sectionDefs: { id: Section; label: string; icon: React.ReactNode }[] = [
+  { id: 'datasources', label: 'Data Sources',  icon: <Database size={14} /> },
   { id: 'profiles',    label: 'Pool Profiles', icon: <Server size={14} /> },
   { id: 'credentials', label: 'Credentials',   icon: <Key size={14} /> },
   { id: 'sync',        label: 'Sync Ops',      icon: <RefreshCw size={14} /> },
 ];
 
 export function PoolTab() {
-  const [section, setSection] = useState<Section>('profiles');
+  const [section, setSection] = useState<Section>('datasources');
 
   return (
     <div className="space-y-6">
@@ -33,9 +34,166 @@ export function PoolTab() {
         ))}
       </div>
 
+      {section === 'datasources' && <DataSourcesSection />}
       {section === 'profiles' && <ProfilesSection />}
       {section === 'credentials' && <CredentialsSection />}
       {section === 'sync' && <SyncSection />}
+    </div>
+  );
+}
+
+/* ── Data Sources Section ── */
+
+function DataSourcesSection() {
+  const [sources, setSources] = useState<DataSource[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [testResults, setTestResults] = useState<Record<string, { status: string; version?: string; error?: string }>>({});
+  const [discoverResults, setDiscoverResults] = useState<Record<string, { tables_found: number; resources_created: number }>>({});
+  const [form, setForm] = useState({ source_id: '', display_name: '', host: 'localhost', port: '5432', database_name: '', schemas: 'public', connector_user: 'nexus_admin', connector_password: '', registered_by: 'admin' });
+
+  const load = useCallback(async () => {
+    try { setSources(await api.datasources()); } catch { /* ignore */ }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleCreate = async () => {
+    try {
+      await api.datasourceCreate({
+        source_id: form.source_id, display_name: form.display_name,
+        host: form.host, port: parseInt(form.port), database_name: form.database_name,
+        schemas: form.schemas.split(',').map(s => s.trim()),
+        connector_user: form.connector_user, connector_password: form.connector_password,
+        registered_by: form.registered_by,
+      });
+      setShowForm(false);
+      setForm({ source_id: '', display_name: '', host: 'localhost', port: '5432', database_name: '', schemas: 'public', connector_user: 'nexus_admin', connector_password: '', registered_by: 'admin' });
+      load();
+    } catch (err) { alert(String(err)); }
+  };
+
+  const handleTest = async (id: string) => {
+    try {
+      const result = await api.datasourceTest(id);
+      setTestResults(prev => ({ ...prev, [id]: result }));
+    } catch (err) {
+      setTestResults(prev => ({ ...prev, [id]: { status: 'failed', error: String(err) } }));
+    }
+  };
+
+  const handleDiscover = async (id: string) => {
+    try {
+      const result = await api.datasourceDiscover(id);
+      setDiscoverResults(prev => ({ ...prev, [id]: { tables_found: result.tables_found, resources_created: result.resources_created } }));
+    } catch (err) { alert(String(err)); }
+  };
+
+  if (loading) return <div className="text-slate-400">Loading data sources...</div>;
+
+  return (
+    <div className="card">
+      <div className="card-header flex items-center justify-between">
+        <h2 className="card-title">Registered Data Sources</h2>
+        <button onClick={() => setShowForm(!showForm)} className="btn btn-sm bg-blue-600 text-white hover:bg-blue-700 gap-1">
+          <Plus size={14} /> Register
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="p-4 border-b border-slate-200 bg-slate-50 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Source ID</label>
+              <input className="input" placeholder="ds:manufacturing" value={form.source_id} onChange={e => setForm(f => ({ ...f, source_id: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Display Name</label>
+              <input className="input" placeholder="Manufacturing Database" value={form.display_name} onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Host</label>
+              <input className="input" value={form.host} onChange={e => setForm(f => ({ ...f, host: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Port</label>
+              <input className="input" type="number" value={form.port} onChange={e => setForm(f => ({ ...f, port: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Database Name</label>
+              <input className="input" placeholder="nexus_data" value={form.database_name} onChange={e => setForm(f => ({ ...f, database_name: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Schemas (comma-separated)</label>
+              <input className="input" value={form.schemas} onChange={e => setForm(f => ({ ...f, schemas: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Connector User</label>
+              <input className="input" value={form.connector_user} onChange={e => setForm(f => ({ ...f, connector_user: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Connector Password</label>
+              <input className="input" type="password" value={form.connector_password} onChange={e => setForm(f => ({ ...f, connector_password: e.target.value }))} />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={handleCreate} className="btn btn-sm bg-green-600 text-white hover:bg-green-700">Create</button>
+            <button onClick={() => setShowForm(false)} className="btn btn-sm bg-white text-slate-600 border border-slate-300 hover:bg-slate-50">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Source ID</th>
+            <th>Display Name</th>
+            <th>Connection</th>
+            <th>Status</th>
+            <th>Last Synced</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sources.map(ds => (
+            <tr key={ds.source_id}>
+              <td className="font-mono text-xs">{ds.source_id}</td>
+              <td>{ds.display_name}</td>
+              <td className="font-mono text-xs">{ds.host}:{ds.port}/{ds.database_name}</td>
+              <td>
+                <span className={`badge ${ds.is_active ? 'badge-green' : 'badge-red'}`}>
+                  {ds.is_active ? 'Active' : 'Inactive'}
+                </span>
+                {testResults[ds.source_id] && (
+                  <span className={`ml-1 badge ${testResults[ds.source_id].status === 'ok' ? 'badge-green' : 'badge-red'}`}>
+                    {testResults[ds.source_id].status === 'ok' ? 'Connected' : 'Failed'}
+                  </span>
+                )}
+              </td>
+              <td className="text-xs text-slate-400">
+                {ds.last_synced_at ? new Date(ds.last_synced_at).toLocaleString() : 'Never'}
+              </td>
+              <td className="flex gap-1">
+                <button onClick={() => handleTest(ds.source_id)} className="btn btn-xs bg-white border border-slate-300 hover:bg-slate-50 gap-1" title="Test Connection">
+                  <Zap size={12} /> Test
+                </button>
+                <button onClick={() => handleDiscover(ds.source_id)} className="btn btn-xs bg-white border border-slate-300 hover:bg-slate-50 gap-1" title="Discover Schema">
+                  <Search size={12} /> Discover
+                </button>
+                {discoverResults[ds.source_id] && (
+                  <span className="text-xs text-green-600 self-center">
+                    {discoverResults[ds.source_id].tables_found} tables, {discoverResults[ds.source_id].resources_created} new resources
+                  </span>
+                )}
+              </td>
+            </tr>
+          ))}
+          {sources.length === 0 && (
+            <tr><td colSpan={6} className="text-center text-slate-400 py-8">No data sources registered</td></tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }

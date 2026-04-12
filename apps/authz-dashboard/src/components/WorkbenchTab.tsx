@@ -17,6 +17,8 @@ export function WorkbenchTab() {
   const [rows, setRows] = useState<LotRow[]>([]);
   const [columnAccess, setColumnAccess] = useState<ColumnAccess>({});
   const [allColumns, setAllColumns] = useState<string[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [filteredCount, setFilteredCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -37,6 +39,8 @@ export function WorkbenchTab() {
 
       const simResult = await api.rlsSimulate(user.id, user.groups, user.attrs, 'lot_status');
       setRows(simResult.filtered_rows);
+      setTotalCount(simResult.total_count);
+      setFilteredCount(simResult.filtered_count);
       if (simResult.filtered_rows.length > 0) {
         setAllColumns(Object.keys(simResult.filtered_rows[0]).filter(k => k !== 'created_at'));
       }
@@ -128,7 +132,7 @@ export function WorkbenchTab() {
                   <div className="flex items-center gap-1.5">
                     {allowed
                       ? <><Eye size={12} className="text-emerald-600" /><span className="text-xs text-emerald-600 font-medium">Visible</span></>
-                      : <><EyeOff size={12} className="text-red-600" /><span className="text-xs text-red-600 font-medium">Hidden</span></>
+                      : <><EyeOff size={12} className="text-red-600" /><span className="text-xs text-red-600 font-medium" title="依授權政策隱藏 — 聯絡 IT Admin 申請存取">Hidden</span></>
                     }
                   </div>
                   <div className="text-[10px] text-slate-400 mt-1.5 font-mono">{perm.resource}</div>
@@ -161,7 +165,7 @@ export function WorkbenchTab() {
           <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
             <Table2 size={16} className="text-blue-600" />
             Lot Status Data
-            <span className="badge badge-slate ml-1">{rows.length} rows</span>
+            <span className="badge badge-slate ml-1">{filteredCount} / {totalCount} rows</span>
           </h3>
           <button onClick={loadData} disabled={loading} className="btn-secondary btn-sm">
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
@@ -205,6 +209,13 @@ export function WorkbenchTab() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {rows.length > 0 && totalCount > filteredCount && (
+          <div className="px-5 py-3 border-t border-slate-100 text-xs text-slate-500 flex items-center gap-1.5">
+            <Info size={12} className="text-amber-500" />
+            顯示 {filteredCount} 筆（共 {totalCount} 筆，{totalCount - filteredCount} 筆依 RLS 篩選排除）
           </div>
         )}
       </div>

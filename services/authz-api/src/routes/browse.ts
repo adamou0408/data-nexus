@@ -374,6 +374,7 @@ browseRouter.get('/audit-logs', async (req, res) => {
   const offset = parseInt(req.query.offset as string) || 0;
   const subject = req.query.subject as string | undefined;
   const action = req.query.action as string | undefined;
+  const path = req.query.path as string | undefined;
   try {
     let query = 'SELECT * FROM authz_audit_log WHERE 1=1';
     const params: (string | number)[] = [];
@@ -385,6 +386,10 @@ browseRouter.get('/audit-logs', async (req, res) => {
     if (action) {
       query += ` AND action_id = $${idx++}`;
       params.push(action);
+    }
+    if (path && ['A', 'B', 'C'].includes(path)) {
+      query += ` AND access_path = $${idx++}`;
+      params.push(path);
     }
     query += ` ORDER BY timestamp DESC LIMIT $${idx++} OFFSET $${idx++}`;
     params.push(limit, offset);
