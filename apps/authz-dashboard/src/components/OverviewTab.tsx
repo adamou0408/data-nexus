@@ -1,10 +1,10 @@
 import { useState, useEffect, ReactNode } from 'react';
 import { useAuthz } from '../AuthzContext';
-import { api } from '../api';
+import { api, ActionItem } from '../api';
 import {
   Users, Shield, Database, FileText,
   Layers, ArrowRight, CheckCircle2, XCircle,
-  Lock, Eye,
+  Lock, Eye, Search, AlertTriangle, Clock,
 } from 'lucide-react';
 
 type Stats = {
@@ -17,14 +17,21 @@ type Stats = {
 export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
   const { user, config } = useAuthz();
   const [stats, setStats] = useState<Stats | null>(null);
+  const [actionItems, setActionItems] = useState<ActionItem[]>([]);
+  const isAdmin = config?.resolved_roles?.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN') ?? false;
 
   useEffect(() => {
+    if (!isAdmin) return;
     Promise.all([
       api.subjects(), api.roles(), api.resources(), api.policies(),
     ]).then(([s, r, res, p]) => {
       setStats({ subjects: s.length, roles: r.length, resources: res.length, policies: p.length });
     }).catch(() => {});
-  }, []);
+  }, [isAdmin]);
+
+  useEffect(() => {
+    api.actionItems(user?.id).then(setActionItems).catch(() => {});
+  }, [user?.id]);
 
   return (
     <div className="space-y-6">
@@ -36,29 +43,79 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
         </p>
       </div>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          icon={<Users size={20} />} iconBg="bg-blue-100 text-blue-600"
-          value={stats?.subjects ?? '-'} label="Subjects"
-          onClick={() => onNavigate('browser')}
-        />
-        <StatCard
-          icon={<Shield size={20} />} iconBg="bg-emerald-100 text-emerald-600"
-          value={stats?.roles ?? '-'} label="Roles"
-          onClick={() => onNavigate('browser')}
-        />
-        <StatCard
-          icon={<Database size={20} />} iconBg="bg-purple-100 text-purple-600"
-          value={stats?.resources ?? '-'} label="Resources"
-          onClick={() => onNavigate('browser')}
-        />
-        <StatCard
-          icon={<FileText size={20} />} iconBg="bg-amber-100 text-amber-600"
-          value={stats?.policies ?? '-'} label="ABAC Policies"
-          onClick={() => onNavigate('browser')}
-        />
-      </div>
+      {/* Stat cards — admin only */}
+      {isAdmin && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard
+            icon={<Users size={20} />} iconBg="bg-blue-100 text-blue-600"
+            value={stats?.subjects ?? '-'} label="Subjects"
+            onClick={() => onNavigate('browser')}
+          />
+          <StatCard
+            icon={<Shield size={20} />} iconBg="bg-emerald-100 text-emerald-600"
+            value={stats?.roles ?? '-'} label="Roles"
+            onClick={() => onNavigate('browser')}
+          />
+          <StatCard
+            icon={<Database size={20} />} iconBg="bg-purple-100 text-purple-600"
+            value={stats?.resources ?? '-'} label="Resources"
+            onClick={() => onNavigate('browser')}
+          />
+          <StatCard
+            icon={<FileText size={20} />} iconBg="bg-amber-100 text-amber-600"
+            value={stats?.policies ?? '-'} label="ABAC Policies"
+            onClick={() => onNavigate('browser')}
+          />
+        </div>
+      )}
+
+      {/* Action Items / Approval Queue */}
+      {actionItems.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <AlertTriangle size={16} className="text-amber-500" />
+              Action Items
+            </h2>
+            <span className="badge badge-amber">{actionItems.length}</span>
+          </div>
+          <div className="card-body space-y-2">
+            {actionItems.map((item, i) => (
+              <div key={i} className={`flex items-start gap-3 p-3 rounded-lg border ${
+                item.severity === 'error' ? 'border-red-200 bg-red-50' :
+                item.severity === 'warning' ? 'border-amber-200 bg-amber-50' :
+                'border-blue-200 bg-blue-50'
+              }`}>
+                <div className={`mt-0.5 shrink-0 ${
+                  item.severity === 'error' ? 'text-red-500' :
+                  item.severity === 'warning' ? 'text-amber-500' :
+                  'text-blue-500'
+                }`}>
+                  {item.severity === 'error' ? <XCircle size={16} /> :
+                   item.severity === 'warning' ? <AlertTriangle size={16} /> :
+                   <Clock size={16} />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-slate-900">{item.title}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">{item.detail}</div>
+                </div>
+                <span className={`badge text-[10px] shrink-0 ${
+                  item.type === 'ssot_drift' ? 'badge-red' :
+                  item.type === 'credential_rotation' ? 'badge-amber' :
+                  item.type === 'role_expiring' ? 'badge-purple' :
+                  'badge-slate'
+                }`}>
+                  {item.type === 'ssot_drift' ? 'SSOT' :
+                   item.type === 'credential_rotation' ? 'Credential' :
+                   item.type === 'role_expiring' ? 'Role' :
+                   item.type === 'access_denied' ? 'Denied' :
+                   item.type}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Current user card + Quick actions */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -161,13 +218,8 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
           <div className="card-body space-y-2">
             <QuickAction
               icon={<Shield size={16} />} label="Resolve Permissions"
-              desc="Full L0-L3 config for any user"
+              desc="View your L0-L3 permission config"
               onClick={() => onNavigate('resolve')}
-            />
-            <QuickAction
-              icon={<Database size={16} />} label="RLS Simulator"
-              desc="Compare data access side-by-side"
-              onClick={() => onNavigate('rls')}
             />
             <QuickAction
               icon={<Grid3x3Icon />} label="Permission Matrix"
@@ -175,43 +227,64 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
               onClick={() => onNavigate('matrix')}
             />
             <QuickAction
-              icon={<Table2Icon />} label="Data Workbench"
+              icon={<Table2Icon />} label="Tables & Schema"
+              desc="Browse business data tables"
+              onClick={() => onNavigate('tables')}
+            />
+            <QuickAction
+              icon={<Database size={16} />} label="Data Workbench"
               desc="Live data with column masking"
               onClick={() => onNavigate('workbench')}
             />
+            {isAdmin && (
+              <>
+                <QuickAction
+                  icon={<Search size={16} />} label="Permission Checker"
+                  desc="Check any user's permission"
+                  onClick={() => onNavigate('check')}
+                />
+                <QuickAction
+                  icon={<Eye size={16} />} label="RLS Simulator"
+                  desc="Compare data access side-by-side"
+                  onClick={() => onNavigate('rls')}
+                />
+              </>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Three paths info */}
-      <div className="card">
-        <div className="card-header">
-          <h2 className="text-sm font-semibold text-slate-900">Three Access Paths</h2>
-          <span className="badge badge-slate">SSOT Architecture</span>
-        </div>
-        <div className="card-body">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <PathCard
-              letter="A" name="Config-SM"
-              desc="Metadata-driven UI with full L0-L3 config. Smart rendering based on resolved permissions."
-              tags={['L0 Functional', 'L1 RLS', 'L2 Masks', 'L3 Workflows']}
-              color="blue"
-            />
-            <PathCard
-              letter="B" name="Web + API"
-              desc="Traditional middleware-gated routes. API-level access control with row filtering."
-              tags={['L0 Functional', 'L1 RLS']}
-              color="emerald"
-            />
-            <PathCard
-              letter="C" name="DB Pool"
-              desc="PostgreSQL native GRANT + RLS via pgbouncer connection pools."
-              tags={['PG GRANT', 'Native RLS', 'Column Deny']}
-              color="purple"
-            />
+      {/* Three paths info — admin only */}
+      {isAdmin && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="text-sm font-semibold text-slate-900">Three Access Paths</h2>
+            <span className="badge badge-slate">SSOT Architecture</span>
+          </div>
+          <div className="card-body">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <PathCard
+                letter="A" name="Config-SM"
+                desc="Metadata-driven UI with full L0-L3 config. Smart rendering based on resolved permissions."
+                tags={['L0 Functional', 'L1 RLS', 'L2 Masks', 'L3 Workflows']}
+                color="blue"
+              />
+              <PathCard
+                letter="B" name="Web + API"
+                desc="Traditional middleware-gated routes. API-level access control with row filtering."
+                tags={['L0 Functional', 'L1 RLS']}
+                color="emerald"
+              />
+              <PathCard
+                letter="C" name="DB Pool"
+                desc="PostgreSQL native GRANT + RLS via pgbouncer connection pools."
+                tags={['PG GRANT', 'Native RLS', 'Column Deny']}
+                color="purple"
+              />
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

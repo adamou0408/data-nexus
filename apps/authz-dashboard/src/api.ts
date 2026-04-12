@@ -65,6 +65,8 @@ export const api = {
   resources: () => request<Record<string, unknown>[]>('/browse/resources'),
   policies: () => request<Record<string, unknown>[]>('/browse/policies'),
   actions: () => request<Record<string, unknown>[]>('/browse/actions'),
+  actionItems: (userId?: string) =>
+    request<ActionItem[]>(`/browse/action-items${userId ? `?user_id=${encodeURIComponent(userId)}` : ''}`),
   auditLogs: (params?: { subject?: string; action?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();
     if (params?.subject) qs.set('subject', params.subject);
@@ -156,4 +158,12 @@ export type SqlFunction = {
   return_type: string;
   description: string | null;
   volatility: string;
+};
+
+export type ActionItem = {
+  type: string;
+  severity: 'error' | 'warning' | 'info';
+  title: string;
+  detail: string;
+  meta?: unknown;
 };
