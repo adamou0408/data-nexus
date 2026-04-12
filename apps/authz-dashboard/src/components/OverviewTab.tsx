@@ -80,39 +80,53 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
             <span className="badge badge-amber">{actionItems.length}</span>
           </div>
           <div className="card-body space-y-2">
-            {actionItems.map((item, i) => (
-              <div key={i} className={`flex items-start gap-3 p-3 rounded-lg border ${
-                item.severity === 'error' ? 'border-red-200 bg-red-50' :
-                item.severity === 'warning' ? 'border-amber-200 bg-amber-50' :
-                'border-blue-200 bg-blue-50'
-              }`}>
-                <div className={`mt-0.5 shrink-0 ${
-                  item.severity === 'error' ? 'text-red-500' :
-                  item.severity === 'warning' ? 'text-amber-500' :
-                  'text-blue-500'
+            {actionItems.map((item, i) => {
+              const guidance = actionGuidance(item, onNavigate);
+              return (
+                <div key={i} className={`p-3 rounded-lg border ${
+                  item.severity === 'error' ? 'border-red-200 bg-red-50' :
+                  item.severity === 'warning' ? 'border-amber-200 bg-amber-50' :
+                  'border-blue-200 bg-blue-50'
                 }`}>
-                  {item.severity === 'error' ? <XCircle size={16} /> :
-                   item.severity === 'warning' ? <AlertTriangle size={16} /> :
-                   <Clock size={16} />}
+                  <div className="flex items-start gap-3">
+                    <div className={`mt-0.5 shrink-0 ${
+                      item.severity === 'error' ? 'text-red-500' :
+                      item.severity === 'warning' ? 'text-amber-500' :
+                      'text-blue-500'
+                    }`}>
+                      {item.severity === 'error' ? <XCircle size={16} /> :
+                       item.severity === 'warning' ? <AlertTriangle size={16} /> :
+                       <Clock size={16} />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-slate-900">{item.title}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">{item.detail}</div>
+                      {guidance && (
+                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                          <span className="text-xs text-slate-600">{guidance.hint}</span>
+                          <button onClick={guidance.action}
+                            className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
+                            {guidance.label} <ArrowRight size={12} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <span className={`badge text-[10px] shrink-0 ${
+                      item.type === 'ssot_drift' ? 'badge-red' :
+                      item.type === 'credential_rotation' ? 'badge-amber' :
+                      item.type === 'role_expiring' ? 'badge-purple' :
+                      'badge-slate'
+                    }`}>
+                      {item.type === 'ssot_drift' ? 'SSOT' :
+                       item.type === 'credential_rotation' ? 'Credential' :
+                       item.type === 'role_expiring' ? 'Role' :
+                       item.type === 'access_denied' ? 'Denied' :
+                       item.type}
+                    </span>
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-slate-900">{item.title}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">{item.detail}</div>
-                </div>
-                <span className={`badge text-[10px] shrink-0 ${
-                  item.type === 'ssot_drift' ? 'badge-red' :
-                  item.type === 'credential_rotation' ? 'badge-amber' :
-                  item.type === 'role_expiring' ? 'badge-purple' :
-                  'badge-slate'
-                }`}>
-                  {item.type === 'ssot_drift' ? 'SSOT' :
-                   item.type === 'credential_rotation' ? 'Credential' :
-                   item.type === 'role_expiring' ? 'Role' :
-                   item.type === 'access_denied' ? 'Denied' :
-                   item.type}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -287,6 +301,40 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
       )}
     </div>
   );
+}
+
+function actionGuidance(
+  item: ActionItem,
+  onNavigate: (tab: string) => void,
+): { hint: string; label: string; action: () => void } | null {
+  switch (item.type) {
+    case 'ssot_drift':
+      return {
+        hint: 'Pool 靜態設定與權限規則不一致，請執行同步以修正。',
+        label: 'Go to Sync Grants',
+        action: () => onNavigate('pool'),
+      };
+    case 'credential_rotation':
+      return {
+        hint: '請盡快輪換密碼以避免連線中斷。',
+        label: 'Go to Credentials',
+        action: () => onNavigate('pool'),
+      };
+    case 'role_expiring':
+      return {
+        hint: '授權即將到期，如需延期請至 Entity Browser 處理。',
+        label: 'Go to Entity Browser',
+        action: () => onNavigate('browser'),
+      };
+    case 'access_denied':
+      return {
+        hint: '如需此權限，請聯繫 IT Admin 申請存取。',
+        label: 'View My Permissions',
+        action: () => onNavigate('resolve'),
+      };
+    default:
+      return null;
+  }
 }
 
 function StatCard({ icon, iconBg, value, label, onClick }: {
