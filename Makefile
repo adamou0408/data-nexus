@@ -81,7 +81,23 @@ db-users: ## List all authz subjects
 verify: ## Run Milestone 1 verification tests
 	bash scripts/verify-milestone1.sh
 
+verify-path-c: ## Run Path C verification (PG roles + RLS + pgbouncer)
+	bash scripts/verify-path-c.sh
+
 # ── Quick Queries (dev convenience) ──────────────────────────
+
+db-sync-grants: ## Run authz_sync_db_grants() to sync PG roles/grants from SSOT
+	@$(PSQL) -c "SELECT * FROM authz_sync_db_grants();"
+	@echo "DB grants synced."
+
+db-pgbouncer-config: ## Generate pgbouncer config from SSOT
+	@$(PSQL) -c "SELECT authz_sync_pgbouncer_config('postgres', 5432, 'nexus_authz');"
+
+db-pathc-psql: ## Connect as a Path C role (usage: make db-pathc-psql ROLE=nexus_pe_ro PASS=dev_pe_pass)
+	@PGPASSWORD=$(PASS) psql -h localhost -p 5432 -U $(ROLE) -d nexus_authz
+
+logs-pgbouncer: ## Tail pgbouncer logs
+	$(COMPOSE) logs -f pgbouncer
 
 q-resolve: ## Resolve permissions for PE SSD user
 	@$(PSQL) -c "SELECT jsonb_pretty(authz_resolve('test_pe_ssd', ARRAY['PE_SSD'], '{\"product_line\": \"SSD-Controller\"}'::jsonb));"

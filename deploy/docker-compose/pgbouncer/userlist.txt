@@ -1,0 +1,8 @@
+; pgbouncer userlist — format: "username" "password"
+; Passwords are plain text for dev; in production use md5 or scram-sha-256
+"nexus_pe_ro" "dev_pe_pass"
+"nexus_sales_ro" "dev_sales_pass"
+"nexus_bi_ro" "dev_bi_pass"
+"nexus_etl_rw" "dev_etl_pass"
+"nexus_admin_full" "dev_admin_pass"
+"nexus_admin" "nexus_dev_password"
