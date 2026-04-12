@@ -1,22 +1,8 @@
 import { useState } from 'react';
 import { api } from '../api';
+import { TEST_USERS } from '../AuthzContext';
 import { JsonView } from './JsonView';
-
-const TEST_USERS: { id: string; label: string; groups: string[]; attrs: Record<string, string> }[] = [
-  { id: 'wang_pe',      label: 'Wang (PE-SSD)',       groups: ['PE_SSD'],   attrs: { product_line: 'SSD', site: 'HQ' } },
-  { id: 'chen_pe',      label: 'Chen (PE-eMMC)',      groups: ['PE_EMMC'],  attrs: { product_line: 'eMMC', site: 'HQ' } },
-  { id: 'lin_pm',       label: 'Lin (PM-SSD)',        groups: ['PM_SSD'],   attrs: { product_line: 'SSD' } },
-  { id: 'huang_qa',     label: 'Huang (QA)',          groups: ['QA_ALL'],   attrs: {} },
-  { id: 'lee_sales',    label: 'Lee (Sales-TW)',      groups: ['SALES_TW'], attrs: { region: 'TW' } },
-  { id: 'zhang_sales',  label: 'Zhang (Sales-CN)',    groups: ['SALES_CN'], attrs: { region: 'CN' } },
-  { id: 'wu_fae',       label: 'Wu (FAE-TW)',         groups: ['FAE_TW'],   attrs: { region: 'TW' } },
-  { id: 'liu_fw',       label: 'Liu (FW-SSD)',        groups: ['RD_FW'],    attrs: { product_line: 'SSD' } },
-  { id: 'hsu_op',       label: 'Hsu (OP-SSD)',        groups: ['OP_SSD'],   attrs: { product_line: 'SSD', site: 'HQ' } },
-  { id: 'yang_finance', label: 'Yang (Finance)',      groups: ['FINANCE_TEAM'], attrs: {} },
-  { id: 'chang_vp',     label: 'Chang (VP)',          groups: ['VP_OFFICE'],attrs: {} },
-  { id: 'tsai_bi',      label: 'Tsai (BI)',           groups: ['BI_TEAM'],  attrs: {} },
-  { id: 'sys_admin',    label: 'SysAdmin',            groups: [],           attrs: {} },
-];
+import { Shield, Play, ChevronRight } from 'lucide-react';
 
 export function ResolveTab() {
   const [selectedUser, setSelectedUser] = useState(0);
@@ -35,129 +21,202 @@ export function ResolveTab() {
     setLoading(false);
   };
 
-  const r = result as Record<string, unknown> | null;
+  const r = result;
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-semibold mb-4">authz_resolve() — Full Permission Config</h2>
-        <div className="flex gap-4 items-end">
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Test User</label>
-            <select
-              value={selectedUser}
-              onChange={(e) => setSelectedUser(Number(e.target.value))}
-              className="w-full border rounded-md px-3 py-2"
-            >
-              {TEST_USERS.map((u, i) => (
-                <option key={u.id} value={i}>{u.label} ({u.id})</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <div className="text-sm text-gray-500 mb-1">
-              Groups: <code className="bg-gray-100 px-1 rounded">{JSON.stringify(TEST_USERS[selectedUser].groups)}</code>
+      {/* Page header */}
+      <div className="page-header">
+        <h1 className="page-title">Permission Resolver</h1>
+        <p className="page-desc">
+          Call <span className="code">authz_resolve()</span> to get the full L0-L3 permission config for any user
+        </p>
+      </div>
+
+      {/* Input card */}
+      <div className="card">
+        <div className="card-body">
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] lg:grid-cols-[1fr_auto_auto] gap-4 items-end">
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                Test User
+              </label>
+              <select
+                value={selectedUser}
+                onChange={(e) => setSelectedUser(Number(e.target.value))}
+                className="select"
+              >
+                {TEST_USERS.map((u, i) => (
+                  <option key={u.id} value={i}>{u.label} ({u.id})</option>
+                ))}
+              </select>
             </div>
-            <div className="text-sm text-gray-500">
-              Attrs: <code className="bg-gray-100 px-1 rounded">{JSON.stringify(TEST_USERS[selectedUser].attrs)}</code>
+            <div className="text-xs text-slate-500 space-y-1 hidden lg:block">
+              <div>Groups: <span className="code">{JSON.stringify(TEST_USERS[selectedUser].groups)}</span></div>
+              <div>Attrs: <span className="code">{JSON.stringify(TEST_USERS[selectedUser].attrs)}</span></div>
             </div>
+            <button onClick={resolve} disabled={loading} className="btn-primary w-full sm:w-auto">
+              <Play size={14} />
+              {loading ? 'Resolving...' : 'Resolve'}
+            </button>
           </div>
-          <button
-            onClick={resolve}
-            disabled={loading}
-            className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50"
-          >
-            {loading ? 'Resolving...' : 'Resolve'}
-          </button>
         </div>
       </div>
 
       {r && !r.error && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <>
           {/* Resolved Roles */}
-          <div className="bg-white rounded-lg shadow p-4">
-            <h3 className="font-semibold text-sm text-gray-600 mb-2">Resolved Roles</h3>
-            <div className="flex gap-2 flex-wrap">
-              {(r.resolved_roles as string[] || []).map((role: string) => (
-                <span key={role} className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
-                  {role}
-                </span>
-              ))}
+          <div className="card">
+            <div className="card-header">
+              <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <Shield size={16} className="text-blue-600" />
+                Resolved Roles
+              </h2>
+            </div>
+            <div className="card-body">
+              <div className="flex gap-2 flex-wrap">
+                {(r.resolved_roles as string[] || []).map((role: string) => (
+                  <span key={role} className="badge badge-blue">{role}</span>
+                ))}
+              </div>
             </div>
           </div>
 
-          {/* L0 Functional */}
-          <div className="bg-white rounded-lg shadow p-4">
-            <h3 className="font-semibold text-sm text-gray-600 mb-2">L0: Functional Access</h3>
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-gray-500"><th className="pb-1">Resource</th><th className="pb-1">Action</th></tr></thead>
-              <tbody>
-                {(r.L0_functional as { resource: string; action: string }[] || []).map((p, i) => (
-                  <tr key={i} className="border-t">
-                    <td className="py-1 font-mono text-xs">{p.resource}</td>
-                    <td className="py-1">
-                      <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs">{p.action}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* Authorization Levels Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* L0 Functional */}
+            <div className="card">
+              <div className="card-header">
+                <h3 className="text-sm font-semibold text-slate-900">L0: Functional Access</h3>
+                <span className="badge badge-green">{(r.L0_functional as unknown[])?.length ?? 0}</span>
+              </div>
+              <div className="table-container max-h-80">
+                <table className="table">
+                  <thead>
+                    <tr><th>Resource</th><th>Action</th></tr>
+                  </thead>
+                  <tbody>
+                    {(r.L0_functional as { resource: string; action: string }[] || []).map((p, i) => (
+                      <tr key={i}>
+                        <td className="font-mono text-xs text-slate-700">{p.resource}</td>
+                        <td><span className="badge badge-green">{p.action}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
 
-          {/* L1 Data Scope */}
-          <div className="bg-white rounded-lg shadow p-4">
-            <h3 className="font-semibold text-sm text-gray-600 mb-2">L1: Data Domain Scope (RLS)</h3>
-            {Object.keys(r.L1_data_scope as Record<string, unknown> || {}).length === 0 ? (
-              <p className="text-gray-400 text-sm">No data scope policies</p>
-            ) : (
-              Object.entries(r.L1_data_scope as Record<string, { rls_expression: string; subject_condition: unknown; resource_condition: unknown }>).map(([name, policy]) => (
-                <div key={name} className="mb-3 p-3 bg-amber-50 rounded border border-amber-200">
-                  <div className="font-medium text-sm">{name}</div>
-                  <div className="mt-1 font-mono text-xs bg-white px-2 py-1 rounded border">
-                    WHERE {policy.rls_expression}
+            {/* L1 Data Scope */}
+            <div className="card">
+              <div className="card-header">
+                <h3 className="text-sm font-semibold text-slate-900">L1: Data Domain Scope</h3>
+                <span className="badge badge-amber">
+                  {Object.keys(r.L1_data_scope as Record<string, unknown> || {}).length}
+                </span>
+              </div>
+              <div className="card-body">
+                {Object.keys(r.L1_data_scope as Record<string, unknown> || {}).length === 0 ? (
+                  <p className="text-slate-400 text-sm text-center py-4">No data scope policies apply</p>
+                ) : (
+                  <div className="space-y-3">
+                    {Object.entries(
+                      r.L1_data_scope as Record<string, { rls_expression: string; subject_condition: unknown; resource_condition: unknown }>
+                    ).map(([name, policy]) => (
+                      <div key={name} className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
+                        <div className="text-sm font-medium text-slate-900 mb-1.5">{name}</div>
+                        <div className="font-mono text-xs bg-white px-3 py-2 rounded border border-amber-200 text-amber-800">
+                          WHERE {policy.rls_expression}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </div>
-              ))
-            )}
-          </div>
+                )}
+              </div>
+            </div>
 
-          {/* L2 Column Masks */}
-          <div className="bg-white rounded-lg shadow p-4">
-            <h3 className="font-semibold text-sm text-gray-600 mb-2">L2: Column Masks</h3>
-            {Object.keys(r.L2_column_masks as Record<string, unknown> || {}).length === 0 ? (
-              <p className="text-gray-400 text-sm">No column mask rules</p>
-            ) : (
-              <pre className="text-xs bg-gray-50 p-2 rounded">{JSON.stringify(r.L2_column_masks, null, 2)}</pre>
-            )}
-          </div>
-
-          {/* L3 Actions */}
-          <div className="bg-white rounded-lg shadow p-4 lg:col-span-2">
-            <h3 className="font-semibold text-sm text-gray-600 mb-2">L3: Composite Actions (Approval Workflows)</h3>
-            {(r.L3_actions as unknown[] || []).length === 0 ? (
-              <p className="text-gray-400 text-sm">No composite action policies</p>
-            ) : (
-              (r.L3_actions as { action: string; resource: string; approval_chain: { step: number; required_role: string; min_approvers: number }[]; preconditions: Record<string, string> }[]).map((a, i) => (
-                <div key={i} className="p-3 bg-purple-50 rounded border border-purple-200 mb-2">
-                  <span className="font-medium">{a.action}</span> on <code className="text-xs">{a.resource}</code>
-                  <div className="mt-1 text-xs text-gray-600">
-                    Chain: {a.approval_chain.map(s => `Step ${s.step}: ${s.required_role} (min ${s.min_approvers})`).join(' -> ')}
+            {/* L2 Column Masks */}
+            <div className="card">
+              <div className="card-header">
+                <h3 className="text-sm font-semibold text-slate-900">L2: Column Masks</h3>
+                <span className="badge badge-purple">
+                  {Object.keys(r.L2_column_masks as Record<string, unknown> || {}).length}
+                </span>
+              </div>
+              <div className="card-body">
+                {Object.keys(r.L2_column_masks as Record<string, unknown> || {}).length === 0 ? (
+                  <p className="text-slate-400 text-sm text-center py-4">No column mask rules apply</p>
+                ) : (
+                  <div className="space-y-3">
+                    {Object.entries(
+                      r.L2_column_masks as Record<string, Record<string, { mask_type: string; function: string }>>
+                    ).map(([policy, cols]) => (
+                      <div key={policy} className="rounded-lg border border-purple-200 bg-purple-50/50 p-3">
+                        <div className="text-sm font-medium text-slate-900 mb-2">{policy}</div>
+                        <div className="space-y-1">
+                          {Object.entries(cols).map(([col, rule]) => (
+                            <div key={col} className="flex items-center gap-2 text-xs">
+                              <span className="font-mono text-slate-700">{col}</span>
+                              <ChevronRight size={12} className="text-slate-400" />
+                              <span className="badge badge-purple">{rule.mask_type}</span>
+                              <span className="text-slate-500">{rule.function}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  {Object.keys(a.preconditions).length > 0 && (
-                    <div className="text-xs text-gray-500">Preconditions: {JSON.stringify(a.preconditions)}</div>
-                  )}
-                </div>
-              ))
-            )}
+                )}
+              </div>
+            </div>
+
+            {/* L3 Actions */}
+            <div className="card">
+              <div className="card-header">
+                <h3 className="text-sm font-semibold text-slate-900">L3: Composite Actions</h3>
+                <span className="badge badge-indigo">
+                  {(r.L3_actions as unknown[] || []).length}
+                </span>
+              </div>
+              <div className="card-body">
+                {(r.L3_actions as unknown[] || []).length === 0 ? (
+                  <p className="text-slate-400 text-sm text-center py-4">No composite action policies</p>
+                ) : (
+                  <div className="space-y-3">
+                    {(r.L3_actions as { action: string; resource: string; approval_chain: { step: number; required_role: string; min_approvers: number }[]; preconditions: Record<string, string> }[]).map((a, i) => (
+                      <div key={i} className="rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="badge badge-indigo">{a.action}</span>
+                          <span className="text-xs text-slate-500">on</span>
+                          <span className="code">{a.resource}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                          {a.approval_chain.map((s, si) => (
+                            <span key={si} className="flex items-center gap-1">
+                              {si > 0 && <ChevronRight size={12} className="text-slate-400" />}
+                              <span className="bg-white border border-indigo-200 rounded px-2 py-0.5">
+                                Step {s.step}: {s.required_role}
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
+
+          <JsonView data={r} />
+        </>
+      )}
+
+      {r && 'error' in r && (
+        <div className="card border-red-200 bg-red-50">
+          <div className="card-body text-red-700 text-sm">{String(r.error)}</div>
         </div>
       )}
-
-      {'error' in (r ?? {}) && (
-        <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-lg">{String(r!.error)}</div>
-      )}
-
-      {r && <JsonView data={r} />}
     </div>
   );
 }

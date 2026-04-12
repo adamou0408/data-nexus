@@ -1,26 +1,11 @@
 import { useState } from 'react';
 import { api } from '../api';
-
-const TEST_USERS: { id: string; label: string; groups: string[]; attrs: Record<string, string> }[] = [
-  { id: 'wang_pe',      label: 'Wang PE-SSD (SSD only)',    groups: ['PE_SSD'],      attrs: { product_line: 'SSD', site: 'HQ' } },
-  { id: 'chen_pe',      label: 'Chen PE-eMMC (eMMC only)',  groups: ['PE_EMMC'],     attrs: { product_line: 'eMMC', site: 'HQ' } },
-  { id: 'lin_pm',       label: 'Lin PM-SSD (SSD only)',     groups: ['PM_SSD'],      attrs: { product_line: 'SSD' } },
-  { id: 'huang_qa',     label: 'Huang QA (all lines)',      groups: ['QA_ALL'],      attrs: {} },
-  { id: 'hsu_op',       label: 'Hsu OP-SSD (SSD only)',     groups: ['OP_SSD'],      attrs: { product_line: 'SSD', site: 'HQ' } },
-  { id: 'liu_fw',       label: 'Liu FW-SSD (SSD only)',     groups: ['RD_FW'],       attrs: { product_line: 'SSD' } },
-  { id: 'lee_sales',    label: 'Lee Sales-TW (TW orders)',  groups: ['SALES_TW'],    attrs: { region: 'TW' } },
-  { id: 'zhang_sales',  label: 'Zhang Sales-CN (CN orders)',groups: ['SALES_CN'],    attrs: { region: 'CN' } },
-  { id: 'smith_sales',  label: 'Smith Sales-US (US orders)',groups: ['SALES_US'],    attrs: { region: 'US' } },
-  { id: 'wu_fae',       label: 'Wu FAE-TW (TW data)',       groups: ['FAE_TW'],      attrs: { region: 'TW' } },
-  { id: 'yang_finance', label: 'Yang Finance (all data)',   groups: ['FINANCE_TEAM'],attrs: {} },
-  { id: 'chang_vp',     label: 'Chang VP (all data)',       groups: ['VP_OFFICE'],   attrs: {} },
-  { id: 'tsai_bi',      label: 'Tsai BI (all data)',        groups: ['BI_TEAM'],     attrs: {} },
-  { id: 'sys_admin',    label: 'SysAdmin (all data)',       groups: [],              attrs: {} },
-];
+import { TEST_USERS } from '../AuthzContext';
+import { Database, Play, ArrowLeftRight, Lock, ShieldOff } from 'lucide-react';
 
 const TABLES = [
-  { id: 'lot_status', label: 'lot_status (Lot Tracking)', hint: 'Filtered by product_line' },
-  { id: 'sales_order', label: 'sales_order (Sales Orders)', hint: 'Filtered by region' },
+  { id: 'lot_status', label: 'lot_status', hint: 'Filtered by product_line' },
+  { id: 'sales_order', label: 'sales_order', hint: 'Filtered by region' },
 ];
 
 type SimResult = {
@@ -35,7 +20,7 @@ type SimResult = {
 
 export function RlsTab() {
   const [leftUser, setLeftUser] = useState(0);
-  const [rightUser, setRightUser] = useState(3); // QA by default
+  const [rightUser, setRightUser] = useState(3);
   const [table, setTable] = useState('lot_status');
   const [leftResult, setLeftResult] = useState<SimResult | null>(null);
   const [rightResult, setRightResult] = useState<SimResult | null>(null);
@@ -54,146 +39,174 @@ export function RlsTab() {
     setLoading(false);
   };
 
-  const renderTable = (result: SimResult, label: string) => {
-    const cols = result.filtered_rows.length > 0
-      ? Object.keys(result.filtered_rows[0]).filter(k => k !== 'created_at')
-      : [];
-    const masks = result.column_masks || {};
-
-    const colHeaderClass = (c: string) => {
-      if (masks[c]?.startsWith('DENIED')) return 'bg-red-100 text-red-800';
-      if (masks[c]) return 'bg-amber-100 text-amber-800';
-      return '';
-    };
-
-    return (
-      <div className="bg-white rounded-lg shadow p-4">
-        <h3 className="font-semibold text-sm mb-2">
-          {label}
-          {result.resolved_roles && (
-            <span className="ml-2 text-xs font-normal text-gray-500">
-              roles: {result.resolved_roles.join(', ') || 'none'}
-            </span>
-          )}
-        </h3>
-        <div className="mb-2 p-2 bg-gray-50 rounded border">
-          <div className="text-xs text-gray-500">SQL WHERE clause:</div>
-          <code className="text-xs font-mono text-blue-700">{result.filter_clause}</code>
-        </div>
-        <div className="text-sm text-gray-600 mb-2">
-          Showing <span className="font-bold text-blue-600">{result.filtered_count}</span> of {result.total_count} rows
-        </div>
-
-        {/* Column mask legend */}
-        {Object.keys(masks).length > 0 && (
-          <div className="mb-2 flex gap-2 flex-wrap">
-            {Object.entries(masks).map(([col, desc]) => (
-              <span key={col} className={`px-2 py-0.5 rounded text-[10px] font-medium ${
-                desc.startsWith('DENIED') ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-amber-100 text-amber-700 border border-amber-200'
-              }`}>
-                {col}: {desc}
-              </span>
-            ))}
-          </div>
-        )}
-
-        <div className="overflow-auto max-h-80">
-          <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr className="bg-gray-100">
-                {cols.map(c => (
-                  <th key={c} className={`border p-1.5 text-left whitespace-nowrap ${colHeaderClass(c)}`}>
-                    {c}
-                    {masks[c] && (
-                      <span className="ml-1" title={masks[c]}>
-                        {masks[c]?.startsWith('DENIED') ? '🚫' : '🔒'}
-                      </span>
-                    )}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {result.filtered_rows.map((row, i) => (
-                <tr key={i} className="hover:bg-blue-50">
-                  {cols.map(c => {
-                    const isMasked = !!masks[c];
-                    const isDenied = masks[c]?.startsWith('DENIED');
-                    const cellClass = isDenied ? 'bg-red-50 text-red-400' : isMasked ? 'bg-amber-50 text-amber-700 italic' : '';
-
-                    return (
-                      <td key={c} className={`border p-1.5 whitespace-nowrap ${cellClass}`}>
-                        {c === 'status' ? (
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                            row[c] === 'active' || row[c] === 'confirmed' ? 'bg-green-100 text-green-700' :
-                            row[c] === 'hold' || row[c] === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                            row[c] === 'shipped' || row[c] === 'closed' ? 'bg-blue-100 text-blue-700' :
-                            'bg-gray-100 text-gray-600'
-                          }`}>{String(row[c])}</span>
-                        ) : !isMasked && typeof row[c] === 'number' && (c.includes('price') || c.includes('cost') || c.includes('amount')) ? (
-                          `$${Number(row[c]).toLocaleString()}`
-                        ) : (
-                          String(row[c] ?? '')
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-semibold mb-4">RLS Simulator — Side-by-Side Comparison</h2>
-        <p className="text-sm text-gray-500 mb-4">
-          Compare what different Phison employees see when querying data with RLS filtering applied via <code className="bg-gray-100 px-1 rounded">authz_filter()</code>.
+      <div className="page-header">
+        <h1 className="page-title">RLS Simulator</h1>
+        <p className="page-desc">
+          Compare what different users see when querying data with <span className="code">authz_filter()</span> applied
         </p>
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Target Table</label>
-          <div className="flex gap-2">
-            {TABLES.map(t => (
-              <button key={t.id} onClick={() => setTable(t.id)}
-                className={`px-4 py-2 rounded-md text-sm ${
-                  table === t.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}>
-                {t.label}
-                <span className="block text-[10px] opacity-75">{t.hint}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Left: User A</label>
-            <select value={leftUser} onChange={e => setLeftUser(Number(e.target.value))} className="w-full border rounded-md px-3 py-2 text-sm">
-              {TEST_USERS.map((u, i) => <option key={u.id} value={i}>{u.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Right: User B</label>
-            <select value={rightUser} onChange={e => setRightUser(Number(e.target.value))} className="w-full border rounded-md px-3 py-2 text-sm">
-              {TEST_USERS.map((u, i) => <option key={u.id} value={i}>{u.label}</option>)}
-            </select>
-          </div>
-        </div>
-        <button onClick={simulate} disabled={loading}
-          className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 w-full">
-          {loading ? 'Simulating...' : 'Run RLS Simulation'}
-        </button>
       </div>
 
+      {/* Config card */}
+      <div className="card">
+        <div className="card-body space-y-4">
+          {/* Table selector */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Target Table</label>
+            <div className="flex gap-2">
+              {TABLES.map(t => (
+                <button key={t.id} onClick={() => setTable(t.id)}
+                  className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    table === t.id
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}>
+                  <div>{t.label}</div>
+                  <div className="text-[10px] opacity-75 mt-0.5">{t.hint}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* User selectors */}
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-3 sm:gap-4 items-end">
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                User A
+              </label>
+              <select value={leftUser} onChange={e => setLeftUser(Number(e.target.value))} className="select">
+                {TEST_USERS.map((u, i) => <option key={u.id} value={i}>{u.label}</option>)}
+              </select>
+            </div>
+            <div className="hidden sm:block pb-2">
+              <ArrowLeftRight size={20} className="text-slate-300" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                User B
+              </label>
+              <select value={rightUser} onChange={e => setRightUser(Number(e.target.value))} className="select">
+                {TEST_USERS.map((u, i) => <option key={u.id} value={i}>{u.label}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <button onClick={simulate} disabled={loading} className="btn-primary w-full">
+            <Play size={14} />
+            {loading ? 'Simulating...' : 'Run RLS Simulation'}
+          </button>
+        </div>
+      </div>
+
+      {/* Results side-by-side */}
       {leftResult && rightResult && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {renderTable(leftResult, TEST_USERS[leftUser].label)}
-          {renderTable(rightResult, TEST_USERS[rightUser].label)}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <ResultPanel result={leftResult} label={TEST_USERS[leftUser].label} />
+          <ResultPanel result={rightResult} label={TEST_USERS[rightUser].label} />
         </div>
       )}
     </div>
   );
+}
+
+function ResultPanel({ result, label }: { result: SimResult; label: string }) {
+  const cols = result.filtered_rows.length > 0
+    ? Object.keys(result.filtered_rows[0]).filter(k => k !== 'created_at')
+    : [];
+  const masks = result.column_masks || {};
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">{label}</h3>
+          {result.resolved_roles && (
+            <div className="flex gap-1 mt-1">
+              {result.resolved_roles.map(r => (
+                <span key={r} className="badge badge-blue text-[10px]">{r}</span>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="text-right">
+          <div className="text-lg font-bold text-blue-600">{result.filtered_count}</div>
+          <div className="text-[10px] text-slate-400">of {result.total_count} rows</div>
+        </div>
+      </div>
+
+      <div className="px-5 py-3 bg-slate-50 border-b border-slate-100">
+        <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">SQL WHERE</div>
+        <code className="text-xs font-mono text-blue-700">{result.filter_clause || '(no filter)'}</code>
+      </div>
+
+      {/* Column mask legend */}
+      {Object.keys(masks).length > 0 && (
+        <div className="px-5 py-2.5 border-b border-slate-100 flex gap-2 flex-wrap">
+          {Object.entries(masks).map(([col, desc]) => (
+            <span key={col} className={`badge text-[10px] inline-flex items-center gap-1 ${
+              desc.startsWith('DENIED') ? 'badge-red' : 'badge-amber'
+            }`}>
+              {desc.startsWith('DENIED') ? <ShieldOff size={10} /> : <Lock size={10} />}
+              {col}: {desc}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Data table */}
+      <div className="overflow-auto max-h-80">
+        <table className="w-full text-xs">
+          <thead>
+            <tr>
+              {cols.map(c => (
+                <th key={c} className={`px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap border-b ${
+                  masks[c]?.startsWith('DENIED')
+                    ? 'bg-red-50 text-red-600'
+                    : masks[c]
+                    ? 'bg-amber-50 text-amber-600'
+                    : 'bg-slate-50 text-slate-500'
+                }`}>
+                  {c}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {result.filtered_rows.map((row, i) => (
+              <tr key={i} className="hover:bg-slate-50/50">
+                {cols.map(c => {
+                  const isDenied = masks[c]?.startsWith('DENIED');
+                  const isMasked = !!masks[c] && !isDenied;
+                  return (
+                    <td key={c} className={`px-3 py-2 whitespace-nowrap border-b border-slate-50 ${
+                      isDenied ? 'bg-red-50/50 text-red-400 italic' :
+                      isMasked ? 'bg-amber-50/50 text-amber-700 italic' : 'text-slate-700'
+                    }`}>
+                      {c === 'status' ? (
+                        <StatusBadge value={String(row[c])} />
+                      ) : !isDenied && !isMasked && typeof row[c] === 'number' && (c.includes('price') || c.includes('cost') || c.includes('amount')) ? (
+                        `$${Number(row[c]).toLocaleString()}`
+                      ) : (
+                        String(row[c] ?? '')
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ value }: { value: string }) {
+  const colors: Record<string, string> = {
+    active: 'badge-green', confirmed: 'badge-green',
+    hold: 'badge-amber', pending: 'badge-amber',
+    shipped: 'badge-blue', closed: 'badge-blue',
+  };
+  return <span className={`badge ${colors[value] || 'badge-slate'} text-[10px]`}>{value}</span>;
 }

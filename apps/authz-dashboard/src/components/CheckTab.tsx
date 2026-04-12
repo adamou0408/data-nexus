@@ -1,21 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api';
-
-const TEST_USERS = [
-  { id: 'wang_pe',      label: 'Wang (PE-SSD)',    groups: ['PE_SSD'] },
-  { id: 'chen_pe',      label: 'Chen (PE-eMMC)',   groups: ['PE_EMMC'] },
-  { id: 'lin_pm',       label: 'Lin (PM-SSD)',     groups: ['PM_SSD'] },
-  { id: 'huang_qa',     label: 'Huang (QA)',       groups: ['QA_ALL'] },
-  { id: 'lee_sales',    label: 'Lee (Sales-TW)',   groups: ['SALES_TW'] },
-  { id: 'zhang_sales',  label: 'Zhang (Sales-CN)', groups: ['SALES_CN'] },
-  { id: 'wu_fae',       label: 'Wu (FAE-TW)',      groups: ['FAE_TW'] },
-  { id: 'liu_fw',       label: 'Liu (FW-SSD)',     groups: ['RD_FW'] },
-  { id: 'hsu_op',       label: 'Hsu (OP-SSD)',     groups: ['OP_SSD'] },
-  { id: 'yang_finance', label: 'Yang (Finance)',   groups: ['FINANCE_TEAM'] },
-  { id: 'chang_vp',     label: 'Chang (VP)',       groups: ['VP_OFFICE'] },
-  { id: 'tsai_bi',      label: 'Tsai (BI)',        groups: ['BI_TEAM'] },
-  { id: 'sys_admin',    label: 'SysAdmin',         groups: [] as string[] },
-];
+import { TEST_USERS } from '../AuthzContext';
+import { Search, Play, CheckCircle2, XCircle } from 'lucide-react';
 
 const BATCH_CHECKS = [
   { action: 'read', resource: 'module:mrp.lot_tracking' },
@@ -63,83 +49,89 @@ export function CheckTab() {
 
   return (
     <div className="space-y-6">
-      {/* Single Check */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-semibold mb-4">authz_check() — Single Permission Check</h2>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">User</label>
-            <select value={userIdx} onChange={e => setUserIdx(Number(e.target.value))} className="w-full border rounded-md px-3 py-2">
-              {TEST_USERS.map((u, i) => <option key={u.id} value={i}>{u.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Action</label>
-            <select value={action} onChange={e => setAction(e.target.value)} className="w-full border rounded-md px-3 py-2">
-              {['read','write','delete','approve','export','hold','release','execute','connect'].map(a =>
-                <option key={a} value={a}>{a}</option>
-              )}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Resource</label>
-            <input value={resource} onChange={e => setResource(e.target.value)}
-              className="w-full border rounded-md px-3 py-2 font-mono text-sm" />
-          </div>
-          <button onClick={checkSingle} disabled={loading}
-            className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50">
-            Check
-          </button>
-        </div>
+      <div className="page-header">
+        <h1 className="page-title">Permission Checker</h1>
+        <p className="page-desc">
+          Call <span className="code">authz_check()</span> to verify a single permission or run batch checks
+        </p>
+      </div>
 
-        {singleResult !== null && (
-          <div className={`mt-4 p-4 rounded-lg text-center text-lg font-bold ${
-            singleResult ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
-          }`}>
-            {singleResult ? 'ALLOW' : 'DENY'}
+      {/* Single Check */}
+      <div className="card">
+        <div className="card-header">
+          <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+            <Search size={16} className="text-blue-600" />
+            Single Check
+          </h2>
+        </div>
+        <div className="card-body">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">User</label>
+              <select value={userIdx} onChange={e => setUserIdx(Number(e.target.value))} className="select">
+                {TEST_USERS.map((u, i) => <option key={u.id} value={i}>{u.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Action</label>
+              <select value={action} onChange={e => setAction(e.target.value)} className="select">
+                {['read','write','delete','approve','export','hold','release','execute','connect'].map(a =>
+                  <option key={a} value={a}>{a}</option>
+                )}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Resource</label>
+              <input value={resource} onChange={e => setResource(e.target.value)} className="input font-mono" />
+            </div>
+            <button onClick={checkSingle} disabled={loading} className="btn-primary">
+              <Play size={14} /> Check
+            </button>
           </div>
-        )}
+
+          {singleResult !== null && (
+            <div className={`mt-4 p-4 rounded-lg flex items-center justify-center gap-3 text-lg font-bold ${
+              singleResult
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                : 'bg-red-50 text-red-700 border border-red-200'
+            }`}>
+              {singleResult ? <CheckCircle2 size={24} /> : <XCircle size={24} />}
+              {singleResult ? 'ALLOW' : 'DENY'}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Batch Check */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-semibold mb-4">Batch Check — All Permissions for User</h2>
-        <div className="flex gap-4 items-end mb-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">User</label>
-            <select value={userIdx} onChange={e => setUserIdx(Number(e.target.value))} className="border rounded-md px-3 py-2">
-              {TEST_USERS.map((u, i) => <option key={u.id} value={i}>{u.label}</option>)}
-            </select>
-          </div>
-          <button onClick={checkBatch} disabled={loading}
-            className="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 disabled:opacity-50">
-            Run Batch Check
+      <div className="card">
+        <div className="card-header">
+          <h2 className="text-sm font-semibold text-slate-900">Batch Check</h2>
+          <button onClick={checkBatch} disabled={loading} className="btn-primary btn-sm">
+            <Play size={12} /> Run {BATCH_CHECKS.length} Checks
           </button>
         </div>
-
         {batchResults && (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-500 border-b">
-                <th className="pb-2">Action</th><th className="pb-2">Resource</th><th className="pb-2">Result</th>
-              </tr>
-            </thead>
-            <tbody>
-              {batchResults.map((r, i) => (
-                <tr key={i} className="border-t">
-                  <td className="py-2">{r.action}</td>
-                  <td className="py-2 font-mono text-xs">{r.resource}</td>
-                  <td className="py-2">
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                      r.allowed ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                    }`}>
-                      {r.allowed ? 'ALLOW' : 'DENY'}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr><th>Action</th><th>Resource</th><th>Result</th></tr>
+              </thead>
+              <tbody>
+                {batchResults.map((r, i) => (
+                  <tr key={i}>
+                    <td><span className="badge badge-slate">{r.action}</span></td>
+                    <td className="font-mono text-xs text-slate-700">{r.resource}</td>
+                    <td>
+                      <span className={`badge ${r.allowed ? 'badge-green' : 'badge-red'} inline-flex items-center gap-1`}>
+                        {r.allowed ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                        {r.allowed ? 'ALLOW' : 'DENY'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>
