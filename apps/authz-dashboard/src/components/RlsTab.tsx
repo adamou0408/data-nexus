@@ -29,6 +29,8 @@ type SimResult = {
   filtered_rows: Record<string, unknown>[];
   filtered_count: number;
   total_count: number;
+  column_masks?: Record<string, string>;
+  resolved_roles?: string[];
 };
 
 export function RlsTab() {
@@ -56,10 +58,24 @@ export function RlsTab() {
     const cols = result.filtered_rows.length > 0
       ? Object.keys(result.filtered_rows[0]).filter(k => k !== 'created_at')
       : [];
+    const masks = result.column_masks || {};
+
+    const colHeaderClass = (c: string) => {
+      if (masks[c]?.startsWith('DENIED')) return 'bg-red-100 text-red-800';
+      if (masks[c]) return 'bg-amber-100 text-amber-800';
+      return '';
+    };
 
     return (
       <div className="bg-white rounded-lg shadow p-4">
-        <h3 className="font-semibold text-sm mb-2">{label}</h3>
+        <h3 className="font-semibold text-sm mb-2">
+          {label}
+          {result.resolved_roles && (
+            <span className="ml-2 text-xs font-normal text-gray-500">
+              roles: {result.resolved_roles.join(', ') || 'none'}
+            </span>
+          )}
+        </h3>
         <div className="mb-2 p-2 bg-gray-50 rounded border">
           <div className="text-xs text-gray-500">SQL WHERE clause:</div>
           <code className="text-xs font-mono text-blue-700">{result.filter_clause}</code>
@@ -67,34 +83,61 @@ export function RlsTab() {
         <div className="text-sm text-gray-600 mb-2">
           Showing <span className="font-bold text-blue-600">{result.filtered_count}</span> of {result.total_count} rows
         </div>
+
+        {/* Column mask legend */}
+        {Object.keys(masks).length > 0 && (
+          <div className="mb-2 flex gap-2 flex-wrap">
+            {Object.entries(masks).map(([col, desc]) => (
+              <span key={col} className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                desc.startsWith('DENIED') ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-amber-100 text-amber-700 border border-amber-200'
+              }`}>
+                {col}: {desc}
+              </span>
+            ))}
+          </div>
+        )}
+
         <div className="overflow-auto max-h-80">
           <table className="w-full text-xs border-collapse">
             <thead>
               <tr className="bg-gray-100">
                 {cols.map(c => (
-                  <th key={c} className="border p-1.5 text-left whitespace-nowrap">{c}</th>
+                  <th key={c} className={`border p-1.5 text-left whitespace-nowrap ${colHeaderClass(c)}`}>
+                    {c}
+                    {masks[c] && (
+                      <span className="ml-1" title={masks[c]}>
+                        {masks[c]?.startsWith('DENIED') ? '🚫' : '🔒'}
+                      </span>
+                    )}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {result.filtered_rows.map((row, i) => (
                 <tr key={i} className="hover:bg-blue-50">
-                  {cols.map(c => (
-                    <td key={c} className="border p-1.5 whitespace-nowrap">
-                      {c === 'status' ? (
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                          row[c] === 'active' || row[c] === 'confirmed' ? 'bg-green-100 text-green-700' :
-                          row[c] === 'hold' || row[c] === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                          row[c] === 'shipped' || row[c] === 'closed' ? 'bg-blue-100 text-blue-700' :
-                          'bg-gray-100 text-gray-600'
-                        }`}>{String(row[c])}</span>
-                      ) : typeof row[c] === 'number' && (c.includes('price') || c.includes('cost') || c.includes('amount')) ? (
-                        `$${Number(row[c]).toLocaleString()}`
-                      ) : (
-                        String(row[c] ?? '')
-                      )}
-                    </td>
-                  ))}
+                  {cols.map(c => {
+                    const isMasked = !!masks[c];
+                    const isDenied = masks[c]?.startsWith('DENIED');
+                    const cellClass = isDenied ? 'bg-red-50 text-red-400' : isMasked ? 'bg-amber-50 text-amber-700 italic' : '';
+
+                    return (
+                      <td key={c} className={`border p-1.5 whitespace-nowrap ${cellClass}`}>
+                        {c === 'status' ? (
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                            row[c] === 'active' || row[c] === 'confirmed' ? 'bg-green-100 text-green-700' :
+                            row[c] === 'hold' || row[c] === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                            row[c] === 'shipped' || row[c] === 'closed' ? 'bg-blue-100 text-blue-700' :
+                            'bg-gray-100 text-gray-600'
+                          }`}>{String(row[c])}</span>
+                        ) : !isMasked && typeof row[c] === 'number' && (c.includes('price') || c.includes('cost') || c.includes('amount')) ? (
+                          `$${Number(row[c]).toLocaleString()}`
+                        ) : (
+                          String(row[c] ?? '')
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
