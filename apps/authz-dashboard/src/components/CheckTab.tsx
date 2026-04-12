@@ -4,19 +4,27 @@ import { TEST_USERS } from '../AuthzContext';
 import { Search, Play, CheckCircle2, XCircle } from 'lucide-react';
 
 const BATCH_CHECKS = [
-  { action: 'read', resource: 'module:mrp.lot_tracking' },
-  { action: 'write', resource: 'module:mrp.lot_tracking' },
-  { action: 'read', resource: 'module:mrp.yield_analysis' },
-  { action: 'read', resource: 'module:mrp.npi' },
-  { action: 'read', resource: 'module:quality' },
-  { action: 'read', resource: 'module:sales.order_mgmt' },
-  { action: 'read', resource: 'module:sales.pricing' },
-  { action: 'read', resource: 'module:engineering' },
-  { action: 'write', resource: 'module:engineering.firmware' },
-  { action: 'read', resource: 'module:analytics.dashboard' },
-  { action: 'read', resource: 'column:lot_status.unit_price' },
-  { action: 'read', resource: 'column:lot_status.cost' },
-  { action: 'read', resource: 'column:price_book.margin' },
+  // Module-level access
+  { action: 'read',    resource: 'module:mrp.lot_tracking' },
+  { action: 'write',   resource: 'module:mrp.lot_tracking' },
+  { action: 'read',    resource: 'module:mrp.yield_analysis' },
+  { action: 'read',    resource: 'module:mrp.npi' },
+  { action: 'read',    resource: 'module:quality' },
+  { action: 'read',    resource: 'module:quality.rma' },
+  { action: 'read',    resource: 'module:sales.order_mgmt' },
+  { action: 'read',    resource: 'module:sales.pricing' },
+  { action: 'read',    resource: 'module:engineering' },
+  { action: 'write',   resource: 'module:engineering.firmware' },
+  { action: 'read',    resource: 'module:analytics.dashboard' },
+  // Cross-path scenarios
+  { action: 'approve', resource: 'module:mrp.npi' },
+  { action: 'export',  resource: 'module:sales.order_mgmt' },
+  { action: 'connect', resource: 'module:mrp' },
+  // Column-level restrictions
+  { action: 'read',    resource: 'column:lot_status.unit_price' },
+  { action: 'read',    resource: 'column:lot_status.cost' },
+  { action: 'read',    resource: 'column:lot_status.customer' },
+  { action: 'read',    resource: 'column:price_book.margin' },
 ];
 
 export function CheckTab() {

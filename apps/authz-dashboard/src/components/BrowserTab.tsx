@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
-import { Users, Shield, Database, FileText } from 'lucide-react';
+import { Users, Shield, Database, FileText, Zap } from 'lucide-react';
 import { ReactNode } from 'react';
 
-type Section = 'subjects' | 'roles' | 'resources' | 'policies';
+type Section = 'subjects' | 'roles' | 'resources' | 'policies' | 'actions';
 
 const sections: { id: Section; label: string; icon: ReactNode }[] = [
   { id: 'subjects',  label: 'Subjects',  icon: <Users size={14} /> },
   { id: 'roles',     label: 'Roles',     icon: <Shield size={14} /> },
   { id: 'resources', label: 'Resources', icon: <Database size={14} /> },
   { id: 'policies',  label: 'Policies',  icon: <FileText size={14} /> },
+  { id: 'actions',   label: 'Actions',   icon: <Zap size={14} /> },
 ];
 
 export function BrowserTab() {
@@ -20,7 +21,7 @@ export function BrowserTab() {
   const load = async () => {
     setLoading(true);
     try {
-      const fetchers = { subjects: api.subjects, roles: api.roles, resources: api.resources, policies: api.policies };
+      const fetchers = { subjects: api.subjects, roles: api.roles, resources: api.resources, policies: api.policies, actions: api.actions };
       setData(await fetchers[section]());
     } catch { /* ignore */ }
     setLoading(false);
@@ -32,7 +33,7 @@ export function BrowserTab() {
     <div className="space-y-6">
       <div className="page-header">
         <h1 className="page-title">Data Browser</h1>
-        <p className="page-desc">Browse all AuthZ entities — subjects, roles, resources, and policies</p>
+        <p className="page-desc">Browse all AuthZ entities — subjects, roles, resources, policies, and actions</p>
       </div>
 
       {/* Section tabs */}
@@ -59,6 +60,7 @@ export function BrowserTab() {
             {section === 'roles' && <RolesTable data={data} />}
             {section === 'resources' && <ResourcesTable data={data} />}
             {section === 'policies' && <PoliciesTable data={data} />}
+            {section === 'actions' && <ActionsTable data={data} />}
           </div>
         )}
       </div>
@@ -172,6 +174,36 @@ function PoliciesTable({ data }: { data: Record<string, unknown>[] }) {
                   <span key={path} className="badge badge-slate text-[10px]">{path}</span>
                 ))}
               </div>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ActionsTable({ data }: { data: Record<string, unknown>[] }) {
+  const pathColor: Record<string, string> = { A: 'badge-blue', B: 'badge-green', C: 'badge-purple' };
+  return (
+    <table className="table">
+      <thead><tr><th>Action ID</th><th>Display Name</th><th>Description</th><th>Paths</th><th>Active</th></tr></thead>
+      <tbody>
+        {data.map((a) => (
+          <tr key={String(a.action_id)}>
+            <td className="font-mono text-xs font-bold text-slate-900">{String(a.action_id)}</td>
+            <td className="font-medium">{String(a.display_name)}</td>
+            <td className="text-xs text-slate-500">{a.description ? String(a.description) : '-'}</td>
+            <td>
+              <div className="flex gap-1">
+                {(a.applicable_paths as string[] || []).map((p: string) => (
+                  <span key={p} className={`badge text-[10px] ${pathColor[p] || 'badge-slate'}`}>Path {p}</span>
+                ))}
+              </div>
+            </td>
+            <td>
+              {a.is_active
+                ? <span className="badge badge-green text-[10px]">YES</span>
+                : <span className="badge badge-red text-[10px]">NO</span>}
             </td>
           </tr>
         ))}

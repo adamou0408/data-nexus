@@ -22,7 +22,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers,
     ...options,
   });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `API error: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -93,6 +96,11 @@ export const api = {
   poolCredentials: () => request<PoolCredential[]>('/pool/credentials'),
   poolSyncGrants: () => request<{ actions: { action: string; detail: string }[] }>('/pool/sync/grants', { method: 'POST' }),
   poolSyncPgbouncer: () => request<{ config: string }>('/pool/sync/pgbouncer', { method: 'POST' }),
+  poolCredentialRotate: (pg_role: string, new_password: string) =>
+    request<{ pg_role: string; is_active: boolean; last_rotated: string }>(
+      `/pool/credentials/${encodeURIComponent(pg_role)}/rotate`,
+      { method: 'POST', body: JSON.stringify({ new_password }) }
+    ),
 };
 
 export type PoolProfile = {
@@ -124,5 +132,5 @@ export type PoolCredential = {
   pg_role: string;
   is_active: boolean;
   last_rotated: string;
-  rotate_interval: string;
+  rotate_interval: string | { days?: number };
 };
