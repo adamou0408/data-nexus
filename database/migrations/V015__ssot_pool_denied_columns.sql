@@ -68,7 +68,8 @@ SELECT
     dp.pg_role,
     dp.denied_columns AS static_denied,
     _authz_pool_ssot_denied_columns(dp.profile_id) AS ssot_denied,
-    dp.denied_columns IS DISTINCT FROM _authz_pool_ssot_denied_columns(dp.profile_id) AS has_drift
+    COALESCE(dp.denied_columns, '{}'::jsonb) IS DISTINCT FROM
+    _authz_pool_ssot_denied_columns(dp.profile_id) AS has_drift
 FROM authz_db_pool_profile dp
 WHERE dp.is_active;
 

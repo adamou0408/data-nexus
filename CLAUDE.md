@@ -22,12 +22,20 @@ Phison Data Nexus (`phison-data-nexus`) is an authorization service platform for
 ```
 data-nexus/
 ├── apps/
-│   └── authz-dashboard/       # React + Vite verification dashboard (port 5173)
+│   └── authz-dashboard/       # React + Vite + Tailwind dashboard (port 5173)
+│       └── src/
+│           ├── AuthzContext.tsx # AuthzProvider + useAuthz/useAuthzCheck hooks
+│           ├── api.ts          # API client with auth header support
+│           └── components/     # 7 tab components (Resolve/Check/Matrix/RLS/Pool/Browser/Audit)
 ├── services/
 │   └── authz-api/             # Express API wrapping PG functions (port 3001)
+│       └── src/
+│           ├── routes/         # resolve, check, filter, matrix, rls-simulate, browse, pool
+│           ├── middleware/     # authz.ts (requireAuth/requireRole/requirePermission)
+│           └── audit.ts       # Buffered audit log writer
 ├── database/
-│   ├── migrations/            # V001-V014 sequential SQL migrations
-│   └── seed/                  # Dev seed data (test users, resources, policies)
+│   ├── migrations/            # V001-V017 sequential SQL migrations
+│   └── seed/                  # Dev seed data (18 groups, 19 users, 16 roles, 40 resources)
 ├── deploy/
 │   └── docker-compose/        # PG 16 + Redis 7 local dev stack
 ├── docs/                      # Architecture docs & startup guide
@@ -40,12 +48,70 @@ data-nexus/
 - `docs/phison-data-nexus-architecture-v2.4.md` — Full architecture spec (AuthZ service design, schema, three access paths, performance analysis, production readiness)
 - `docs/nexus-startup-guide.md` — 4-milestone execution plan (local setup → production-ready)
 
+## Database Migrations
+
+| File | Content |
+|------|---------|
+| V001 | ENUM types |
+| V002 | Core tables (subject, resource, action, role, permission, subject_role) |
+| V003 | Policy tables (policy, composite_action, mask_function registry) |
+| V004 | Path C pool tables (pool_profile, pool_assignment, pool_credentials) |
+| V005 | Sync & audit tables + indexes |
+| V006 | Policy version table + auto-version trigger |
+| V007 | Core functions (_authz_resolve_roles, authz_check, authz_filter, authz_check_from_cache) |
+| V008 | Path A: authz_resolve() |
+| V009 | Path B: authz_resolve_web_acl() |
+| V010 | Path C: authz_sync_db_grants(), authz_sync_pgbouncer_config() |
+| V011 | Audit batch insert function |
+| V012 | Cache invalidation triggers (LISTEN/NOTIFY) |
+| V013 | Base seed data (roles, actions, mask function registry) |
+| V014 | Sample lot_status + sales_order data |
+| V015 | SSOT: _authz_pool_ssot_denied_columns(), v_pool_ssot_check view, updated sync |
+| V016 | Column mask PG functions (fn_mask_full/partial/hash/range) |
+| V017 | Fix authz_filter() resource_condition data_domain matching |
+
+## API Endpoints
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| GET | /healthz | Health check | Public |
+| POST | /api/resolve | authz_resolve() — Path A config | Public |
+| POST | /api/resolve/web-acl | authz_resolve_web_acl() — Path B | Public |
+| POST | /api/check | authz_check() — single permission | Public |
+| POST | /api/check/batch | Batch permission check | Public |
+| POST | /api/filter | authz_filter() — RLS clause | Public |
+| GET | /api/matrix | Permission matrix (role x resource) | Public |
+| POST | /api/rls/simulate | RLS simulation with column masks | Public |
+| GET | /api/browse/* | Browse subjects/roles/resources/policies/actions/audit-logs | Public |
+| GET/POST/PUT/DELETE | /api/pool/* | Pool CRUD + sync operations | ADMIN/AUTHZ_ADMIN/DBA |
+
+## Dashboard Tabs
+
+| Tab | Description | Visibility |
+|-----|-------------|------------|
+| Permission Resolver | authz_resolve() with L0/L1/L2/L3 display | All users |
+| Permission Checker | Single + batch authz_check() | All users |
+| Permission Matrix | Role x Resource grid | All users |
+| RLS Simulator | Side-by-side data comparison with column mask/deny | All users |
+| Pool Management | Path C pool profiles, assignments, credentials, sync | Admin only |
+| Data Browser | Browse SSOT tables (subjects, roles, resources, policies) | All users |
+| Audit Log | Query audit log with filters | Admin only |
+
 ## Development Milestones
 
-1. **AuthZ runs locally** (Week 1-2): PG schema + seed data + `authz_resolve()` via docker-compose
-2. **First page is permission-aware** (Week 3-4): REST API + workbench page with RLS
-3. **All three paths enforced** (Week 5-8): Path B/C + audit logging + Admin CRUD
-4. **Production-ready** (Week 9-12): Redis cache + Helm/K8s + Policy Simulator + LDAP sync
+1. **AuthZ runs locally** (Week 1-2): ✅ Complete
+2. **First page is permission-aware** (Week 3-4): ✅ Complete (AuthzProvider + meta-driven tabs + RLS with column mask)
+3. **All three paths enforced** (Week 5-8): 🟡 Partial (API middleware done, Path C pool management done, admin CRUD partial)
+4. **Production-ready** (Week 9-12): ❌ Not started (Redis cache, Helm/K8s, Policy Simulator, LDAP sync)
+
+## SSOT Principles
+
+- All permissions flow from `authz_role_permission` and `authz_policy` tables
+- Path C pool denied_columns derived from SSOT via `_authz_pool_ssot_denied_columns()`
+- `v_pool_ssot_check` view detects drift between static and SSOT-derived config
+- Column mask rules in L2 policies, enforced by actual PG mask functions
+- Cache invalidation triggers on policy/permission/role changes
+- Audit logging via buffered `authz_audit_batch_insert()`
 
 ## Core Concepts
 
@@ -53,12 +119,14 @@ data-nexus/
 - **authz_resolve()**: PG function that resolves permissions for a given user/resource
 - **Config-SM**: Config-as-State-Machine pattern driving UI rendering and data filtering
 - **RLS**: Row-Level Security for Path C enforcement
+- **L0-L3**: Permission granularity levels (functional → data domain → row/column → composite actions)
 
 ## Conventions
 
 - Language: TypeScript for all backend services
-- Database migrations: sequential numbered SQL files
-- API style: RESTful
+- Database migrations: sequential numbered SQL files (V001-V0xx)
+- API style: RESTful, JSON
+- Auth headers: X-User-Id, X-User-Groups (simulated for POC)
 - Testing: unit + integration tests required for AuthZ logic
 - Commit messages: concise, descriptive (English)
 
@@ -77,9 +145,18 @@ make dev-api
 # Start dashboard UI (port 5173)
 make dev-ui
 
+# Start everything
+make dev
+
 # Run Milestone 1 verification
 make verify
 
 # Interactive psql
 make db-psql
+
+# Quick queries
+make q-resolve    # Resolve PE SSD user
+make q-check      # Sample authz_check queries
+make q-filter     # RLS filter for PE SSD
+make q-web-acl    # Web ACL for admin
 ```
