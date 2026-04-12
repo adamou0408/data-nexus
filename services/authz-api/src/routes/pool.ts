@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { pool } from '../db';
+import { pool, getDataSourcePool } from '../db';
 
 export const poolRouter = Router();
 
@@ -215,8 +215,30 @@ poolRouter.post('/sync/grants', async (_req, res) => {
 });
 
 // Generate pgbouncer config
+// Accepts optional data_source_id to read connection info from registry
 poolRouter.post('/sync/pgbouncer', async (req, res) => {
-  const { db_host = 'localhost', db_port = 5432, db_name = 'nexus_data' } = req.body;
+  let { db_host, db_port, db_name, data_source_id } = req.body;
+
+  // If data_source_id provided, read connection info from registry
+  if (data_source_id) {
+    try {
+      const dsResult = await pool.query(
+        'SELECT host, port, database_name FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE',
+        [data_source_id]
+      );
+      if (dsResult.rows.length > 0) {
+        const ds = dsResult.rows[0];
+        db_host = db_host || ds.host;
+        db_port = db_port || ds.port;
+        db_name = db_name || ds.database_name;
+      }
+    } catch { /* fall through to defaults */ }
+  }
+
+  db_host = db_host || 'localhost';
+  db_port = db_port || 5432;
+  db_name = db_name || 'nexus_data';
+
   try {
     const result = await pool.query(
       'SELECT authz_sync_pgbouncer_config($1, $2, $3) AS config',

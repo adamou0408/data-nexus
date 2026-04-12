@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { pool } from '../db';
+import { pool, getDataSourcePool, resolveDataSource } from '../db';
 
 export const rlsRouter = Router();
 
@@ -46,8 +46,11 @@ rlsRouter.post('/simulate', async (req, res) => {
     }
 
     // Step 3: Build SELECT with mask functions applied
-    // Get column list from information_schema
-    const colResult = await pool.query(`
+    // Resolve data source for this table and get column list
+    const sourceId = await resolveDataSource(table);
+    const dataPool = sourceId ? await getDataSourcePool(sourceId) : pool;
+
+    const colResult = await dataPool.query(`
       SELECT column_name, data_type FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = $1
       ORDER BY ordinal_position
@@ -102,8 +105,8 @@ rlsRouter.post('/simulate', async (req, res) => {
     });
 
     const query = `SELECT ${finalSelectParts.join(', ')} FROM ${table} WHERE ${filterClause} ORDER BY ${tableConfig.orderBy}`;
-    const dataResult = await pool.query(query);
-    const totalResult = await pool.query(`SELECT count(*)::int AS total FROM ${table}`);
+    const dataResult = await dataPool.query(query);
+    const totalResult = await dataPool.query(`SELECT count(*)::int AS total FROM ${table}`);
 
     // Build mask info for UI display
     const appliedMasks: Record<string, string> = {};
@@ -141,7 +144,9 @@ rlsRouter.get('/data', async (req, res) => {
     return res.status(400).json({ error: `Unknown table: ${table}` });
   }
   try {
-    const result = await pool.query(`SELECT * FROM ${table} ORDER BY ${tableConfig.orderBy}`);
+    const sourceId = await resolveDataSource(table);
+    const dataPool = sourceId ? await getDataSourcePool(sourceId) : pool;
+    const result = await dataPool.query(`SELECT * FROM ${table} ORDER BY ${tableConfig.orderBy}`);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: String(err) });

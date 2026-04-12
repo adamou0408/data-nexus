@@ -8,6 +8,7 @@ import { matrixRouter } from './routes/matrix';
 import { rlsRouter } from './routes/rls-simulate';
 import { browseRouter } from './routes/browse';
 import { poolRouter } from './routes/pool';
+import { datasourceRouter } from './routes/datasource';
 import { requireRole } from './middleware/authz';
 
 const app = express();
@@ -35,6 +36,7 @@ app.use('/api/browse', browseRouter);
 
 // Admin APIs (require ADMIN or AUTHZ_ADMIN role via X-User-Id header)
 app.use('/api/pool', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), poolRouter);
+app.use('/api/datasources', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), datasourceRouter);
 
 app.listen(PORT, () => {
   console.log(`authz-api listening on http://localhost:${PORT}`);

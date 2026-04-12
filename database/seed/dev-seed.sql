@@ -652,3 +652,24 @@ INSERT INTO authz_group_member (group_id, user_id, source) VALUES
     -- DBA + AuthZ Admins (sys_admin belongs to both)
     ('group:DBA_TEAM',      'user:sys_admin',     'ldap_sync'),
     ('group:AUTHZ_ADMINS',  'user:sys_admin',     'ldap_sync');
+
+-- ============================================================
+-- 10. Data Source Registry
+-- Register the local database as the first data source (POC self-ref)
+-- Requires V020__data_source_registry.sql migration
+-- ============================================================
+INSERT INTO authz_data_source (
+    source_id, display_name, description,
+    db_type, host, port, database_name, schemas,
+    connector_user, connector_password,
+    owner_subject, registered_by
+) VALUES
+('ds:local',
+ 'Local Dev Database',
+ 'POC local PostgreSQL — authz tables and business data in same instance',
+ 'postgresql', 'localhost', 5432, 'nexus_authz', '{public}',
+ 'nexus_admin', 'nexus_dev_password',
+ 'user:sys_admin', 'system');
+
+-- Link existing pool profiles to the local data source
+UPDATE authz_db_pool_profile SET data_source_id = 'ds:local';

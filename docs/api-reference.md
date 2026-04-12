@@ -16,6 +16,13 @@
 | POST | /api/rls/simulate | RLS simulation with column masks | Public |
 | GET | /api/browse/* | Browse subjects/roles/resources/policies/actions/audit-logs | Public |
 | GET/POST/PUT/DELETE | /api/pool/* | Pool CRUD + sync operations | ADMIN/AUTHZ_ADMIN/DBA |
+| GET | /api/datasources | List registered data sources | ADMIN/AUTHZ_ADMIN/DBA |
+| POST | /api/datasources | Register new data source (with connection test) | ADMIN/AUTHZ_ADMIN/DBA |
+| PUT | /api/datasources/:id | Update data source connection info | ADMIN/AUTHZ_ADMIN/DBA |
+| DELETE | /api/datasources/:id | Deactivate data source | ADMIN/AUTHZ_ADMIN/DBA |
+| POST | /api/datasources/:id/test | Test data source connection | ADMIN/AUTHZ_ADMIN/DBA |
+| POST | /api/datasources/:id/discover | Discover schema → auto-create resources | ADMIN/AUTHZ_ADMIN/DBA |
+| GET | /api/datasources/:id/tables | List tables in data source | ADMIN/AUTHZ_ADMIN/DBA |
 
 Source: `services/authz-api/src/routes/`
 

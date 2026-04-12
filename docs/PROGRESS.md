@@ -40,6 +40,10 @@
 - [x] LDAP: `identity-sync` service (`services/identity-sync/`)
 - [x] LDAP: API middleware auto-resolves groups from DB when header not provided
 - [x] All seed data has `ldap_dn` populated
+- [x] Data Source Registry: V020 `authz_data_source` table + pool_profile FK
+- [x] Data Source Registry: CRUD + test + discover API (`/api/datasources`)
+- [x] Data Source Registry: Dynamic pool management in `db.ts`
+- [x] rls-simulate.ts + pool.ts use dynamic data source pools
 
 ### Remaining
 - [ ] AuthZ Admin CRUD pages (subjects, roles, resources, policies editor)
@@ -79,6 +83,7 @@
 | V017 | Fix authz_filter() resource_condition data_domain matching | Done |
 | V018 | Group membership table + authz_resolve_user_groups() | Done |
 | V019 | Path C native RLS (PG roles, GRANT, RLS policies, views) | Done |
+| V020 | Data Source Registry (authz_data_source) + pool_profile FK | Done |
 
 ## Services
 
