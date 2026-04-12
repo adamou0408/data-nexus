@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { AuthzProvider, useAuthz } from './AuthzContext';
 import { Layout, TabId } from './components/Layout';
 import { ResolveTab } from './components/ResolveTab';
 import { CheckTab } from './components/CheckTab';
@@ -8,8 +9,18 @@ import { PoolTab } from './components/PoolTab';
 import { BrowserTab } from './components/BrowserTab';
 import { AuditTab } from './components/AuditTab';
 
-export default function App() {
+function AppInner() {
   const [tab, setTab] = useState<TabId>('resolve');
+  const { config } = useAuthz();
+
+  const isAdmin = config?.resolved_roles?.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN') ?? false;
+
+  // If current tab requires admin and user is not admin, switch to resolve
+  useEffect(() => {
+    if ((tab === 'pool' || tab === 'audit') && !isAdmin) {
+      setTab('resolve');
+    }
+  }, [isAdmin, tab]);
 
   return (
     <Layout activeTab={tab} onTabChange={setTab}>
@@ -21,5 +32,13 @@ export default function App() {
       {tab === 'browser' && <BrowserTab />}
       {tab === 'audit' && <AuditTab />}
     </Layout>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthzProvider>
+      <AppInner />
+    </AuthzProvider>
   );
 }
