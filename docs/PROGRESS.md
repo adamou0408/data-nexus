@@ -49,9 +49,14 @@
 - [x] ARCH-01: Seed data split into `seed/` (authz) and `seed/data/` (business)
 - [x] ARCH-01: pgbouncer + pg_hba point pool roles at nexus_data
 
+- [x] W-IT-01: Audit logging for all admin operations (pool + datasource CRUD)
+- [x] W-IT-01: AuditTab access_path filter (All/A/B/C)
+- [x] W-USER-01: WorkbenchTab row statistics + denied column tooltip
+- [x] Phase 6: PoolTab Data Sources section (register, test, discover)
+- [x] Phase 7: MatrixTab data source filter dropdown
+
 ### Remaining
 - [ ] AuthZ Admin CRUD pages (subjects, roles, resources, policies editor)
-- [ ] Audit logging on all enforcement points (currently only data-access, missing policy-change events)
 - [ ] Path C: pgbouncer live reload integration
 
 ## Milestone 4: Production-Ready — NOT STARTED
