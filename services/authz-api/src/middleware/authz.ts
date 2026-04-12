@@ -20,7 +20,11 @@ async function resolveUserGroups(user: { user_id: string; groups: string[] }): P
       [user.user_id]
     );
     const dbGroups: string[] = result.rows[0]?.groups || [];
-    return { user_id: user.user_id, groups: dbGroups };
+    // Strip 'group:' prefix — PG functions like _authz_resolve_roles()
+    // expect plain group names (e.g., 'AUTHZ_ADMINS' not 'group:AUTHZ_ADMINS')
+    // because they prepend 'group:' internally when matching subject_role.
+    const stripped = dbGroups.map(g => g.replace(/^group:/, ''));
+    return { user_id: user.user_id, groups: stripped };
   } catch {
     return user;
   }
