@@ -36,8 +36,8 @@ echo "SALES reads unit_price (expect: true):"
 $PSQL -c "SELECT authz_check('test_sales', ARRAY['SALES_TW'], 'read', 'column:lot_status.unit_price');"
 
 echo ""
-echo "ADMIN reads mrp (expect: true - hierarchy):"
-$PSQL -c "SELECT authz_check('test_admin', ARRAY[]::TEXT[], 'read', 'module:mrp.lot_tracking');"
+echo "ADMIN reads mrp.lot_tracking (expect: true - resource hierarchy):"
+$PSQL -c "SELECT authz_check('sys_admin', ARRAY[]::TEXT[], 'read', 'module:mrp.lot_tracking');"
 
 echo ""
 echo "--- TEST 3: authz_filter() for PE SSD ---"
@@ -57,7 +57,7 @@ echo "--- TEST 3b: authz_filter() for Admin (should be TRUE = no filter) ---"
 echo ""
 $PSQL -c "
 SELECT authz_filter(
-    'test_admin',
+    'sys_admin',
     ARRAY[]::TEXT[],
     '{}'::jsonb,
     'table:lot_status',
@@ -70,7 +70,7 @@ echo "--- TEST 4: authz_resolve_web_acl() for admin ---"
 echo ""
 $PSQL -c "
 SELECT jsonb_pretty(
-    authz_resolve_web_acl('test_admin', ARRAY['AUTHZ_ADMINS'])
+    authz_resolve_web_acl('sys_admin', ARRAY[]::TEXT[])
 );
 "
 
@@ -95,8 +95,8 @@ echo "Roles for test_pe_ssd with group PE_SSD:"
 $PSQL -c "SELECT _authz_resolve_roles('test_pe_ssd', ARRAY['PE_SSD']);"
 
 echo ""
-echo "Roles for test_admin (no groups):"
-$PSQL -c "SELECT _authz_resolve_roles('test_admin', ARRAY[]::TEXT[]);"
+echo "Roles for sys_admin (no groups):"
+$PSQL -c "SELECT _authz_resolve_roles('sys_admin', ARRAY[]::TEXT[]);"
 
 echo ""
 echo "--- TEST 7: Schema integrity check ---"

@@ -95,7 +95,7 @@ q-filter: ## Show RLS filter for PE SSD
 	@$(PSQL) -c "SELECT authz_filter('test_pe_ssd', '{\"product_line\": \"SSD-Controller\"}'::jsonb, 'table:lot_status', 'A');"
 
 q-web-acl: ## Resolve web ACL for admin
-	@$(PSQL) -c "SELECT jsonb_pretty(authz_resolve_web_acl('test_admin', ARRAY['AUTHZ_ADMINS']));"
+	@$(PSQL) -c "SELECT jsonb_pretty(authz_resolve_web_acl('sys_admin', ARRAY[]::TEXT[]));"
 
 # ── Development Servers ──────────────────────────────────────
 

@@ -7,6 +7,7 @@ import { filterRouter } from './routes/filter';
 import { matrixRouter } from './routes/matrix';
 import { rlsRouter } from './routes/rls-simulate';
 import { browseRouter } from './routes/browse';
+import { poolRouter } from './routes/pool';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001');
@@ -29,6 +30,7 @@ app.use('/api/filter', filterRouter);
 app.use('/api/matrix', matrixRouter);
 app.use('/api/rls', rlsRouter);
 app.use('/api/browse', browseRouter);
+app.use('/api/pool', poolRouter);
 
 app.listen(PORT, () => {
   console.log(`authz-api listening on http://localhost:${PORT}`);

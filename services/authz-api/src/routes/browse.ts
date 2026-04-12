@@ -63,3 +63,29 @@ browseRouter.get('/actions', async (_req, res) => {
     res.status(500).json({ error: String(err) });
   }
 });
+
+browseRouter.get('/audit-logs', async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit as string) || 50, 500);
+  const offset = parseInt(req.query.offset as string) || 0;
+  const subject = req.query.subject as string | undefined;
+  const action = req.query.action as string | undefined;
+  try {
+    let query = 'SELECT * FROM authz_audit_log WHERE 1=1';
+    const params: (string | number)[] = [];
+    let idx = 1;
+    if (subject) {
+      query += ` AND subject_id = $${idx++}`;
+      params.push(subject);
+    }
+    if (action) {
+      query += ` AND action = $${idx++}`;
+      params.push(action);
+    }
+    query += ` ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx++}`;
+    params.push(limit, offset);
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
