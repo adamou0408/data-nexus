@@ -103,7 +103,7 @@ V019 的實際做法是用 `current_setting('app.product_line', TRUE)`（Path A 
 - 方案 A：針對同一張表建立兩份 RLS policy（一份給 Path A 角色用 `current_setting`，一份給 Path C pool role 用 `pg_has_role`）
 - 方案 B：統一用 `pg_has_role()` 檢查，Path A 也改為用 role-based 判斷而非 session variable
 
-**影響範圍**：`database/migrations/V019`、`docs/phison-data-nexus-architecture-v2.4.md` §3.7、`docs/reference_md/authz-sql.md`
+**影響範圍**：`database/migrations/V019`、`docs/phison-data-nexus-architecture-v2.4.md` §3.7、`docs/standards/sql.md`
 
 ---
 
@@ -115,7 +115,7 @@ V019 的實際做法是用 `current_setting('app.product_line', TRUE)`（Path A 
 
 **現狀**
 
-`authz_resolve()` 的 SQL 實作（V008）直接把 `rls_expression` 包含在 `L1_data_scope` 的 JSON 輸出中，REST API `/api/resolve` 也原封不動地把這份 JSON 回傳給前端。但 `docs/reference_md/CLAUDE.md` 的安全紅線第 2 條明確規定：「Resolved config 不傳送 rls_expression 和 mask function 到客戶端。」目前實作直接違反此規則。
+`authz_resolve()` 的 SQL 實作（V008）直接把 `rls_expression` 包含在 `L1_data_scope` 的 JSON 輸出中，REST API `/api/resolve` 也原封不動地把這份 JSON 回傳給前端。但 `docs/standards/` (old CLAUDE.md removed) 的安全紅線第 2 條明確規定：「Resolved config 不傳送 rls_expression 和 mask function 到客戶端。」目前實作直接違反此規則。
 
 `rls_expression` 暴露給客戶端等於告訴攻擊者資料庫欄位名稱和篩選邏輯，可輔助 SQL injection 攻擊。
 
@@ -135,7 +135,7 @@ V019 的實際做法是用 `current_setting('app.product_line', TRUE)`（Path A 
 
 **現狀**
 
-`docs/reference_md/authz-security.md` 第 6 條規定：「確認 explicit deny 規則不從 cache 讀取，而是即時查詢 DB。」但主架構文件 §VII Mega-Prompt 說明 `authz_check_from_cache()` 評估的是完整 resolved config JSON（含 deny 規則），意味著 deny 也走 cache。兩份文件相互矛盾，且 `authz_check_from_cache()` 尚未實作，此矛盾需在實作前解決。
+`docs/standards/security.md` 第 6 條規定：「確認 explicit deny 規則不從 cache 讀取，而是即時查詢 DB。」但主架構文件 §VII Mega-Prompt 說明 `authz_check_from_cache()` 評估的是完整 resolved config JSON（含 deny 規則），意味著 deny 也走 cache。兩份文件相互矛盾，且 `authz_check_from_cache()` 尚未實作，此矛盾需在實作前解決。
 
 **目標**
 
@@ -143,7 +143,7 @@ V019 的實際做法是用 `current_setting('app.product_line', TRUE)`（Path A 
 - 方案 A（安全優先）：`authz_check_from_cache()` 只處理 allow 查詢；deny 查詢繞過 cache 即時查 DB
 - 方案 B（效能優先）：allow 和 deny 都走 cache，但 deny 的 cache TTL 設為 ≤ 5 秒（需記錄殘留風險）
 
-**影響範圍**：`docs/reference_md/authz-security.md`、`docs/phison-data-nexus-architecture-v2.4.md` §VII、未來的 `database/migrations/V0xx__cache_functions.sql`
+**影響範圍**：`docs/standards/security.md`、`docs/phison-data-nexus-architecture-v2.4.md` §VII、未來的 `database/migrations/V0xx__cache_functions.sql`
 
 ---
 
@@ -241,8 +241,8 @@ The architecture document (v2.3) is the complete blueprint.
 | `docs/nexus-startup-guide.md` §2.1 | `authz-service` |
 | 主目錄 `CLAUDE.md` | `authz-api` |
 | 實際目錄 | `services/authz-api/` |
-| `docs/reference_md/authz-three-paths.md` frontmatter | `services/authz-service/**`（路徑不存在） |
-| `docs/reference_md/authz-sql.md` frontmatter | `services/authz-service/sql/**`（路徑不存在） |
+| `docs/standards/three-paths.md` frontmatter | `services/authz-service/**`（路徑不存在） |
+| `docs/standards/sql.md` frontmatter | `services/authz-service/sql/**`（路徑不存在） |
 
 此外，startup guide §2.1 的服務骨架範例使用 `.js` 副檔名，但主 `CLAUDE.md` 規定所有後端使用 TypeScript（`.ts`）。
 
@@ -251,8 +251,8 @@ The architecture document (v2.3) is the complete blueprint.
 統一使用 `authz-api`（與實際目錄一致），更新以下文件：
 1. `docs/phison-data-nexus-architecture-v2.4.md` §9.2 目錄樹、§VII 相關引用
 2. `docs/nexus-startup-guide.md` §2.1 目錄結構和程式碼範例（`.js` → `.ts`）
-3. `docs/reference_md/authz-three-paths.md` frontmatter paths
-4. `docs/reference_md/authz-sql.md` frontmatter paths
+3. `docs/standards/three-paths.md` frontmatter paths
+4. `docs/standards/sql.md` frontmatter paths
 
 **影響範圍**：4 份文件的文字修改，不涉及程式碼
 
@@ -264,7 +264,7 @@ The architecture document (v2.3) is the complete blueprint.
 
 **現狀**
 
-`docs/reference_md/authz-three-paths.md` 和 `docs/reference_md/authz-sql.md` 的 YAML frontmatter 中的 `paths` 欄位（用於自動觸發規則的路徑 glob）引用了 `services/authz-service/**` 和 `packages/authz-client/**` 等不存在的路徑，且與 DOC-03 重疊。
+`docs/standards/three-paths.md` 和 `docs/standards/sql.md` 的 YAML frontmatter 中的 `paths` 欄位（用於自動觸發規則的路徑 glob）引用了 `services/authz-service/**` 和 `packages/authz-client/**` 等不存在的路徑，且與 DOC-03 重疊。
 
 **目標**
 
@@ -284,16 +284,16 @@ The architecture document (v2.3) is the complete blueprint.
 
 | 文件 | 記載版本 |
 |------|---------|
-| `docs/reference_md/CLAUDE.md` | PostgreSQL 14+ |
+| `docs/standards/` (old CLAUDE.md removed) | PostgreSQL 14+ |
 | `docs/phison-data-nexus-architecture-v2.4.md` §VII Mega-Prompt | PostgreSQL 14+ |
 | 主目錄 `CLAUDE.md` | PostgreSQL 16 |
 | `deploy/docker-compose/docker-compose.yml` | `postgres:16-alpine` |
 
 **目標**
 
-統一為 `PostgreSQL 16`（與實際運行版本一致），更新 `docs/reference_md/CLAUDE.md` 和 §VII Mega-Prompt 中的版本描述。
+統一為 `PostgreSQL 16`（與實際運行版本一致），更新 `docs/standards/` (old CLAUDE.md removed) 和 §VII Mega-Prompt 中的版本描述。
 
-**影響範圍**：`docs/reference_md/CLAUDE.md`、`docs/phison-data-nexus-architecture-v2.4.md` §VII 兩處文字修改
+**影響範圍**：`docs/standards/` (old CLAUDE.md removed)、`docs/phison-data-nexus-architecture-v2.4.md` §VII 兩處文字修改
 
 ---
 
@@ -303,13 +303,13 @@ The architecture document (v2.3) is the complete blueprint.
 
 **現狀**
 
-`docs/reference_md/CLAUDE.md` 第 66 行：「本專案有 16 個已識別的生產風險」，但 `docs/reference_md/authz-known-risks.md` 實際列出 20 筆風險（OPS 1-3、SEC 1-3、SCALE 1-3、DATA 1-3、DX 1-2、FT 1-2、COMP 1-2、EVOL 1-2）。
+`docs/standards/` (old CLAUDE.md removed) 第 66 行：「本專案有 16 個已識別的生產風險」，但 `docs/reference_md/authz-known-risks.md` 實際列出 20 筆風險（OPS 1-3、SEC 1-3、SCALE 1-3、DATA 1-3、DX 1-2、FT 1-2、COMP 1-2、EVOL 1-2）。
 
 **目標**
 
-將 `docs/reference_md/CLAUDE.md` 第 66 行的「16 個」改為「20 個」。
+將 `docs/standards/` (old CLAUDE.md removed) 第 66 行的「16 個」改為「20 個」。
 
-**影響範圍**：`docs/reference_md/CLAUDE.md` 一行文字修改
+**影響範圍**：`docs/standards/` (old CLAUDE.md removed) 一行文字修改
 
 ---
 

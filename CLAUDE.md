@@ -34,19 +34,25 @@ data-nexus/
 │           ├── middleware/     # authz.ts (requireAuth/requireRole/requirePermission)
 │           └── audit.ts       # Buffered audit log writer
 ├── database/
-│   ├── migrations/            # V001-V017 sequential SQL migrations
-│   └── seed/                  # Dev seed data (18 groups, 19 users, 16 roles, 40 resources)
+│   ├── migrations/            # V001-V019 sequential SQL migrations
+│   └── seed/                  # Dev seed data (19 groups, 18 users, 16 roles, 40+ resources)
 ├── deploy/
-│   └── docker-compose/        # PG 16 + Redis 7 local dev stack
+│   ├── docker-compose/        # PG 16 + Redis 7 + OpenLDAP local dev stack
+│   └── ldap/seed/             # LDAP seed LDIF files (groups + people + membership)
 ├── docs/                      # Architecture docs & startup guide
+│   ├── PROGRESS.md            # Living progress tracker (SSOT for project status)
+│   └── standards/             # Dev standards, security rules, known risks
 ├── scripts/                   # Utility scripts (verify-milestone1.sh)
 └── Makefile                   # Dev commands (make up/dev/verify/clean)
 ```
 
-## Key Architecture Docs
+## Key Docs
 
-- `docs/phison-data-nexus-architecture-v2.4.md` — Full architecture spec (AuthZ service design, schema, three access paths, performance analysis, production readiness)
+- `docs/PROGRESS.md` — **Read this first every session.** Living progress tracker (SSOT for what's done/remaining)
+- `docs/phison-data-nexus-architecture-v2.4.md` — Full architecture spec (SSOT for design decisions)
 - `docs/nexus-startup-guide.md` — 4-milestone execution plan (local setup → production-ready)
+- `docs/backlog-tech-debt.md` — Known issues & tech debt items
+- `docs/standards/` — Dev standards, security rules, known risks
 
 ## Database Migrations
 
@@ -69,6 +75,8 @@ data-nexus/
 | V015 | SSOT: _authz_pool_ssot_denied_columns(), v_pool_ssot_check view, updated sync |
 | V016 | Column mask PG functions (fn_mask_full/partial/hash/range) |
 | V017 | Fix authz_filter() resource_condition data_domain matching |
+| V018 | Group membership table (authz_group_member) + authz_resolve_user_groups() |
+| V019 | Path C native RLS (PG roles, GRANT, RLS policies on lot_status/sales_order) |
 
 ## API Endpoints
 
@@ -99,10 +107,12 @@ data-nexus/
 
 ## Development Milestones
 
+> Detailed status in `docs/PROGRESS.md` (the SSOT). Summary below:
+
 1. **AuthZ runs locally** (Week 1-2): ✅ Complete
-2. **First page is permission-aware** (Week 3-4): ✅ Complete (AuthzProvider + meta-driven tabs + RLS with column mask)
-3. **All three paths enforced** (Week 5-8): 🟡 Partial (API middleware done, Path C pool management done, admin CRUD partial)
-4. **Production-ready** (Week 9-12): ❌ Not started (Redis cache, Helm/K8s, Policy Simulator, LDAP sync)
+2. **First page is permission-aware** (Week 3-4): ✅ Complete
+3. **All three paths enforced** (Week 5-8): 🟡 In Progress (LDAP done, API middleware done, Path C done, admin CRUD remaining)
+4. **Production-ready** (Week 9-12): ❌ Not started
 
 ## SSOT Principles
 
