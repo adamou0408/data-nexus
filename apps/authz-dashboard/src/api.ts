@@ -1,8 +1,25 @@
 const BASE = '/api';
 
+// Current user context for authenticated API calls
+let _currentUserId = '';
+let _currentGroups: string[] = [];
+
+export function setApiUser(userId: string, groups: string[]) {
+  _currentUserId = userId;
+  _currentGroups = groups;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  // Attach auth headers for admin APIs
+  if (_currentUserId) {
+    headers['X-User-Id'] = _currentUserId;
+    headers['X-User-Groups'] = _currentGroups.join(',');
+  }
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     ...options,
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);

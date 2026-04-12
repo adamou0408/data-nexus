@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
-import { api } from './api';
+import { api, setApiUser } from './api';
 
 // Resolved config from authz_resolve()
 type ResolvedConfig = {
@@ -54,6 +54,7 @@ export function AuthzProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (u: UserProfile) => {
     setLoading(true);
+    setApiUser(u.id, u.groups);
     try {
       const data = await api.resolve(u.id, u.groups, u.attrs) as ResolvedConfig;
       setUser(u);
@@ -68,6 +69,7 @@ export function AuthzProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     setUser(null);
     setConfig(null);
+    setApiUser('', []);
   }, []);
 
   const hasPermission = useCallback((action: string, resource: string): boolean => {
