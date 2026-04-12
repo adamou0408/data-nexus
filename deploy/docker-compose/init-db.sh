@@ -10,8 +10,8 @@ set -e
 
 # ─── 1. Create nexus_data database ───
 echo "Creating nexus_data database..."
-psql -U "$POSTGRES_USER" -c "SELECT 1 FROM pg_database WHERE datname='nexus_data'" | grep -q 1 \
-  || psql -U "$POSTGRES_USER" -c "CREATE DATABASE nexus_data OWNER $POSTGRES_USER;"
+psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1 FROM pg_database WHERE datname='nexus_data'" | grep -q 1 \
+  || psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE DATABASE nexus_data OWNER $POSTGRES_USER;"
 
 # ─── 2. Run authz migrations (nexus_authz) ───
 echo "Running authz migrations on nexus_authz..."
