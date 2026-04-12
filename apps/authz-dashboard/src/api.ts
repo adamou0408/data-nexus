@@ -65,8 +65,12 @@ export const api = {
   resources: () => request<Record<string, unknown>[]>('/browse/resources'),
   policies: () => request<Record<string, unknown>[]>('/browse/policies'),
   actions: () => request<Record<string, unknown>[]>('/browse/actions'),
-  actionItems: (userId?: string) =>
-    request<ActionItem[]>(`/browse/action-items${userId ? `?user_id=${encodeURIComponent(userId)}` : ''}`),
+  actionItems: (userId?: string, isAdmin?: boolean) => {
+    const qs = new URLSearchParams();
+    if (userId) qs.set('user_id', userId);
+    if (isAdmin) qs.set('is_admin', 'true');
+    return request<ActionItem[]>(`/browse/action-items?${qs}`);
+  },
   auditLogs: (params?: { subject?: string; action?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();
     if (params?.subject) qs.set('subject', params.subject);

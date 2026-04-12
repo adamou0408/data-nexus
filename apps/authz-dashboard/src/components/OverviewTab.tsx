@@ -30,8 +30,8 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
   }, [isAdmin]);
 
   useEffect(() => {
-    api.actionItems(user?.id).then(setActionItems).catch(() => {});
-  }, [user?.id]);
+    api.actionItems(user?.id, isAdmin).then(setActionItems).catch(() => {});
+  }, [user?.id, isAdmin]);
 
   return (
     <div className="space-y-6">

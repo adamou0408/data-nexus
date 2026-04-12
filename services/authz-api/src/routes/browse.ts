@@ -281,64 +281,68 @@ browseRouter.get('/functions', async (_req, res) => {
 // Get pending action items for Overview dashboard
 browseRouter.get('/action-items', async (req, res) => {
   const userId = req.query.user_id as string | undefined;
+  const isAdmin = req.query.is_admin === 'true';
   try {
     const items: { type: string; severity: string; title: string; detail: string; meta?: unknown }[] = [];
 
-    // 1. SSOT drift check (admin concern)
-    const drift = await pool.query(`
-      SELECT profile_id, has_drift, static_denied, ssot_denied
-      FROM v_pool_ssot_check
-      WHERE has_drift = TRUE
-    `).catch(() => ({ rows: [] }));
-    for (const d of drift.rows) {
-      items.push({
-        type: 'ssot_drift', severity: 'warning',
-        title: `Pool "${d.profile_id}" SSOT drift detected`,
-        detail: 'Static denied_columns differs from SSOT-derived values',
-        meta: { profile_id: d.profile_id, static: d.static_denied, ssot: d.ssot_denied },
-      });
+    // Admin-only items: SSOT drift, expiring roles, credential rotation
+    if (isAdmin) {
+      // 1. SSOT drift check
+      const drift = await pool.query(`
+        SELECT profile_id, has_drift, static_denied, ssot_denied
+        FROM v_pool_ssot_check
+        WHERE has_drift = TRUE
+      `).catch(() => ({ rows: [] }));
+      for (const d of drift.rows) {
+        items.push({
+          type: 'ssot_drift', severity: 'warning',
+          title: `Pool "${d.profile_id}" SSOT drift detected`,
+          detail: 'Static denied_columns differs from SSOT-derived values',
+          meta: { profile_id: d.profile_id, static: d.static_denied, ssot: d.ssot_denied },
+        });
+      }
+
+      // 2. Expiring role assignments (within 7 days)
+      const expiring = await pool.query(`
+        SELECT subject_id, role_id, valid_until,
+               EXTRACT(DAY FROM (valid_until - now())) AS days_remaining
+        FROM authz_subject_role
+        WHERE is_active = TRUE
+          AND valid_until IS NOT NULL
+          AND valid_until BETWEEN now() AND now() + interval '7 days'
+        ORDER BY valid_until
+      `).catch(() => ({ rows: [] }));
+      for (const e of expiring.rows) {
+        items.push({
+          type: 'role_expiring', severity: 'info',
+          title: `Role "${e.role_id}" for ${e.subject_id} expires in ${Math.ceil(e.days_remaining)} days`,
+          detail: `Valid until: ${new Date(e.valid_until).toLocaleDateString()}`,
+          meta: { subject_id: e.subject_id, role_id: e.role_id, valid_until: e.valid_until },
+        });
+      }
+
+      // 3. Credential rotation due (within 14 days or overdue)
+      const credDue = await pool.query(`
+        SELECT pg_role, last_rotated, rotate_interval,
+               EXTRACT(DAY FROM (last_rotated + rotate_interval - now())) AS days_remaining
+        FROM authz_pool_credentials
+        WHERE is_active = TRUE
+          AND EXTRACT(DAY FROM (last_rotated + rotate_interval - now())) < 14
+      `).catch(() => ({ rows: [] }));
+      for (const c of credDue.rows) {
+        const days = Math.ceil(c.days_remaining);
+        items.push({
+          type: 'credential_rotation', severity: days < 0 ? 'error' : 'warning',
+          title: days < 0
+            ? `Credential "${c.pg_role}" overdue for rotation by ${Math.abs(days)} days`
+            : `Credential "${c.pg_role}" rotation due in ${days} days`,
+          detail: `Last rotated: ${new Date(c.last_rotated).toLocaleDateString()}`,
+          meta: { pg_role: c.pg_role },
+        });
+      }
     }
 
-    // 2. Expiring role assignments (within 7 days)
-    const expiring = await pool.query(`
-      SELECT subject_id, role_id, valid_until,
-             EXTRACT(DAY FROM (valid_until - now())) AS days_remaining
-      FROM authz_subject_role
-      WHERE is_active = TRUE
-        AND valid_until IS NOT NULL
-        AND valid_until BETWEEN now() AND now() + interval '7 days'
-      ORDER BY valid_until
-    `).catch(() => ({ rows: [] }));
-    for (const e of expiring.rows) {
-      items.push({
-        type: 'role_expiring', severity: 'info',
-        title: `Role "${e.role_id}" for ${e.subject_id} expires in ${Math.ceil(e.days_remaining)} days`,
-        detail: `Valid until: ${new Date(e.valid_until).toLocaleDateString()}`,
-        meta: { subject_id: e.subject_id, role_id: e.role_id, valid_until: e.valid_until },
-      });
-    }
-
-    // 3. Credential rotation due (within 14 days or overdue)
-    const credDue = await pool.query(`
-      SELECT pg_role, last_rotated, rotate_interval,
-             EXTRACT(DAY FROM (last_rotated + rotate_interval - now())) AS days_remaining
-      FROM authz_pool_credentials
-      WHERE is_active = TRUE
-        AND EXTRACT(DAY FROM (last_rotated + rotate_interval - now())) < 14
-    `).catch(() => ({ rows: [] }));
-    for (const c of credDue.rows) {
-      const days = Math.ceil(c.days_remaining);
-      items.push({
-        type: 'credential_rotation', severity: days < 0 ? 'error' : 'warning',
-        title: days < 0
-          ? `Credential "${c.pg_role}" overdue for rotation by ${Math.abs(days)} days`
-          : `Credential "${c.pg_role}" rotation due in ${days} days`,
-        detail: `Last rotated: ${new Date(c.last_rotated).toLocaleDateString()}`,
-        meta: { pg_role: c.pg_role },
-      });
-    }
-
-    // 4. Recent denied accesses for current user (last 24h)
+    // 4. Recent denied accesses for current user (last 24h) — all users
     if (userId) {
       const denials = await pool.query(`
         SELECT action_id, resource_id, timestamp
