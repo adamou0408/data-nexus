@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { pool } from '../db';
+import { audit } from '../audit';
 
 export const checkRouter = Router();
 
@@ -11,7 +12,14 @@ checkRouter.post('/', async (req, res) => {
       'SELECT authz_check($1, $2, $3, $4) AS allowed',
       [user_id, groups, action, resource]
     );
-    res.json({ allowed: result.rows[0].allowed });
+    const allowed = result.rows[0].allowed;
+    audit({
+      access_path: 'A', subject_id: `user:${user_id}`,
+      action_id: action, resource_id: resource,
+      decision: allowed ? 'allow' : 'deny',
+      context: { groups },
+    });
+    res.json({ allowed });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

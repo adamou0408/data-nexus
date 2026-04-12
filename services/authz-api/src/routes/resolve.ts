@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { pool } from '../db';
+import { audit } from '../audit';
 
 export const resolveRouter = Router();
 
@@ -11,6 +12,11 @@ resolveRouter.post('/', async (req, res) => {
       'SELECT authz_resolve($1, $2, $3) AS config',
       [user_id, groups, JSON.stringify(attributes)]
     );
+    audit({
+      access_path: 'A', subject_id: `user:${user_id}`,
+      action_id: 'resolve', resource_id: '*', decision: 'allow',
+      context: { groups, attributes },
+    });
     res.json(result.rows[0].config);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -25,6 +31,11 @@ resolveRouter.post('/web-acl', async (req, res) => {
       'SELECT authz_resolve_web_acl($1, $2) AS config',
       [user_id, groups]
     );
+    audit({
+      access_path: 'B', subject_id: `user:${user_id}`,
+      action_id: 'resolve_web_acl', resource_id: '*', decision: 'allow',
+      context: { groups },
+    });
     res.json(result.rows[0].config);
   } catch (err) {
     res.status(500).json({ error: String(err) });

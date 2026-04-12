@@ -412,6 +412,72 @@ INSERT INTO authz_policy (
 -- NOTE: QA, VP, FINANCE, BI_USER have NO L1 policies → they see all data (TRUE)
 
 -- ============================================================
+-- 6a. L2 Column Mask Policies (SSOT for column masking across all paths)
+-- ============================================================
+INSERT INTO authz_policy (
+    policy_name, description, granularity, effect, status,
+    applicable_paths, subject_condition, resource_condition,
+    column_mask_rules, created_by
+) VALUES
+-- PE sees unit_price as range, cost as full mask
+('pe_column_masks',
+ 'PE engineers: unit_price shown as range bucket, cost fully masked',
+ 'L2_row_column', 'allow', 'active', '{A,B,C}',
+ '{"role": ["PE"]}',
+ '{"resource_type": "table"}',
+ '{
+    "lot_status.unit_price": {"mask_type": "range", "function": "fn_mask_range"},
+    "lot_status.cost":       {"mask_type": "full",  "function": "fn_mask_full"}
+  }',
+ 'system'),
+
+-- OP sees unit_price as full mask, customer as partial mask
+('op_column_masks',
+ 'Operators: unit_price fully masked, customer name partially masked',
+ 'L2_row_column', 'allow', 'active', '{A,B,C}',
+ '{"role": ["OP"]}',
+ '{"resource_type": "table"}',
+ '{
+    "lot_status.unit_price": {"mask_type": "full",    "function": "fn_mask_full"},
+    "lot_status.customer":   {"mask_type": "partial", "function": "fn_mask_partial"}
+  }',
+ 'system'),
+
+-- QA sees unit_price as range
+('qa_column_masks',
+ 'QA engineers: unit_price shown as range bucket',
+ 'L2_row_column', 'allow', 'active', '{A,B,C}',
+ '{"role": ["QA"]}',
+ '{"resource_type": "table"}',
+ '{
+    "lot_status.unit_price": {"mask_type": "range", "function": "fn_mask_range"}
+  }',
+ 'system'),
+
+-- FAE sees cost as full mask, margin as full mask
+('fae_column_masks',
+ 'FAE: cost and margin fully masked',
+ 'L2_row_column', 'allow', 'active', '{A,B,C}',
+ '{"role": ["FAE"]}',
+ '{"resource_type": "table"}',
+ '{
+    "lot_status.cost":    {"mask_type": "full", "function": "fn_mask_full"},
+    "price_book.margin":  {"mask_type": "full", "function": "fn_mask_full"}
+  }',
+ 'system'),
+
+-- BI_USER sees margin as hash
+('bi_column_masks',
+ 'BI analysts: margin shown as hash for correlation without revealing value',
+ 'L2_row_column', 'allow', 'active', '{A,B,C}',
+ '{"role": ["BI_USER"]}',
+ '{"resource_type": "table"}',
+ '{
+    "price_book.margin": {"mask_type": "hash", "function": "fn_mask_hash"}
+  }',
+ 'system');
+
+-- ============================================================
 -- 6b. AUTHZ_ADMINS group + web_api resources
 -- ============================================================
 INSERT INTO authz_subject (subject_id, subject_type, display_name, attributes) VALUES
