@@ -78,6 +78,25 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
 
     // Step 3: If no data_table, return config only (e.g., card_grid sub-pages)
     if (!config.data_table) {
+      // For card_grid pages, populate components from child pages
+      if (config.layout === 'card_grid') {
+        const childResult = await pool.query(`
+          SELECT page_id, title, description, icon, display_order
+          FROM authz_ui_page
+          WHERE parent_page_id = $1 AND is_active
+            AND (resource_id IS NULL OR authz_check($2, $3, 'read', resource_id))
+          ORDER BY display_order
+        `, [page_id, user.user_id, user.groups]);
+        config.components = childResult.rows.map((r: any) => ({
+          type: 'metric_card',
+          page_id: r.page_id,
+          label: r.title,
+          description: r.description,
+          icon: r.icon,
+          display_order: r.display_order,
+          drilldown: { page_id: r.page_id },
+        }));
+      }
       return res.json({ config, data: [], meta: {} });
     }
 

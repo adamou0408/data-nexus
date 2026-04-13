@@ -22,6 +22,7 @@ type AuthzState = {
   loading: boolean;
   users: UserProfile[];
   usersLoading: boolean;
+  isAdmin: boolean;
   login: (user: UserProfile) => Promise<void>;
   logout: () => void;
   hasPermission: (action: string, resource: string) => boolean;
@@ -78,8 +79,10 @@ export function AuthzProvider({ children }: { children: ReactNode }) {
     return config.resolved_roles.includes(role);
   }, [config]);
 
+  const isAdmin = config?.resolved_roles?.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN') ?? false;
+
   return (
-    <AuthzContext.Provider value={{ user, config, loading, users, usersLoading, login, logout, hasPermission, hasRole }}>
+    <AuthzContext.Provider value={{ user, config, loading, users, usersLoading, isAdmin, login, logout, hasPermission, hasRole }}>
       {children}
     </AuthzContext.Provider>
   );

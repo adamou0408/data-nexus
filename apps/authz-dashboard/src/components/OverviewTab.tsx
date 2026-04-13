@@ -15,10 +15,10 @@ type Stats = {
 };
 
 export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
-  const { user, config } = useAuthz();
+  const { user, config, isAdmin } = useAuthz();
   const [stats, setStats] = useState<Stats | null>(null);
   const [actionItems, setActionItems] = useState<ActionItem[]>([]);
-  const isAdmin = config?.resolved_roles?.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN') ?? false;
+
 
   useEffect(() => {
     if (!isAdmin) return;

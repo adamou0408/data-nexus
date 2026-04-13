@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../db';
 import { audit } from '../audit';
+import { isAdminUser } from '../lib/request-helpers';
 
 export const resolveRouter = Router();
 
@@ -31,19 +32,6 @@ function sanitizeForClient(config: any): any {
   return safe;
 }
 
-// Resolve admin status from user groups (reuse existing authz_check)
-async function isAdminUser(userId: string, groups: string[]): Promise<boolean> {
-  try {
-    const result = await pool.query(
-      'SELECT _authz_resolve_roles($1, $2) AS roles',
-      [userId, groups]
-    );
-    const roles: string[] = result.rows[0]?.roles || [];
-    return roles.includes('ADMIN') || roles.includes('AUTHZ_ADMIN');
-  } catch {
-    return false;
-  }
-}
 
 // Path A: Config-SM resolve
 // Single endpoint — returns sanitized config for non-admin, full config for admin.
@@ -65,7 +53,7 @@ resolveRouter.post('/', async (req, res) => {
 
     // Role-based output depth: admin with _detailed gets full config
     if (_detailed) {
-      const admin = await isAdminUser(user_id, groups);
+      const admin = await isAdminUser(pool, user_id, groups);
       if (admin) {
         return res.json(fullConfig);
       }

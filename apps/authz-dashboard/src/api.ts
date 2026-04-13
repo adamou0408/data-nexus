@@ -158,6 +158,37 @@ export const api = {
     return request<Record<string, unknown>[]>(`/browse/audit-logs?${qs}`);
   },
 
+  // Admin audit logs
+  adminAuditLogs: (params?: { user?: string; action?: string; resource_type?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.user) qs.set('user', params.user);
+    if (params?.action) qs.set('action', params.action);
+    if (params?.resource_type) qs.set('resource_type', params.resource_type);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.offset) qs.set('offset', String(params.offset));
+    return request<Record<string, unknown>[]>(`/browse/admin-audit?${qs}`);
+  },
+
+  // Policy assignments
+  policyAssignments: (policyId: number) =>
+    request<Record<string, unknown>[]>(`/browse/policies/${policyId}/assignments`),
+  policyAssignmentCreate: (policyId: number, data: { assignment_type: string; assignment_value: string; is_exception?: boolean }) =>
+    request<Record<string, unknown>>(`/browse/policies/${policyId}/assignments`, { method: 'POST', body: JSON.stringify(data) }),
+  policyAssignmentDelete: (assignmentId: number) =>
+    request(`/browse/policy-assignments/${assignmentId}`, { method: 'DELETE' }),
+
+  // Role clearance
+  roleClearanceUpdate: (roleId: string, data: { security_clearance?: string; job_level?: number }) =>
+    request<Record<string, unknown>>(`/browse/roles/${encodeURIComponent(roleId)}/clearance`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Data classification
+  classifications: () =>
+    request<Record<string, unknown>[]>('/browse/classifications'),
+  resourceClassify: (resourceId: string, classificationId: number | null) =>
+    request<Record<string, unknown>>(`/browse/resources/${encodeURIComponent(resourceId)}/classify`, { method: 'PUT', body: JSON.stringify({ classification_id: classificationId }) }),
+  columnsClassified: (tableResourceId: string) =>
+    request<Record<string, unknown>[]>(`/browse/resources/${encodeURIComponent(tableResourceId)}/columns-classified`),
+
   // Path B: Web ACL
   resolveWebAcl: (user_id: string, groups: string[]) =>
     request('/resolve/web-acl', { method: 'POST', body: JSON.stringify({ user_id, groups }) }),
@@ -249,6 +280,7 @@ export const api = {
       method: 'POST', body: JSON.stringify({ data_source_id }),
     }),
 
+  rolePoolMap: () => request<Record<string, string>>('/browse/role-pool-map'),
   poolMetabaseConnections: () => request<{
     metabase_url: string;
     pgbouncer: { host: string; port: number };

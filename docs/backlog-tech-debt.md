@@ -492,7 +492,43 @@ PGBOUNCER_PORT=6432
 
 ---
 
-## 七、開發環境 (DX)
+## 七、Config-SM / UI Engine
+
+### UI-01　fn_ui_root() 排除 card_grid layout 頁面
+
+**狀態**：已完成　｜　**優先級**：P1
+**完成於**：2026-04-14。V029 migration 移除 `AND p.layout != 'card_grid'` 過濾條件。
+
+**現狀**
+
+`fn_ui_root()` PG function 包含 `AND p.layout != 'card_grid'` 條件，導致所有 layout 為 card_grid 的 module-level 頁面（如 MRP、Sales 等主模組）不會出現在首頁卡片列表中。使用者登入後看到空白首頁。
+
+**目標**
+
+移除該過濾條件，讓所有 `parent_page_id IS NULL AND is_active` 的頁面都能正確顯示。
+
+**影響範圍**：`database/migrations/V029__fix_fn_ui_root_card_grid.sql`
+
+---
+
+### UI-02　config-exec card_grid 子頁面未填充 components
+
+**狀態**：已完成　｜　**優先級**：P1
+**完成於**：2026-04-14。config-exec.ts Step 3 加入 child page 查詢 + authz_check 權限過濾。
+
+**現狀**
+
+`POST /api/config-exec` 在處理 `layout: 'card_grid'` 且 `data_table` 為空的子模組頁面時，直接回傳空 config 而未查詢子頁面。導致使用者點進模組後看到空白頁面（無子卡片）。
+
+**目標**
+
+當 page 為 card_grid 且無 data_table 時，從 `authz_ui_page` 查詢其 children，並經 `authz_check()` 過濾後填充到 `config.components`。
+
+**影響範圍**：`services/authz-api/src/routes/config-exec.ts`
+
+---
+
+## 八、開發環境 (DX)
 
 ### DX-01　Shell script CRLF 換行符導致 Docker 容器啟動失敗
 

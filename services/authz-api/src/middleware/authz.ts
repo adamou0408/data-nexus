@@ -1,9 +1,32 @@
 import { Request, Response, NextFunction } from 'express';
 import { pool } from '../db';
+import type { JWTClaims } from './jwt';
 
-// Extract user context from request headers
-// Falls back to DB lookup via authz_group_member if X-User-Groups not provided
-export function extractUser(req: Request): { user_id: string; groups: string[] } | null {
+export interface AuthzUser {
+  user_id: string;
+  groups: string[];
+  department?: string;
+  job_level?: number;
+  security_clearance?: string;
+}
+
+// Extract user context from JWT claims (preferred) or request headers (fallback)
+export function extractUser(req: Request): AuthzUser | null {
+  // JWT-first: if optionalJWT middleware decoded a token, use claims
+  if (req.jwtClaims) {
+    const claims = req.jwtClaims;
+    const roles = claims.realm_access?.roles || [];
+    const groups = claims.groups || [];
+    return {
+      user_id: claims.preferred_username || claims.sub,
+      groups: [...groups, ...roles],
+      department: claims.department as string | undefined,
+      job_level: claims.job_level as number | undefined,
+      security_clearance: claims.security_clearance as string | undefined,
+    };
+  }
+
+  // Fallback: X-User-Id header (POC / backward compatible)
   const userId = req.headers['x-user-id'] as string;
   if (!userId) return null;
   const groupsHeader = req.headers['x-user-groups'] as string || '';

@@ -16,9 +16,7 @@ import { MetabaseTab } from './components/MetabaseTab';
 
 function AppInner() {
   const [tab, setTab] = useState<TabId>('overview');
-  const { config } = useAuthz();
-
-  const isAdmin = config?.resolved_roles?.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN') ?? false;
+  const { isAdmin } = useAuthz();
 
   useEffect(() => {
     const adminTabs: TabId[] = ['pool', 'audit', 'browser', 'check', 'rls', 'functions', 'raw-tables'];

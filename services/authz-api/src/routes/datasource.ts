@@ -1,12 +1,10 @@
-import { Router, Request } from 'express';
+import { Router } from 'express';
 import { Pool } from 'pg';
 import { pool as authzPool, evictDataSourcePool } from '../db';
 import { audit } from '../audit';
 import { encrypt, decrypt } from '../lib/crypto';
-
-function getUserId(req: Request): string {
-  return (req as any).authzUser?.user_id || 'unknown';
-}
+import { logAdminAction } from '../lib/admin-audit';
+import { getUserId, getClientIp } from '../lib/request-helpers';
 
 export const datasourceRouter = Router();
 
@@ -177,6 +175,7 @@ datasourceRouter.post('/', async (req, res) => {
     ]);
 
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_register', resource_id: source_id, decision: 'allow', context: { host, port, database_name } });
+    logAdminAction(authzPool, { userId: getUserId(req), action: 'CREATE_DATASOURCE', resourceType: 'data_source', resourceId: source_id, details: { host, port, database_name }, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -220,6 +219,7 @@ datasourceRouter.put('/:id', async (req, res) => {
 
     evictDataSourcePool(req.params.id);
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_update', resource_id: req.params.id, decision: 'allow' });
+    logAdminAction(authzPool, { userId: getUserId(req), action: 'UPDATE_DATASOURCE', resourceType: 'data_source', resourceId: req.params.id, ip: getClientIp(req) });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -239,6 +239,7 @@ datasourceRouter.delete('/:id', async (req, res) => {
     }
     evictDataSourcePool(req.params.id);
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_deactivate', resource_id: req.params.id, decision: 'allow' });
+    logAdminAction(authzPool, { userId: getUserId(req), action: 'DEACTIVATE_DATASOURCE', resourceType: 'data_source', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ deactivated: req.params.id });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -311,6 +312,7 @@ datasourceRouter.delete('/:id/purge', async (req, res) => {
         profiles_deleted: profResult.rowCount,
       },
     });
+    logAdminAction(authzPool, { userId: getUserId(req), action: 'PURGE_DATASOURCE', resourceType: 'data_source', resourceId: req.params.id, details: { columns_deleted: colResult.rowCount, tables_deleted: tblResult.rowCount, profiles_deleted: profResult.rowCount }, ip: getClientIp(req) });
 
     res.json({
       purged: req.params.id,
@@ -469,6 +471,7 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
       );
 
       audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_discover', resource_id: ds.source_id, decision: 'allow', context: { tables_found: tables.length, resources_created: created.length } });
+      logAdminAction(authzPool, { userId: getUserId(req), action: 'DISCOVER_DATASOURCE', resourceType: 'data_source', resourceId: ds.source_id, details: { tables_found: tables.length, resources_created: created.length }, ip: getClientIp(req) });
 
       res.json({
         source_id: ds.source_id,

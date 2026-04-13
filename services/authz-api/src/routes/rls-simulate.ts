@@ -81,6 +81,7 @@ rlsRouter.post('/simulate', async (req, res) => {
       total_count: result.totalCount,
       column_masks: result.columnMasks,
       resolved_roles: result.resolvedRoles,
+      rewritten_sql: result.rewrittenSql,
     });
   } catch (err) {
     res.status(500).json({ error: String(err) });

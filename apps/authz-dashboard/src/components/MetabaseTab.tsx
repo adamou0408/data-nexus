@@ -27,19 +27,22 @@ type MetabaseInfo = {
 // ============================================================
 
 export function MetabaseTab() {
-  const { user, config } = useAuthz();
+  const { user, config, isAdmin } = useAuthz();
   const [info, setInfo] = useState<MetabaseInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [metabaseStatus, setMetabaseStatus] = useState<'checking' | 'ok' | 'down'>('checking');
   const [copied, setCopied] = useState<string | null>(null);
-
-  const isAdmin = config?.resolved_roles?.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN') ?? false;
+  const [rolePoolMap, setRolePoolMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!isAdmin) { setLoading(false); return; }
-    api.poolMetabaseConnections()
-      .then(setInfo)
-      .catch(() => {})
+    Promise.all([
+      api.poolMetabaseConnections(),
+      api.rolePoolMap(),
+    ]).then(([mbInfo, map]) => {
+      setInfo(mbInfo);
+      setRolePoolMap(map);
+    }).catch(() => {})
       .finally(() => setLoading(false));
   }, [isAdmin]);
 
@@ -59,15 +62,9 @@ export function MetabaseTab() {
     setTimeout(() => setCopied(null), 2000);
   };
 
-  // Determine which pool role the current user maps to (SSOT from roles)
+  // Determine which pool role the current user maps to (SSOT from DB)
   const userRoles = config?.resolved_roles || [];
-  const rolePoolMap: Record<string, string> = {
-    PE: 'nexus_pe_ro', OP: 'nexus_pe_ro',
-    SALES: 'nexus_sales_ro', FAE: 'nexus_sales_ro',
-    QA: 'nexus_bi_ro', PM: 'nexus_bi_ro', RD: 'nexus_bi_ro', FW: 'nexus_bi_ro',
-    ADMIN: 'nexus_admin_full', AUTHZ_ADMIN: 'nexus_admin_full',
-  };
-  const userPoolRole = userRoles.map(r => rolePoolMap[r]).find(Boolean) || 'nexus_bi_ro';
+  const userPoolRole = userRoles.map(r => rolePoolMap[r]).find(Boolean) || 'unknown';
 
   if (!user) {
     return (

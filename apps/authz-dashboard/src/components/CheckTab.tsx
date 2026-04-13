@@ -233,9 +233,18 @@ function ResolvePanel({ user }: { user: { id: string; groups: string[]; attrs: R
 // ── Single Check Panel ──
 function SingleCheckPanel({ user }: { user: { id: string; groups: string[] } }) {
   const [action, setAction] = useState('read');
-  const [resource, setResource] = useState('module:mrp.lot_tracking');
+  const [resource, setResource] = useState('');
   const [result, setResult] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
+  const [actionList, setActionList] = useState<string[]>([]);
+
+  useEffect(() => {
+    api.actions().then(list => {
+      const ids = list.map((a: any) => a.action_id);
+      setActionList(ids);
+      if (ids.length > 0 && !ids.includes(action)) setAction(ids[0]);
+    }).catch(() => {});
+  }, []);
 
   const check = async () => {
     setLoading(true);
@@ -258,7 +267,7 @@ function SingleCheckPanel({ user }: { user: { id: string; groups: string[] } }) 
           <div>
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Action</label>
             <select value={action} onChange={e => setAction(e.target.value)} className="select">
-              {['read','write','delete','approve','export','hold','release','execute','connect'].map(a =>
+              {actionList.map(a =>
                 <option key={a} value={a}>{a}</option>
               )}
             </select>

@@ -35,7 +35,21 @@
       "Bash(taskkill //PID 44672 //F)",
       "Bash(python -m json.tool)",
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\([c['label'] for c in d['config']['components']]\\)\")",
-      "Bash(taskkill //PID 39420 //F)"
+      "Bash(taskkill //PID 39420 //F)",
+      "Bash(taskkill //F //PID 57672)",
+      "Bash(python3 -m json.tool)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:v for k,v in d.items\\(\\) if k in ['user_id','resolved_roles','access_path']}, indent=2\\)\\)\")",
+      "Bash(python3 -c \"import sys,json; data=json.load\\(sys.stdin\\); print\\([a['action_id'] for a in data]\\)\")",
+      "Bash(python -c \" import sys,json d=json.load\\(sys.stdin\\) cards = d['config']['components'] print\\(f'{len\\(cards\\)} cards:'\\) for c in cards: print\\(f\\\\\" - {c['label']} \\({c['page_id']}\\)\\\\\"\\) \")",
+      "Bash(python -c \" import sys,json d=json.load\\(sys.stdin\\) config = d['config'] print\\(f\\\\\"Page: {config['title']} \\(layout: {config['layout']}\\)\\\\\"\\) comps = config.get\\('components', []\\) print\\(f'{len\\(comps\\)} sub-pages:'\\) for c in comps: print\\(f\\\\\" - {c.get\\('label',''\\)} \\({c.get\\('page_id',''\\)}\\)\\\\\"\\) \")",
+      "Bash(tasklist)",
+      "Bash(taskkill //PID 40752 //F)",
+      "Bash(python -c \" import sys,json d=json.load\\(sys.stdin\\) config = d['config'] meta = d.get\\('meta', {}\\) data = d.get\\('data', []\\) print\\(f\\\\\"Page: {config['title']}\\\\\"\\) cols = config.get\\('columns', []\\) print\\(f\\\\\"Columns: {len\\(cols\\)}\\\\\"\\) for c in cols[:5]: print\\(f\\\\\" - {c['key']}: {c.get\\('label',''\\)} \\(access: {c.get\\('access',''\\)}\\)\\\\\"\\) if len\\(cols\\) > 5: print\\(f' ... +{len\\(cols\\)-5} more'\\) print\\(f\\\\\"Rows: {len\\(data\\)}, Total: {meta.get\\('totalCount','?'\\)}, Filtered: {meta.get\\('filteredCount','?'\\)}\\\\\"\\) masks = meta.get\\('columnMasks',{}\\) if masks: print\\(f'Masks: {masks}'\\) \")",
+      "Bash(python -c \" import sys,json d=json.load\\(sys.stdin\\) comps = d['config']['components'] print\\(f'{len\\(comps\\)} modules visible to PE user'\\) \")",
+      "Bash(python -c \" import sys,json data = json.load\\(sys.stdin\\) print\\(f'{len\\(data\\)} records \\(showing 3\\)'\\) for d in data[:3]: print\\(f\\\\\" [{d['action']}] {d['resource_type']}:{d.get\\('resource_id',''\\)} by {d['user_id']}\\\\\"\\)\")",
+      "Bash(python -c \" import sys,json data = json.load\\(sys.stdin\\) for ds in data: print\\(f\\\\\"{ds['source_id']}: {ds['display_name']}\\\\\"\\) print\\(f\\\\\" tables={ds.get\\('tables',0\\)} mapped={ds.get\\('mapped',0\\)} unmapped={ds.get\\('unmapped',0\\)}\\\\\"\\) print\\(f\\\\\" profiles={ds.get\\('profile_count',0\\)} next={ds.get\\('next_action',''\\)}\\\\\"\\) \")",
+      "Bash(grep -r \"router\\\\.\\(get|post|put|delete|patch\\)\" D:/Adam/project/data-nexus/services/authz-api/src/routes/*.ts)",
+      "Bash(sed 's/^[[:space:]]*//')"
     ]
   }
 }

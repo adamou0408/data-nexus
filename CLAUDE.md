@@ -24,7 +24,7 @@ data-nexus/
 │   ├── authz-api/             # Express API (port 3001)
 │   └── identity-sync/         # LDAP → DB sync service
 ├── database/
-│   ├── migrations/            # V001-V019 sequential SQL migrations
+│   ├── migrations/            # V001-V029 sequential SQL migrations
 │   └── seed/                  # Dev seed data
 ├── deploy/
 │   ├── docker-compose/        # PG 16 + Redis 7 + OpenLDAP
@@ -39,8 +39,8 @@ data-nexus/
 
 1. **AuthZ runs locally**: ✅ Complete
 2. **First page is permission-aware**: ✅ Complete
-3. **All three paths enforced**: 🟡 In Progress (LDAP done, middleware done, Path C done, admin CRUD remaining)
-4. **Production-ready**: ❌ Not started
+3. **All three paths enforced**: ✅ Complete (LDAP, middleware, Path C, admin CRUD, external sync, Config-SM, Metabase BI)
+4. **Production-ready**: 🟡 In Progress (Redis cache, Helm chart, Policy Simulator, Keycloak SSO remaining)
 
 ## Core Concepts
 

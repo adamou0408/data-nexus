@@ -2,7 +2,7 @@
 
 > **This file is the SSOT for project progress.**
 > All sessions should read this first and update it when completing work.
-> Last updated: 2026-04-13
+> Last updated: 2026-04-14
 
 ---
 
@@ -79,6 +79,20 @@
 - [x] pg_k8cluster scenario: Tiptop ERP modules + profile mapping
 - [x] Greenplum compatibility: two-step table query, RLS skip, graceful column revoke
 
+- [x] V027: EdgePolicy fusion schema (policy_assignment, data_classification, clearance_mapping, security_clearance/job_level on role)
+- [x] V028: Phase 5 seed data (policy assignments, role clearance values, column classifications)
+- [x] V029: Fix fn_ui_root card_grid layout filter
+- [x] Phase 0: Shared helpers extraction (request-helpers.ts: getUserId, getClientIp, isAdminUser)
+- [x] Phase 0: AuthzContext `isAdmin` centralized (removed 4 duplicate inline computations)
+- [x] Phase 1: Browse route security split (browse-read.ts public + browse-admin.ts requireRole guard)
+- [x] Phase 2: SSOT fixes — dynamic action list, dynamic role-pool map, dynamic default table
+- [x] Phase 3: Admin audit completion — 11 missing logAdminAction calls in pool.ts + datasource.ts
+- [x] Phase 4: AuditTab admin audit sub-tab + BrowserTab policy assignments + role clearance + classification UI
+- [x] Phase 4: api.ts new endpoints (adminAuditLogs, policyAssignment*, roleClearanceUpdate, classifications, columnsClassified)
+- [x] Phase 6: operation-detector integrated into rewrite pipeline (skip non-SELECT)
+- [x] Phase 6: isAdminUser shared helper (removed duplicate in resolve.ts)
+- [x] Config-exec fix: card_grid sub-page child population with authz_check filtering
+
 ### Remaining
 (Milestone 3 complete — remaining items moved to Milestone 4)
 
@@ -127,6 +141,9 @@
 | V024 | Fix authz_check_from_cache() deny-wins + authz_resolve() include deny in L0 | Done |
 | V025 | External sync support (authz_sync_log + last_grant_sync_at) | Done |
 | V026 | `allowed_modules` TEXT[] on authz_db_pool_profile | Done |
+| V027 | EdgePolicy fusion schema (policy_assignment, classification, clearance_mapping, role columns) | Done |
+| V028 | Phase 5 seed data (policy assignments, role clearance, column classifications) | Done |
+| V029 | Fix fn_ui_root: remove card_grid layout exclusion | Done |
 | data/V003 | 6 remaining business tables migrated to nexus_data | Done |
 | data/V004 | Path C RLS: remove current_setting(), add identity-only pg_has_role | Done |
 

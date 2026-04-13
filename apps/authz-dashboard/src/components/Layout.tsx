@@ -73,8 +73,7 @@ export function Layout({
   onTabChange: (tab: TabId) => void;
   children: ReactNode;
 }) {
-  const { user, config, loading, users, usersLoading, login, logout } = useAuthz();
-  const isAdmin = config?.resolved_roles?.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN') ?? false;
+  const { user, config, loading, users, usersLoading, isAdmin, login, logout } = useAuthz();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Close sidebar on route change (mobile)

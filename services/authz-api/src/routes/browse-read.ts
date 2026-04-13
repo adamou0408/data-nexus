@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { pool } from '../db';
 
-export const browseRouter = Router();
+export const browseReadRouter = Router();
 
-browseRouter.get('/subjects', async (_req, res) => {
+browseReadRouter.get('/subjects', async (_req, res) => {
   try {
     const result = await pool.query(`
       SELECT s.*, array_agg(sr.role_id) FILTER (WHERE sr.role_id IS NOT NULL) AS roles
@@ -18,7 +18,7 @@ browseRouter.get('/subjects', async (_req, res) => {
   }
 });
 
-browseRouter.get('/roles', async (_req, res) => {
+browseReadRouter.get('/roles', async (_req, res) => {
   try {
     const result = await pool.query(`
       SELECT r.*,
@@ -33,7 +33,7 @@ browseRouter.get('/roles', async (_req, res) => {
   }
 });
 
-browseRouter.get('/resources', async (req, res) => {
+browseReadRouter.get('/resources', async (req, res) => {
   try {
     const typeFilter = req.query.type as string | undefined;
     const result = typeFilter
@@ -45,18 +45,16 @@ browseRouter.get('/resources', async (req, res) => {
   }
 });
 
-browseRouter.get('/policies', async (_req, res) => {
+browseReadRouter.get('/policies', async (_req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT * FROM authz_policy ORDER BY policy_id
-    `);
+    const result = await pool.query('SELECT * FROM authz_policy ORDER BY policy_id');
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
 });
 
-browseRouter.get('/actions', async (_req, res) => {
+browseReadRouter.get('/actions', async (_req, res) => {
   try {
     const result = await pool.query('SELECT * FROM authz_action WHERE is_active = TRUE ORDER BY action_id');
     res.json(result.rows);
@@ -65,9 +63,7 @@ browseRouter.get('/actions', async (_req, res) => {
   }
 });
 
-// --- User profiles for frontend login selector ---
-// Returns user subjects with their groups and attributes (replaces hardcoded TEST_USERS)
-browseRouter.get('/subjects/profiles', async (_req, res) => {
+browseReadRouter.get('/subjects/profiles', async (_req, res) => {
   try {
     const result = await pool.query(`
       SELECT s.subject_id,
@@ -85,9 +81,7 @@ browseRouter.get('/subjects/profiles', async (_req, res) => {
       ORDER BY s.subject_id
     `);
 
-    // Transform to frontend UserProfile format
     const profiles = result.rows.map((r: { subject_id: string; display_name: string; subject_type: string; attributes: Record<string, string> | null; groups: string[] }) => {
-      // Strip "user:" prefix but keep "svc:" prefix for service accounts
       let id = r.subject_id;
       if (id.startsWith('user:')) id = id.slice(5);
       return {
@@ -104,10 +98,8 @@ browseRouter.get('/subjects/profiles', async (_req, res) => {
   }
 });
 
-// --- Batch checks: generate representative permission test cases from DB ---
-browseRouter.get('/batch-checks', async (_req, res) => {
+browseReadRouter.get('/batch-checks', async (_req, res) => {
   try {
-    // Get all active resources grouped by type, pick representative samples
     const resources = await pool.query(`
       SELECT resource_id, resource_type
       FROM authz_resource
@@ -115,14 +107,12 @@ browseRouter.get('/batch-checks', async (_req, res) => {
       ORDER BY resource_type, resource_id
     `);
 
-    // Get all active actions
-    const actions = await pool.query(`
-      SELECT action_id FROM authz_action WHERE is_active = TRUE ORDER BY action_id
-    `);
+    const actions = await pool.query(
+      'SELECT action_id FROM authz_action WHERE is_active = TRUE ORDER BY action_id'
+    );
 
     const actionIds = actions.rows.map((a: { action_id: string }) => a.action_id);
 
-    // Build checks: for each resource type, pick up to N resources and pair with relevant actions
     const checks: { action: string; resource: string }[] = [];
     const byType: Record<string, string[]> = {};
     for (const r of resources.rows as { resource_id: string; resource_type: string }[]) {
@@ -130,7 +120,6 @@ browseRouter.get('/batch-checks', async (_req, res) => {
       byType[r.resource_type].push(r.resource_id);
     }
 
-    // Action relevance by resource type
     const typeActions: Record<string, string[]> = {
       module: ['read', 'write', 'approve', 'export', 'connect'],
       table:  ['read', 'write'],
@@ -141,7 +130,6 @@ browseRouter.get('/batch-checks', async (_req, res) => {
 
     for (const [type, resourceIds] of Object.entries(byType)) {
       const relevantActions = (typeActions[type] || ['read']).filter(a => actionIds.includes(a));
-      // Pick up to 5 resources per type
       const sample = resourceIds.slice(0, 5);
       for (const rid of sample) {
         for (const aid of relevantActions) {
@@ -156,10 +144,7 @@ browseRouter.get('/batch-checks', async (_req, res) => {
   }
 });
 
-// --- Data Explorer: permission-aware table view ---
-
-// Returns table schema + column access status + filtered sample data + mask functions
-browseRouter.post('/data-explorer', async (req, res) => {
+browseReadRouter.post('/data-explorer', async (req, res) => {
   const { user_id, groups = [], attributes = {}, table } = req.body;
 
   if (!table || table.startsWith('authz_')) {
@@ -167,7 +152,7 @@ browseRouter.post('/data-explorer', async (req, res) => {
   }
 
   try {
-    // 0. Module permission gate: check if user can read this table (hierarchical walk)
+    // Module permission gate
     if (user_id) {
       const tableResource = `table:${table}`;
       const gateResult = await pool.query(
@@ -179,7 +164,7 @@ browseRouter.post('/data-explorer', async (req, res) => {
       }
     }
 
-    // 1. Column schema
+    // Column schema
     const schemaResult = await pool.query(`
       SELECT column_name, data_type, is_nullable, column_default,
              character_maximum_length
@@ -192,7 +177,7 @@ browseRouter.post('/data-explorer', async (req, res) => {
       return res.status(404).json({ error: 'Table not found' });
     }
 
-    // 2. Resolve user permissions (L0/L2)
+    // Resolve user permissions (L0/L2)
     const resolveResult = await pool.query(
       'SELECT authz_resolve($1, $2, $3) AS config',
       [user_id, groups, JSON.stringify(attributes)]
@@ -211,7 +196,7 @@ browseRouter.post('/data-explorer', async (req, res) => {
       }
     }
 
-    // 3. Resolve roles + find denied columns
+    // Resolve roles + find denied columns
     const rolesResult = await pool.query(
       'SELECT _authz_resolve_roles($1, $2) AS roles',
       [user_id, groups]
@@ -230,7 +215,7 @@ browseRouter.post('/data-explorer', async (req, res) => {
       denyResult.rows.map((r: { resource_id: string }) => r.resource_id.split('.').pop())
     );
 
-    // 4. Build enriched column info
+    // Build enriched column info
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const columns: any[] = schemaResult.rows.map((col: Record<string, unknown>) => {
       const colName = col.column_name as string;
@@ -244,14 +229,14 @@ browseRouter.post('/data-explorer', async (req, res) => {
       };
     });
 
-    // 5. RLS filter
+    // RLS filter
     const filterResult = await pool.query(
       'SELECT authz_filter($1, $2, $3, $4) AS filter_clause',
       [user_id, groups, JSON.stringify(attributes), `table:${table}`]
     );
     const filterClause = filterResult.rows[0]?.filter_clause || 'TRUE';
 
-    // 6. Build SELECT with masks/denies applied
+    // Build SELECT with masks/denies applied
     const selectParts = columns.map(col => {
       if (col.access === 'denied') return `'[DENIED]' AS ${col.column_name}`;
       if (col.access === 'masked' && col.mask_function) {
@@ -269,7 +254,7 @@ browseRouter.post('/data-explorer', async (req, res) => {
     const totalResult = await pool.query(`SELECT count(*)::int AS c FROM "${table}"`).catch(() => ({ rows: [{ c: 0 }] }));
     const filteredResult = await pool.query(`SELECT count(*)::int AS c FROM "${table}" WHERE ${filterClause}`).catch(() => ({ rows: [{ c: 0 }] }));
 
-    // 7. Get mask function definitions used on this table
+    // Get mask function definitions
     const usedFns = [...new Set(columns.filter(c => c.mask_function).map(c => c.mask_function as string))];
     let maskFunctions: { function_name: string; description: string | null; example: string }[] = [];
     if (usedFns.length > 0) {
@@ -281,7 +266,6 @@ browseRouter.post('/data-explorer', async (req, res) => {
       `, [usedFns]).catch(() => ({ rows: [] }));
       maskFunctions = fnResult.rows;
 
-      // Fallback: if mask_function registry doesn't have entries, use pg_proc
       if (maskFunctions.length === 0) {
         const pgResult = await pool.query(`
           SELECT p.proname AS function_name,
@@ -310,11 +294,7 @@ browseRouter.post('/data-explorer', async (req, res) => {
   }
 });
 
-// --- Business Data: Tables & Functions ---
-
-// List business data tables (exclude authz_* internal tables)
-// When user_id + groups provided: filter by module permission (authz_check)
-browseRouter.get('/tables', async (req, res) => {
+browseReadRouter.get('/tables', async (req, res) => {
   const userId = req.query.user_id as string | undefined;
   const groups = req.query.groups ? (req.query.groups as string).split(',') : [];
 
@@ -329,7 +309,6 @@ browseRouter.get('/tables', async (req, res) => {
       ORDER BY table_name
     `);
 
-    // If user context provided, filter by module permission
     if (userId) {
       const filtered = [];
       for (const row of result.rows as { table_name: string; column_count: string }[]) {
@@ -351,10 +330,8 @@ browseRouter.get('/tables', async (req, res) => {
   }
 });
 
-// Get schema + sample data for a business table
-browseRouter.get('/tables/:table', async (req, res) => {
+browseReadRouter.get('/tables/:table', async (req, res) => {
   const tableName = req.params.table;
-  // Block access to authz internal tables
   if (tableName.startsWith('authz_')) {
     return res.status(403).json({ error: 'Cannot browse internal authz tables' });
   }
@@ -378,8 +355,7 @@ browseRouter.get('/tables/:table', async (req, res) => {
   }
 });
 
-// List business-facing SQL functions (mask functions, excludes internal _authz_* helpers)
-browseRouter.get('/functions', async (_req, res) => {
+browseReadRouter.get('/functions', async (_req, res) => {
   try {
     const result = await pool.query(`
       SELECT p.proname AS function_name,
@@ -402,18 +378,14 @@ browseRouter.get('/functions', async (_req, res) => {
   }
 });
 
-// --- Action Items / Approval Queue ---
-
-// Get pending action items for Overview dashboard
-browseRouter.get('/action-items', async (req, res) => {
+browseReadRouter.get('/action-items', async (req, res) => {
   const userId = req.query.user_id as string | undefined;
   const isAdmin = req.query.is_admin === 'true';
   try {
     const items: { type: string; severity: string; title: string; detail: string; meta?: unknown }[] = [];
 
-    // Admin-only items: SSOT drift, expiring roles, credential rotation
     if (isAdmin) {
-      // 1. SSOT drift check
+      // SSOT drift check
       const drift = await pool.query(`
         SELECT profile_id, has_drift, static_denied, ssot_denied
         FROM v_pool_ssot_check
@@ -428,7 +400,7 @@ browseRouter.get('/action-items', async (req, res) => {
         });
       }
 
-      // 2. Expiring role assignments (within 7 days)
+      // Expiring role assignments (within 7 days)
       const expiring = await pool.query(`
         SELECT subject_id, role_id, valid_until,
                EXTRACT(DAY FROM (valid_until - now())) AS days_remaining
@@ -447,7 +419,7 @@ browseRouter.get('/action-items', async (req, res) => {
         });
       }
 
-      // 3. Credential rotation due (within 14 days or overdue)
+      // Credential rotation due
       const credDue = await pool.query(`
         SELECT pg_role, last_rotated, rotate_interval,
                EXTRACT(DAY FROM (last_rotated + rotate_interval - now())) AS days_remaining
@@ -468,7 +440,7 @@ browseRouter.get('/action-items', async (req, res) => {
       }
     }
 
-    // 4. Recent denied accesses for current user (last 24h) — all users
+    // Recent denied accesses for current user (last 24h)
     if (userId) {
       const denials = await pool.query(`
         SELECT action_id, resource_id, timestamp
@@ -495,150 +467,7 @@ browseRouter.get('/action-items', async (req, res) => {
   }
 });
 
-// ============================================================
-// CRUD Operations for AuthZ Entities (Admin only)
-// ============================================================
-
-// --- Subjects CRUD ---
-browseRouter.post('/subjects', async (req, res) => {
-  const { subject_id, subject_type, display_name, ldap_dn, attributes } = req.body;
-  if (!subject_id || !subject_type || !display_name) {
-    return res.status(400).json({ error: 'subject_id, subject_type, and display_name are required' });
-  }
-  try {
-    const result = await pool.query(
-      `INSERT INTO authz_subject (subject_id, subject_type, display_name, ldap_dn, attributes)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [subject_id, subject_type, display_name, ldap_dn || null, JSON.stringify(attributes || {})]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.put('/subjects/:id', async (req, res) => {
-  const { display_name, ldap_dn, attributes, is_active } = req.body;
-  try {
-    const result = await pool.query(
-      `UPDATE authz_subject SET display_name = COALESCE($2, display_name),
-        ldap_dn = COALESCE($3, ldap_dn), attributes = COALESCE($4::jsonb, attributes),
-        is_active = COALESCE($5, is_active), updated_at = now()
-       WHERE subject_id = $1 RETURNING *`,
-      [req.params.id, display_name, ldap_dn, attributes ? JSON.stringify(attributes) : null, is_active]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Subject not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.delete('/subjects/:id', async (req, res) => {
-  try {
-    await pool.query('UPDATE authz_subject SET is_active = FALSE, updated_at = now() WHERE subject_id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-// Subject group membership
-browseRouter.post('/subjects/:id/groups', async (req, res) => {
-  const { group_id } = req.body;
-  try {
-    await pool.query(
-      'INSERT INTO authz_group_member (group_id, user_id, source) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-      [group_id, req.params.id, 'manual']
-    );
-    res.status(201).json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.delete('/subjects/:id/groups/:groupId', async (req, res) => {
-  try {
-    await pool.query('DELETE FROM authz_group_member WHERE group_id = $1 AND user_id = $2', [req.params.groupId, req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-// Subject role assignment
-browseRouter.post('/subjects/:id/roles', async (req, res) => {
-  const { role_id, valid_from, valid_until, granted_by } = req.body;
-  try {
-    const result = await pool.query(
-      `INSERT INTO authz_subject_role (subject_id, role_id, valid_from, valid_until, granted_by)
-       VALUES ($1, $2, COALESCE($3::timestamptz, now()), $4::timestamptz, $5)
-       ON CONFLICT (subject_id, role_id) DO UPDATE SET is_active = TRUE, valid_from = COALESCE($3::timestamptz, now()), valid_until = $4::timestamptz
-       RETURNING *`,
-      [req.params.id, role_id, valid_from || null, valid_until || null, granted_by || 'admin_ui']
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.delete('/subjects/:id/roles/:roleId', async (req, res) => {
-  try {
-    await pool.query(
-      'UPDATE authz_subject_role SET is_active = FALSE WHERE subject_id = $1 AND role_id = $2',
-      [req.params.id, req.params.roleId]
-    );
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-// --- Roles CRUD ---
-browseRouter.post('/roles', async (req, res) => {
-  const { role_id, display_name, description, is_system } = req.body;
-  if (!role_id || !display_name) {
-    return res.status(400).json({ error: 'role_id and display_name are required' });
-  }
-  try {
-    const result = await pool.query(
-      'INSERT INTO authz_role (role_id, display_name, description, is_system) VALUES ($1, $2, $3, $4) RETURNING *',
-      [role_id, display_name, description || null, is_system ?? false]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.put('/roles/:id', async (req, res) => {
-  const { display_name, description, is_active } = req.body;
-  try {
-    const result = await pool.query(
-      `UPDATE authz_role SET display_name = COALESCE($2, display_name),
-        description = COALESCE($3, description), is_active = COALESCE($4, is_active)
-       WHERE role_id = $1 RETURNING *`,
-      [req.params.id, display_name, description, is_active]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Role not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.delete('/roles/:id', async (req, res) => {
-  try {
-    await pool.query('UPDATE authz_role SET is_active = FALSE WHERE role_id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-// Role permissions
-browseRouter.get('/roles/:id/permissions', async (req, res) => {
+browseReadRouter.get('/roles/:id/permissions', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT rp.*, ar.display_name AS resource_name, aa.display_name AS action_name
@@ -655,33 +484,7 @@ browseRouter.get('/roles/:id/permissions', async (req, res) => {
   }
 });
 
-browseRouter.post('/roles/:id/permissions', async (req, res) => {
-  const { action_id, resource_id, effect } = req.body;
-  try {
-    const result = await pool.query(
-      `INSERT INTO authz_role_permission (role_id, action_id, resource_id, effect)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (role_id, action_id, resource_id) DO UPDATE SET effect = $4, is_active = TRUE
-       RETURNING *`,
-      [req.params.id, action_id, resource_id, effect || 'allow']
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.delete('/roles/:id/permissions/:permId', async (req, res) => {
-  try {
-    await pool.query('UPDATE authz_role_permission SET is_active = FALSE WHERE id = $1 AND role_id = $2', [req.params.permId, req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-// --- Resources: Unmapped tables for a data source ---
-browseRouter.get('/resources/unmapped', async (req, res) => {
+browseReadRouter.get('/resources/unmapped', async (req, res) => {
   const dsId = req.query.data_source_id as string;
   if (!dsId) return res.status(400).json({ error: 'data_source_id query param required' });
   try {
@@ -700,8 +503,7 @@ browseRouter.get('/resources/unmapped', async (req, res) => {
   }
 });
 
-// --- Resources: Mapped tables for a data source ---
-browseRouter.get('/resources/mapped', async (req, res) => {
+browseReadRouter.get('/resources/mapped', async (req, res) => {
   const dsId = req.query.data_source_id as string;
   if (!dsId) return res.status(400).json({ error: 'data_source_id query param required' });
   try {
@@ -722,189 +524,7 @@ browseRouter.get('/resources/mapped', async (req, res) => {
   }
 });
 
-// --- Resources: Bulk update parent_id (table-to-module mapping) ---
-browseRouter.put('/resources/bulk-parent', async (req, res) => {
-  const { mappings } = req.body;
-  if (!Array.isArray(mappings) || mappings.length === 0) {
-    return res.status(400).json({ error: 'mappings array required: [{resource_id, parent_id}]' });
-  }
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    let updated = 0;
-    for (const m of mappings) {
-      const result = await client.query(
-        'UPDATE authz_resource SET parent_id = $2, updated_at = now() WHERE resource_id = $1 AND is_active = TRUE',
-        [m.resource_id, m.parent_id || null]
-      );
-      updated += result.rowCount || 0;
-    }
-    await client.query('COMMIT');
-    res.json({ updated });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    res.status(500).json({ error: String(err) });
-  } finally {
-    client.release();
-  }
-});
-
-// --- Resources CRUD ---
-browseRouter.post('/resources', async (req, res) => {
-  const { resource_id, resource_type, display_name, parent_id, attributes } = req.body;
-  if (!resource_id || !resource_type || !display_name) {
-    return res.status(400).json({ error: 'resource_id, resource_type, and display_name are required' });
-  }
-  try {
-    const result = await pool.query(
-      `INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name, attributes)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [resource_id, resource_type, parent_id || null, display_name, JSON.stringify(attributes || {})]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.put('/resources/:id', async (req, res) => {
-  const { display_name, parent_id, attributes, is_active } = req.body;
-  try {
-    const result = await pool.query(
-      `UPDATE authz_resource SET display_name = COALESCE($2, display_name),
-        parent_id = COALESCE($3, parent_id), attributes = COALESCE($4::jsonb, attributes),
-        is_active = COALESCE($5, is_active), updated_at = now()
-       WHERE resource_id = $1 RETURNING *`,
-      [req.params.id, display_name, parent_id, attributes ? JSON.stringify(attributes) : null, is_active]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Resource not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.delete('/resources/:id', async (req, res) => {
-  try {
-    await pool.query('UPDATE authz_resource SET is_active = FALSE, updated_at = now() WHERE resource_id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-// --- Policies CRUD ---
-browseRouter.post('/policies', async (req, res) => {
-  const { policy_name, description, granularity, priority, effect, status, applicable_paths,
-    subject_condition, resource_condition, action_condition, environment_condition,
-    rls_expression, column_mask_rules, created_by } = req.body;
-  if (!policy_name || !granularity) {
-    return res.status(400).json({ error: 'policy_name and granularity are required' });
-  }
-  try {
-    const result = await pool.query(
-      `INSERT INTO authz_policy (policy_name, description, granularity, priority, effect, status,
-        applicable_paths, subject_condition, resource_condition, action_condition,
-        environment_condition, rls_expression, column_mask_rules, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-      [policy_name, description, granularity, priority || 100, effect || 'allow',
-        status || 'active', applicable_paths || ['A','B','C'],
-        JSON.stringify(subject_condition || {}), JSON.stringify(resource_condition || {}),
-        JSON.stringify(action_condition || {}), JSON.stringify(environment_condition || {}),
-        rls_expression || null, column_mask_rules ? JSON.stringify(column_mask_rules) : null,
-        created_by || 'admin_ui']
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.put('/policies/:id', async (req, res) => {
-  const { description, priority, effect, status, applicable_paths,
-    subject_condition, resource_condition, action_condition, environment_condition,
-    rls_expression, column_mask_rules } = req.body;
-  try {
-    const result = await pool.query(
-      `UPDATE authz_policy SET
-        description = COALESCE($2, description), priority = COALESCE($3, priority),
-        effect = COALESCE($4, effect), status = COALESCE($5, status),
-        applicable_paths = COALESCE($6, applicable_paths),
-        subject_condition = COALESCE($7::jsonb, subject_condition),
-        resource_condition = COALESCE($8::jsonb, resource_condition),
-        action_condition = COALESCE($9::jsonb, action_condition),
-        environment_condition = COALESCE($10::jsonb, environment_condition),
-        rls_expression = COALESCE($11, rls_expression),
-        column_mask_rules = COALESCE($12::jsonb, column_mask_rules),
-        updated_at = now()
-       WHERE policy_id = $1 RETURNING *`,
-      [req.params.id, description, priority, effect, status,
-        applicable_paths, subject_condition ? JSON.stringify(subject_condition) : null,
-        resource_condition ? JSON.stringify(resource_condition) : null,
-        action_condition ? JSON.stringify(action_condition) : null,
-        environment_condition ? JSON.stringify(environment_condition) : null,
-        rls_expression, column_mask_rules ? JSON.stringify(column_mask_rules) : null]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Policy not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.delete('/policies/:id', async (req, res) => {
-  try {
-    await pool.query("UPDATE authz_policy SET status = 'inactive', updated_at = now() WHERE policy_id = $1", [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-// --- Actions CRUD ---
-browseRouter.post('/actions', async (req, res) => {
-  const { action_id, display_name, description, applicable_paths } = req.body;
-  if (!action_id || !display_name) {
-    return res.status(400).json({ error: 'action_id and display_name are required' });
-  }
-  try {
-    const result = await pool.query(
-      'INSERT INTO authz_action (action_id, display_name, description, applicable_paths) VALUES ($1, $2, $3, $4) RETURNING *',
-      [action_id, display_name, description || null, applicable_paths || ['A','B','C']]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.put('/actions/:id', async (req, res) => {
-  const { display_name, description, applicable_paths, is_active } = req.body;
-  try {
-    const result = await pool.query(
-      `UPDATE authz_action SET display_name = COALESCE($2, display_name),
-        description = COALESCE($3, description), applicable_paths = COALESCE($4, applicable_paths),
-        is_active = COALESCE($5, is_active)
-       WHERE action_id = $1 RETURNING *`,
-      [req.params.id, display_name, description, applicable_paths, is_active]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Action not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.delete('/actions/:id', async (req, res) => {
-  try {
-    await pool.query('UPDATE authz_action SET is_active = FALSE WHERE action_id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-browseRouter.get('/audit-logs', async (req, res) => {
+browseReadRouter.get('/audit-logs', async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit as string) || 50, 500);
   const offset = parseInt(req.query.offset as string) || 0;
   const subject = req.query.subject as string | undefined;
@@ -929,6 +549,113 @@ browseRouter.get('/audit-logs', async (req, res) => {
     query += ` ORDER BY timestamp DESC LIMIT $${idx++} OFFSET $${idx++}`;
     params.push(limit, offset);
     const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+browseReadRouter.get('/classifications', async (_req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM authz_data_classification ORDER BY sensitivity_level'
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+browseReadRouter.get('/resources/:tableId/columns-classified', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT r.resource_id, r.display_name, r.attributes,
+             dc.classification_id, dc.name AS classification_name,
+             dc.sensitivity_level
+      FROM authz_resource r
+      LEFT JOIN authz_data_classification dc
+        ON dc.classification_id = (r.attributes->>'classification_id')::int
+      WHERE r.resource_type = 'column'
+        AND r.parent_id = $1
+        AND r.is_active = TRUE
+      ORDER BY r.resource_id
+    `, [req.params.tableId]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+browseReadRouter.get('/admin-audit', async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit as string) || 50, 500);
+  const offset = parseInt(req.query.offset as string) || 0;
+  const user = req.query.user as string | undefined;
+  const action = req.query.action as string | undefined;
+  const resourceType = req.query.resource_type as string | undefined;
+
+  try {
+    let query = 'SELECT * FROM authz_admin_audit_log WHERE 1=1';
+    const params: (string | number)[] = [];
+    let idx = 1;
+    if (user) {
+      query += ` AND user_id = $${idx++}`;
+      params.push(user);
+    }
+    if (action) {
+      query += ` AND action = $${idx++}`;
+      params.push(action);
+    }
+    if (resourceType) {
+      query += ` AND resource_type = $${idx++}`;
+      params.push(resourceType);
+    }
+    query += ` ORDER BY timestamp DESC LIMIT $${idx++} OFFSET $${idx++}`;
+    params.push(limit, offset);
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Role → PG pool role mapping (SSOT from pool assignments)
+browseReadRouter.get('/role-pool-map', async (_req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT DISTINCT sr.role_id, dpp.pg_role
+      FROM authz_subject_role sr
+      JOIN authz_db_pool_assignment dpa ON dpa.subject_id = sr.subject_id AND dpa.is_active = TRUE
+      JOIN authz_db_pool_profile dpp ON dpp.profile_id = dpa.profile_id AND dpp.is_active = TRUE
+      WHERE sr.is_active = TRUE
+      ORDER BY sr.role_id
+    `);
+    // Build role → pg_role map (first match wins for roles with multiple profiles)
+    const map: Record<string, string> = {};
+    for (const row of result.rows) {
+      if (!map[row.role_id]) map[row.role_id] = row.pg_role;
+    }
+    res.json(map);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Policy assignments for a given policy
+browseReadRouter.get('/policies/:id/assignments', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM authz_policy_assignment WHERE policy_id = $1 ORDER BY id`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+browseReadRouter.get('/clearance-mappings', async (_req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM authz_clearance_mapping ORDER BY min_job_level');
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: String(err) });

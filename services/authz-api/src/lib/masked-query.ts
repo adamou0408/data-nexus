@@ -1,5 +1,7 @@
 import { Pool } from 'pg';
 import * as crypto from 'crypto';
+import { RewritePipeline } from './rewriter/pipeline';
+import type { PolicyEvalResult, RewritePolicy } from './rewriter/types';
 
 // ============================================================
 // Shared masked query builder
@@ -7,11 +9,12 @@ import * as crypto from 'crypto';
 // SSOT: columns from information_schema, masks from authz_resolve(),
 //       denied columns from authz_role_permission, filter from authz_filter()
 //
-// Masks are applied in JavaScript (not SQL) so that:
-// 1. No dependency on fn_mask_* existing in the data database
-// 2. Works with any external data source (not just PG with custom functions)
-// 3. AuthZ logic stays in the authz system, not leaked to data DBs
+// v2 (EdgePolicy fusion): Masking now done via SQL Rewrite Pipeline.
+// The pipeline rewrites SQL at AST level — original values never leave
+// the database. JS mask functions kept as fallback for non-SQL sources.
 // ============================================================
+
+const pipeline = new RewritePipeline();
 
 export type ColumnDef = {
   key: string;
@@ -33,6 +36,7 @@ export type MaskedQueryResult = {
   columnMasks: Record<string, string>;
   resolvedRoles: string[];
   validColumns: Set<string>; // SSOT from information_schema — callers can use for validation
+  rewrittenSql?: string;     // SQL after pipeline rewrite (for debugging/audit)
 };
 
 // Validate orderBy clause — each column must exist in the table (SSOT: information_schema)
@@ -79,6 +83,21 @@ const JS_MASK_FNS: Record<string, (v: unknown) => string> = {
   fn_mask_hash: jsMaskHash,
   fn_mask_range: jsMaskRange,
 };
+
+// Map Data Nexus fn_mask_* names to EdgePolicy MaskFunction names
+function mapMaskFnName(fnName: string): string {
+  const mapping: Record<string, string> = {
+    fn_mask_full:    'full_mask',
+    fn_mask_partial: 'partial_mask',
+    fn_mask_hash:    'hash',
+    fn_mask_range:   'full_mask', // range not supported in SQL rewrite — fallback to full
+    fn_mask_null:    'nullify',
+    fn_mask_nullify: 'nullify',
+    fn_mask_email:   'email_mask',
+    fn_mask_redact:  'redact',
+  };
+  return mapping[fnName] || 'full_mask';
+}
 
 export async function buildMaskedSelect(opts: {
   authzPool: Pool;
@@ -191,29 +210,70 @@ export async function buildMaskedSelect(opts: {
   }
   const finalWhere = whereParts.length > 0 ? whereParts.join(' AND ') : '1=1';
 
-  // Step 7: Execute plain SELECT on dataPool (orderBy validated against SSOT)
+  // Step 6.5: Convert SSOT results into PolicyEvalResult for the rewrite pipeline
+  const maskPolicies: RewritePolicy[] = [];
+  for (const [col, maskDef] of Object.entries(tableMasks)) {
+    if (!deniedCols.has(col)) {
+      maskPolicies.push({
+        name: `mask_${table}_${col}`,
+        policy_type: 'column_mask',
+        target_schema: 'public',
+        target_table: table,
+        target_columns: [col],
+        rule_definition: { mask_function: mapMaskFnName(maskDef.function) },
+        priority: 100,
+      });
+    }
+  }
+
+  const evalResult: PolicyEvalResult = {
+    action: deniedColSet.size > 0 || maskPolicies.length > 0 ? 'MASK' : 'ALLOW',
+    denied_columns: Array.from(deniedCols) as string[],
+    mask_policies: maskPolicies,
+    filter_policies: [], // RLS already handled in finalWhere via authz_filter()
+    applied_policy_names: maskPolicies.map(p => p.name),
+    operation_denied: false,
+  };
+
+  // Step 7: Build base SQL, then rewrite via pipeline (mask + ACL at SQL level)
   const safeOrderBy = sanitizeOrderBy(orderBy, validColumns);
-  const query = `SELECT ${selectColumns.join(', ')} FROM ${table} WHERE ${finalWhere} ORDER BY ${safeOrderBy} LIMIT ${limit}`;
-  const dataResult = await dataPool.query(query);
+  const baseSql = `SELECT ${selectColumns.join(', ')} FROM ${table} WHERE ${finalWhere} ORDER BY ${safeOrderBy} LIMIT ${limit}`;
+
+  const userCtx = {
+    user_id: userId,
+    groups,
+    roles: resolvedRoles,
+    department: (attributes.department as string) || undefined,
+    job_level: (attributes.job_level as number) || undefined,
+    security_clearance: (attributes.security_clearance as string) || undefined,
+    attributes,
+  };
+
+  const rewriteResult = pipeline.rewrite(baseSql, evalResult, userCtx, table);
+  const dataResult = await dataPool.query(rewriteResult.rewritten_sql);
   const totalResult = await dataPool.query(`SELECT count(*)::int AS total FROM ${table}`);
 
-  // Step 8: Apply masks and denials in JavaScript (not SQL)
-  const maskedRows = dataResult.rows.map((row: Record<string, unknown>) => {
-    const newRow = { ...row };
-    for (const col of deniedColSet) {
-      newRow[col] = '[DENIED]';
-    }
-    for (const col of maskedColSet) {
-      const maskDef = tableMasks[col];
-      const maskFn = JS_MASK_FNS[maskDef.function];
-      if (maskFn) {
-        newRow[col] = maskFn(row[col]);
-      } else {
-        newRow[col] = '****';  // fallback
-      }
-    }
-    return newRow;
-  });
+  // Step 8: JS fallback mask — only for columns that the SQL rewriter couldn't handle
+  // (e.g., data sources that don't support SQL functions like MongoDB)
+  // For PG sources, the pipeline already masked everything at SQL level.
+  const maskedRows = rewriteResult.was_modified
+    ? dataResult.rows  // Pipeline handled masking — rows already masked
+    : dataResult.rows.map((row: Record<string, unknown>) => {
+        const newRow = { ...row };
+        for (const col of deniedColSet) {
+          newRow[col] = '[DENIED]';
+        }
+        for (const col of maskedColSet) {
+          const maskDef = tableMasks[col];
+          const maskFn = JS_MASK_FNS[maskDef.function];
+          if (maskFn) {
+            newRow[col] = maskFn(row[col]);
+          } else {
+            newRow[col] = '****';
+          }
+        }
+        return newRow;
+      });
 
   // Step 9: Build mask info for UI
   const columnMasks: Record<string, string> = {};
@@ -239,5 +299,6 @@ export async function buildMaskedSelect(opts: {
     columnMasks,
     resolvedRoles,
     validColumns,
+    rewrittenSql: rewriteResult.was_modified ? rewriteResult.rewritten_sql : undefined,
   };
 }

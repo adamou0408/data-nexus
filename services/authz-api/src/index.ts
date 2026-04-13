@@ -6,17 +6,23 @@ import { checkRouter } from './routes/check';
 import { filterRouter } from './routes/filter';
 import { matrixRouter } from './routes/matrix';
 import { rlsRouter } from './routes/rls-simulate';
-import { browseRouter } from './routes/browse';
+import { browseReadRouter } from './routes/browse-read';
+import { browseAdminRouter } from './routes/browse-admin';
 import { poolRouter } from './routes/pool';
 import { datasourceRouter } from './routes/datasource';
 import { configExecRouter } from './routes/config-exec';
 import { requireRole, requireAuth } from './middleware/authz';
+import { optionalJWT, buildJWTConfig } from './middleware/jwt';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001');
 
 app.use(cors());
 app.use(express.json());
+
+// JWT/OIDC authentication — validates Bearer tokens when JWT_ISSUER is set,
+// otherwise skips (dev mode fallback to X-User-Id headers)
+app.use(optionalJWT(buildJWTConfig()));
 
 app.get('/healthz', async (_req, res) => {
   try {
@@ -33,7 +39,8 @@ app.use('/api/check', checkRouter);
 app.use('/api/filter', filterRouter);
 app.use('/api/matrix', matrixRouter);
 app.use('/api/rls', rlsRouter);
-app.use('/api/browse', browseRouter);
+app.use('/api/browse', browseReadRouter);
+app.use('/api/browse', requireRole('ADMIN', 'AUTHZ_ADMIN'), browseAdminRouter);
 
 // Config-Driven UI (requires auth — fine-grained checks done internally)
 app.use('/api/config-exec', requireAuth, configExecRouter);

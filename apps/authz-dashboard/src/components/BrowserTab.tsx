@@ -286,6 +286,49 @@ function SubjectsSection({ data, onReload }: { data: Record<string, unknown>[]; 
 // ============================================================
 // Roles Section
 // ============================================================
+function RoleClearanceEditor({ role, onSaved }: { role: Record<string, unknown>; onSaved: () => void }) {
+  const [clearance, setClearance] = useState(String(role.security_clearance || 'PUBLIC'));
+  const [jobLevel, setJobLevel] = useState(Number(role.job_level) || 0);
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.roleClearanceUpdate(String(role.role_id), { security_clearance: clearance, job_level: jobLevel });
+      onSaved();
+    } catch { /* ignore */ }
+    setSaving(false);
+  };
+
+  const changed = clearance !== String(role.security_clearance || 'PUBLIC') || jobLevel !== (Number(role.job_level) || 0);
+
+  return (
+    <div className="mt-4 pt-3 border-t border-slate-200">
+      <h4 className="text-xs font-semibold text-slate-500 uppercase mb-2">Security Clearance</h4>
+      <div className="flex gap-3 items-end">
+        <div>
+          <label className="block text-[10px] text-slate-400 mb-1">Clearance Level</label>
+          <select value={clearance} onChange={e => setClearance(e.target.value)} className="select text-xs w-40">
+            {['PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'RESTRICTED'].map(c => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] text-slate-400 mb-1">Job Level</label>
+          <input type="number" min={0} max={15} value={jobLevel} onChange={e => setJobLevel(Number(e.target.value))}
+            className="input text-xs w-20" />
+        </div>
+        {changed && (
+          <button onClick={save} disabled={saving} className="btn-primary btn-sm">
+            <Check size={12} /> {saving ? 'Saving...' : 'Save'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RolesSection({ data, onReload }: { data: Record<string, unknown>[]; onReload: () => void }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ role_id: '', display_name: '', description: '', is_system: false });
@@ -453,6 +496,9 @@ function RolesSection({ data, onReload }: { data: Record<string, unknown>[]; onR
                         ))}
                         {permissions.length === 0 && <p className="text-xs text-slate-400">No permissions assigned</p>}
                       </div>
+
+                      {/* Security Clearance */}
+                      <RoleClearanceEditor role={r} onSaved={onReload} />
                     </td>
                   </tr>
                 )}
@@ -593,6 +639,9 @@ function PoliciesSection({ data, onReload }: { data: Record<string, unknown>[]; 
   });
   const [editId, setEditId] = useState<number | null>(null);
   const [error, setError] = useState('');
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [assignments, setAssignments] = useState<Record<string, unknown>[]>([]);
+  const [assignForm, setAssignForm] = useState({ assignment_type: 'role', assignment_value: '', is_exception: false });
   const { query, setQuery, filtered } = useSearch(data, ['policy_name', 'description', 'granularity', 'effect', 'status']);
 
   const save = async () => {
@@ -614,6 +663,29 @@ function PoliciesSection({ data, onReload }: { data: Record<string, unknown>[]; 
       }
       setShowForm(false); setEditId(null); onReload();
     } catch (e) { setError(String(e)); }
+  };
+
+  const expandPolicy = async (policyId: number) => {
+    if (expandedId === policyId) { setExpandedId(null); return; }
+    setExpandedId(policyId);
+    try {
+      const a = await api.policyAssignments(policyId);
+      setAssignments(a);
+    } catch { setAssignments([]); }
+  };
+
+  const addAssignment = async (policyId: number) => {
+    if (!assignForm.assignment_value) return;
+    await api.policyAssignmentCreate(policyId, assignForm);
+    setAssignForm({ assignment_type: 'role', assignment_value: '', is_exception: false });
+    const a = await api.policyAssignments(policyId);
+    setAssignments(a);
+  };
+
+  const removeAssignment = async (policyId: number, assignmentId: number) => {
+    await api.policyAssignmentDelete(assignmentId);
+    const a = await api.policyAssignments(policyId);
+    setAssignments(a);
   };
 
   return (
@@ -692,42 +764,87 @@ function PoliciesSection({ data, onReload }: { data: Record<string, unknown>[]; 
       <div className="table-container max-h-[60vh]">
         <table className="table">
           <thead>
-            <tr><th>Name</th><th>Granularity</th><th>Effect</th><th>Status</th><th>RLS Expression</th><th>Paths</th><th>Actions</th></tr>
+            <tr><th></th><th>Name</th><th>Granularity</th><th>Effect</th><th>Status</th><th>RLS Expression</th><th>Paths</th><th>Actions</th></tr>
           </thead>
           <tbody>
-            {filtered.map((p) => (
-              <tr key={String(p.policy_id)}>
-                <td className="font-medium text-slate-900">{String(p.policy_name)}</td>
-                <td><span className="badge badge-slate text-[10px]">{String(p.granularity)}</span></td>
-                <td><span className={`badge ${p.effect === 'allow' ? 'badge-green' : 'badge-red'}`}>{String(p.effect)}</span></td>
-                <td><span className={`badge ${p.status === 'active' ? 'badge-green' : 'badge-slate'}`}>{String(p.status)}</span></td>
-                <td className="font-mono text-xs text-slate-500 max-w-[200px] truncate">{p.rls_expression ? String(p.rls_expression) : '-'}</td>
-                <td>
-                  <div className="flex gap-1">
-                    {(p.applicable_paths as string[] || []).map((path: string) => (
-                      <span key={path} className="badge badge-slate text-[10px]">{path}</span>
-                    ))}
-                  </div>
-                </td>
-                <td>
-                  <div className="flex gap-1">
-                    <button onClick={() => {
-                      setForm({
-                        policy_name: String(p.policy_name), description: String(p.description || ''),
-                        granularity: String(p.granularity), priority: String(p.priority), effect: String(p.effect),
-                        applicable_paths: (p.applicable_paths as string[])?.join(',') || 'A,B,C',
-                        rls_expression: String(p.rls_expression || ''),
-                        subject_condition: JSON.stringify(p.subject_condition || {}, null, 2),
-                        resource_condition: JSON.stringify(p.resource_condition || {}, null, 2),
-                      });
-                      setEditId(Number(p.policy_id)); setShowForm(true);
-                    }} className="btn-secondary btn-sm p-1"><Pencil size={12} /></button>
-                    <button onClick={async () => { if (confirm(`Deactivate policy?`)) { await api.policyDelete(Number(p.policy_id)); onReload(); }}}
-                      className="btn-secondary btn-sm p-1 text-red-500"><Trash2 size={12} /></button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {filtered.map((p) => {
+              const pid = Number(p.policy_id);
+              const expanded = expandedId === pid;
+              return (<>
+                <tr key={pid}>
+                  <td className="w-8">
+                    <button onClick={() => expandPolicy(pid)} className="text-slate-400 hover:text-slate-700">
+                      {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                  </td>
+                  <td className="font-medium text-slate-900">{String(p.policy_name)}</td>
+                  <td><span className="badge badge-slate text-[10px]">{String(p.granularity)}</span></td>
+                  <td><span className={`badge ${p.effect === 'allow' ? 'badge-green' : 'badge-red'}`}>{String(p.effect)}</span></td>
+                  <td><span className={`badge ${p.status === 'active' ? 'badge-green' : 'badge-slate'}`}>{String(p.status)}</span></td>
+                  <td className="font-mono text-xs text-slate-500 max-w-[200px] truncate">{p.rls_expression ? String(p.rls_expression) : '-'}</td>
+                  <td>
+                    <div className="flex gap-1">
+                      {(p.applicable_paths as string[] || []).map((path: string) => (
+                        <span key={path} className="badge badge-slate text-[10px]">{path}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td>
+                    <div className="flex gap-1">
+                      <button onClick={() => {
+                        setForm({
+                          policy_name: String(p.policy_name), description: String(p.description || ''),
+                          granularity: String(p.granularity), priority: String(p.priority), effect: String(p.effect),
+                          applicable_paths: (p.applicable_paths as string[])?.join(',') || 'A,B,C',
+                          rls_expression: String(p.rls_expression || ''),
+                          subject_condition: JSON.stringify(p.subject_condition || {}, null, 2),
+                          resource_condition: JSON.stringify(p.resource_condition || {}, null, 2),
+                        });
+                        setEditId(pid); setShowForm(true);
+                      }} className="btn-secondary btn-sm p-1"><Pencil size={12} /></button>
+                      <button onClick={async () => { if (confirm(`Deactivate policy?`)) { await api.policyDelete(pid); onReload(); }}}
+                        className="btn-secondary btn-sm p-1 text-red-500"><Trash2 size={12} /></button>
+                    </div>
+                  </td>
+                </tr>
+                {expanded && (
+                  <tr key={`${pid}-assign`}>
+                    <td colSpan={8} className="bg-slate-50 p-4">
+                      <h4 className="text-xs font-semibold text-slate-500 uppercase mb-2">Policy Assignments</h4>
+                      <div className="flex gap-2 items-end mb-3 flex-wrap">
+                        <select value={assignForm.assignment_type} onChange={e => setAssignForm(f => ({ ...f, assignment_type: e.target.value }))}
+                          className="select text-xs w-36">
+                          {['role', 'department', 'security_level', 'user', 'job_level_below', 'group'].map(t => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                        <input value={assignForm.assignment_value} onChange={e => setAssignForm(f => ({ ...f, assignment_value: e.target.value }))}
+                          placeholder="Value..." className="input text-xs w-40" />
+                        <label className="flex items-center gap-1 text-xs text-slate-600">
+                          <input type="checkbox" checked={assignForm.is_exception}
+                            onChange={e => setAssignForm(f => ({ ...f, is_exception: e.target.checked }))} />
+                          Exception
+                        </label>
+                        <button onClick={() => addAssignment(pid)} className="btn-primary btn-sm"><Plus size={12} /></button>
+                      </div>
+                      <div className="space-y-1 max-h-48 overflow-y-auto">
+                        {assignments.map((a) => (
+                          <div key={String(a.id)} className="flex items-center gap-2 text-xs bg-white rounded-lg border px-3 py-1.5">
+                            <span className={`badge text-[10px] ${a.is_exception ? 'badge-red' : 'badge-green'}`}>
+                              {a.is_exception ? 'EXCEPTION' : 'INCLUDE'}
+                            </span>
+                            <span className="badge badge-slate text-[10px]">{String(a.assignment_type)}</span>
+                            <span className="font-mono text-slate-700 flex-1">{String(a.assignment_value)}</span>
+                            <button onClick={() => removeAssignment(pid, Number(a.id))} className="text-red-400 hover:text-red-600"><X size={12} /></button>
+                          </div>
+                        ))}
+                        {assignments.length === 0 && <p className="text-xs text-slate-400">No assignments — policy uses subject_condition JSONB matching only</p>}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </>);
+            })}
           </tbody>
         </table>
       </div>

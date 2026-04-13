@@ -24,6 +24,8 @@ erDiagram
         TEXT display_name
         TEXT description
         BOOLEAN is_system
+        TEXT security_clearance "PUBLIC | INTERNAL | CONFIDENTIAL | RESTRICTED"
+        INTEGER job_level
         BOOLEAN is_active
         TIMESTAMPTZ created_at
     }
@@ -136,6 +138,86 @@ erDiagram
         TEXT example_input
         TEXT example_output
         TEXT template
+    }
+
+    authz_policy_assignment {
+        BIGSERIAL id PK
+        BIGINT policy_id FK
+        TEXT assignment_type "role | department | security_level | user | job_level_below | group"
+        TEXT assignment_value
+        BOOLEAN is_exception
+        TIMESTAMPTZ created_at
+    }
+
+    authz_data_classification {
+        SERIAL classification_id PK
+        TEXT name UK "PUBLIC | INTERNAL | CONFIDENTIAL | RESTRICTED"
+        INTEGER sensitivity_level
+        TEXT description
+        TIMESTAMPTZ created_at
+    }
+
+    authz_clearance_mapping {
+        SERIAL id PK
+        INTEGER min_job_level
+        INTEGER max_job_level
+        TEXT clearance "PUBLIC | INTERNAL | CONFIDENTIAL | RESTRICTED"
+        TIMESTAMPTZ created_at
+    }
+
+    %% ============================================================
+    %% DATA SOURCE & CONFIG-SM
+    %% ============================================================
+
+    authz_data_source {
+        TEXT source_id PK
+        TEXT display_name
+        TEXT description
+        TEXT db_type "postgresql | greenplum"
+        TEXT host
+        INTEGER port
+        TEXT database_name
+        TEXT_ARRAY schemas
+        TEXT connector_user
+        TEXT connector_password_enc
+        TEXT owner_subject
+        TEXT registered_by
+        BOOLEAN is_active
+        TIMESTAMPTZ last_synced_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    authz_ui_page {
+        TEXT page_id PK
+        TEXT title
+        TEXT subtitle
+        TEXT layout "card_grid | table | agg_table | split | timeline | context_panel"
+        TEXT resource_id FK
+        TEXT data_table
+        TEXT order_by
+        INTEGER row_limit
+        JSONB row_drilldown
+        JSONB columns_override
+        JSONB filters_config
+        TEXT parent_page_id FK
+        TEXT icon
+        TEXT description
+        INTEGER display_order
+        BOOLEAN is_active
+        TIMESTAMPTZ created_at
+    }
+
+    authz_admin_audit_log {
+        BIGSERIAL id PK
+        TIMESTAMPTZ timestamp
+        TEXT user_id
+        TEXT action
+        TEXT resource_type
+        TEXT resource_id
+        JSONB details
+        TEXT ip_address
+        TIMESTAMPTZ created_at
     }
 
     %% ============================================================
@@ -263,6 +345,14 @@ erDiagram
     authz_action ||--o{ authz_composite_action : "target_action"
     authz_resource ||--o{ authz_composite_action : "target_resource"
 
+    %% Policy assignments (EdgePolicy)
+    authz_policy ||--o{ authz_policy_assignment : "assigned via"
+
+    %% Data source & Config-SM
+    authz_data_source ||--o{ authz_db_pool_profile : "data_source_id"
+    authz_resource ||--o{ authz_ui_page : "resource_id"
+    authz_ui_page ||--o{ authz_ui_page : "parent_page_id"
+
     %% Path C pool
     authz_subject ||--o{ authz_db_pool_assignment : "assigned to pool"
     authz_db_pool_profile ||--o{ authz_db_pool_assignment : "profile"
@@ -286,14 +376,16 @@ erDiagram
           ▼                                         ▼
    ┌────────────┐                      ┌──────────────────────┐
    │ authz_role │                      │authz_db_pool_profile │
-   └──────┬─────┘                      └──────────┬───────────┘
-          │                                       │
-          ▼                                       ▼
- ┌──────────────────┐                  ┌──────────────────────┐
- │authz_role_       │                  │authz_pool_credentials│
- │  permission      │                  └──────────────────────┘
- │ (role→action→    │
- │  resource)       │
+   │ (+clearance│                      └──────────┬───────────┘
+   │  +job_level│                                 │
+   └──────┬─────┘                      ┌──────────┴───────────┐
+          │                            │                      │
+          ▼                            ▼                      ▼
+ ┌──────────────────┐      ┌──────────────────────┐ ┌────────────────┐
+ │authz_role_       │      │authz_pool_credentials│ │authz_data_     │
+ │  permission      │      └──────────────────────┘ │  source        │
+ │ (role→action→    │                               │ (PG/GP hosts)  │
+ │  resource)       │                               └────────────────┘
  └──┬──────────┬────┘
     │          │
     ▼          ▼
@@ -302,19 +394,40 @@ erDiagram
 │ action   │ └──────┬───────┘     └───────────────┘
 └──────────┘        │
                     │  (target)
-                    ▼
-          ┌──────────────────────┐
-          │authz_composite_action│ (L3 approval workflows)
-          └──────────────────────┘
+          ┌─────────┼──────────────────────┐
+          ▼         │                      ▼
+ ┌─────────────────────┐      ┌──────────────────────┐
+ │authz_composite_action│      │authz_ui_page         │
+ │ (L3 approval flows) │      │ (Config-SM pages)    │
+ └──────────────────────┘      └──────────┬───────────┘
+                                          │ (self-ref: parent_page)
+                                          ▼
+                                ┌──────────────────────┐
+                                │authz_ui_page (child) │
+                                └──────────────────────┘
 
           ┌──────────────┐      ┌────────────────────┐
           │ authz_policy │─────→│authz_policy_version│
           │ (ABAC L1-L3) │      └────────────────────┘
-          └──────────────┘
-                                ┌─────────────────┐
-          ┌───────────────┐     │ authz_audit_log  │ (partitioned)
-          │authz_sync_log │     │ (decision trail) │
-          └───────────────┘     └─────────────────┘
+          └──────┬───────┘
+                 │
+                 ▼
+       ┌──────────────────────┐
+       │authz_policy_         │
+       │  assignment          │   ┌─────────────────────────┐
+       │ (role/dept/user/...) │   │authz_data_classification│
+       └──────────────────────┘   │ (sensitivity levels)    │
+                                  └─────────────────────────┘
+       ┌────────────────────────┐
+       │authz_clearance_mapping │ (job_level → clearance)
+       └────────────────────────┘
+
+    ═════════════ Ops / Audit ═════════════
+    ┌───────────────┐  ┌─────────────────┐  ┌─────────────────────┐
+    │authz_sync_log │  │authz_audit_log  │  │authz_admin_audit_log│
+    │ (sync status) │  │ (partitioned)   │  │ (admin operations)  │
+    └───────────────┘  │ (decision trail)│  └─────────────────────┘
+                       └─────────────────┘
 
     ═══════════ Business Data (RLS targets) ═══════════
     ┌────────────┐           ┌──────────────┐
@@ -330,8 +443,9 @@ erDiagram
 |----------|--------|-------------|
 | Core RBAC | 4 | subject, role, action, resource |
 | Assignment | 3 | subject_role, role_permission, group_member |
-| Policy | 4 | policy, policy_version, composite_action, mask_function |
+| Policy | 6 | policy, policy_version, policy_assignment, composite_action, mask_function, data_classification |
+| Data Source & Config | 3 | data_source, ui_page, clearance_mapping |
 | Path C Pool | 3 | pool_profile, pool_assignment, pool_credentials |
-| Ops | 2 | sync_log, audit_log (partitioned) |
-| Business | 2 | lot_status, sales_order |
-| **Total** | **18** | |
+| Ops | 3 | sync_log, audit_log (partitioned), admin_audit_log |
+| Business | 2 | lot_status, sales_order (+ 6 more in nexus_data) |
+| **Total** | **24** | (excluding audit_log partitions and nexus_data business tables) |

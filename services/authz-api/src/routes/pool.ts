@@ -1,16 +1,13 @@
-import { Router, Request } from 'express';
-import { Client } from 'pg';
+import { Router } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { pool, getDataSourcePool } from '../db';
 import { audit } from '../audit';
 import { syncExternalGrants, syncRemoteCredential, detectRemoteDrift } from '../lib/remote-sync';
+import { logAdminAction } from '../lib/admin-audit';
+import { getUserId, getClientIp } from '../lib/request-helpers';
 
 export const poolRouter = Router();
-
-function getUserId(req: Request): string {
-  return (req as any).authzUser?.user_id || 'unknown';
-}
 
 // List roles that don't have credentials yet (for SSOT dropdown)
 poolRouter.get('/uncredentialed-roles', async (_req, res) => {
@@ -85,6 +82,7 @@ poolRouter.post('/profiles', async (req, res) => {
       allowed_modules || null,
     ]);
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'pool_profile_create', resource_id: profile_id, decision: 'allow', context: { pg_role, connection_mode } });
+    logAdminAction(pool, { userId: getUserId(req), action: 'CREATE_PROFILE', resourceType: 'pool_profile', resourceId: profile_id, details: { pg_role, connection_mode }, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -128,6 +126,7 @@ poolRouter.put('/profiles/:id', async (req, res) => {
       return res.status(404).json({ error: 'Profile not found' });
     }
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'pool_profile_update', resource_id: req.params.id, decision: 'allow' });
+    logAdminAction(pool, { userId: getUserId(req), action: 'UPDATE_PROFILE', resourceType: 'pool_profile', resourceId: req.params.id, ip: getClientIp(req) });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -145,6 +144,7 @@ poolRouter.delete('/profiles/:id', async (req, res) => {
       return res.status(404).json({ error: 'Profile not found' });
     }
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'pool_profile_delete', resource_id: req.params.id, decision: 'allow' });
+    logAdminAction(pool, { userId: getUserId(req), action: 'DELETE_PROFILE', resourceType: 'pool_profile', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ deleted: req.params.id });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -179,6 +179,7 @@ poolRouter.post('/assignments', async (req, res) => {
       RETURNING *
     `, [subject_id, profile_id, granted_by]);
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'pool_assignment_create', resource_id: profile_id, decision: 'allow', context: { subject_id } });
+    logAdminAction(pool, { userId: getUserId(req), action: 'CREATE_ASSIGNMENT', resourceType: 'pool_assignment', resourceId: profile_id, details: { subject_id, granted_by }, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -196,6 +197,7 @@ poolRouter.delete('/assignments/:id', async (req, res) => {
       return res.status(404).json({ error: 'Assignment not found' });
     }
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'pool_assignment_delete', resource_id: `assignment:${req.params.id}`, decision: 'allow' });
+    logAdminAction(pool, { userId: getUserId(req), action: 'DEACTIVATE_ASSIGNMENT', resourceType: 'pool_assignment', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ deleted: req.params.id });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -213,6 +215,7 @@ poolRouter.post('/assignments/:id/reactivate', async (req, res) => {
       return res.status(404).json({ error: 'Assignment not found' });
     }
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'pool_assignment_reactivate', resource_id: `assignment:${req.params.id}`, decision: 'allow' });
+    logAdminAction(pool, { userId: getUserId(req), action: 'REACTIVATE_ASSIGNMENT', resourceType: 'pool_assignment', resourceId: req.params.id, ip: getClientIp(req) });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -246,6 +249,7 @@ poolRouter.post('/credentials', async (req, res) => {
       RETURNING pg_role, is_active, last_rotated, rotate_interval
     `, [pg_role, hash, rotate_interval]);
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'credential_create', resource_id: `credential:${pg_role}`, decision: 'allow' });
+    logAdminAction(pool, { userId: getUserId(req), action: 'CREATE_CREDENTIAL', resourceType: 'credential', resourceId: pg_role, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -264,6 +268,7 @@ poolRouter.delete('/credentials/:pg_role', async (req, res) => {
       return res.status(404).json({ error: 'Credential not found' });
     }
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'credential_deactivate', resource_id: `credential:${pg_role}`, decision: 'allow' });
+    logAdminAction(pool, { userId: getUserId(req), action: 'DEACTIVATE_CREDENTIAL', resourceType: 'credential', resourceId: pg_role, ip: getClientIp(req) });
     res.json({ deactivated: pg_role });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -282,6 +287,7 @@ poolRouter.post('/credentials/:pg_role/reactivate', async (req, res) => {
       return res.status(404).json({ error: 'Credential not found' });
     }
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'credential_reactivate', resource_id: `credential:${pg_role}`, decision: 'allow' });
+    logAdminAction(pool, { userId: getUserId(req), action: 'REACTIVATE_CREDENTIAL', resourceType: 'credential', resourceId: pg_role, ip: getClientIp(req) });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -311,6 +317,7 @@ poolRouter.post('/credentials/:pg_role/rotate', async (req, res) => {
     } catch { /* remote sync failure should not block local rotation */ }
 
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'credential_rotate', resource_id: `credential:${pg_role}`, decision: 'allow', context: { remote_sync_count: remoteSync.length } });
+    logAdminAction(pool, { userId: getUserId(req), action: 'ROTATE_CREDENTIAL', resourceType: 'credential', resourceId: pg_role, details: { remote_sync_count: remoteSync.length }, ip: getClientIp(req) });
     res.json({ ...result.rows[0], remote_sync: remoteSync });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -324,6 +331,7 @@ poolRouter.post('/sync/grants', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM authz_sync_db_grants()');
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'sync_grants', resource_id: 'system:db_grants', decision: 'allow', context: { actions_count: result.rows.length } });
+    logAdminAction(pool, { userId: getUserId(req), action: 'SYNC_GRANTS', resourceType: 'system', resourceId: 'db_grants', details: { actions_count: result.rows.length }, ip: getClientIp(req) });
     res.json({ actions: result.rows });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -361,6 +369,7 @@ poolRouter.post('/sync/pgbouncer', async (req, res) => {
       [db_host, db_port, db_name]
     );
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'sync_pgbouncer', resource_id: `datasource:${data_source_id || 'default'}`, decision: 'allow', context: { db_host, db_port, db_name } });
+    logAdminAction(pool, { userId: getUserId(req), action: 'SYNC_PGBOUNCER', resourceType: 'system', resourceId: data_source_id || 'default', details: { db_host, db_port, db_name }, ip: getClientIp(req) });
     res.json({ config: result.rows[0].config });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -434,6 +443,7 @@ stats_users = nexus_admin
       decision: 'allow',
       context: { configPath, reloadResult },
     });
+    logAdminAction(pool, { userId: getUserId(req), action: 'APPLY_PGBOUNCER', resourceType: 'system', resourceId: 'pgbouncer', details: { configPath, reloadResult }, ip: getClientIp(req) });
 
     res.json({
       applied: true,
@@ -452,6 +462,7 @@ poolRouter.post('/sync/external-grants', async (req, res) => {
   const { data_source_id } = req.body;
   try {
     const actions = await syncExternalGrants(data_source_id, getUserId(req));
+    logAdminAction(pool, { userId: getUserId(req), action: 'SYNC_EXTERNAL_GRANTS', resourceType: 'system', resourceId: data_source_id || 'all', details: { actions_count: actions.length }, ip: getClientIp(req) });
     res.json({ actions });
   } catch (err) {
     res.status(500).json({ error: String(err) });

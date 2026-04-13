@@ -18,7 +18,7 @@ export function RlsTab() {
   const [leftUser, setLeftUser] = useState(0);
   const [rightUser, setRightUser] = useState(3);
   const [tables, setTables] = useState<{ table_name: string; column_count: string }[]>([]);
-  const [table, setTable] = useState('lot_status');
+  const [table, setTable] = useState('');
   const [leftResult, setLeftResult] = useState<SimResult | null>(null);
   const [rightResult, setRightResult] = useState<SimResult | null>(null);
   const [loading, setLoading] = useState(false);
