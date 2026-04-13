@@ -202,18 +202,52 @@ export const api = {
     request<DataSource>(`/datasources/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
   datasourceDelete: (id: string) =>
     request(`/datasources/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  datasourcePurge: (id: string) =>
+    request<{ purged: string; columns_deleted: number; tables_deleted: number; profiles_deleted: number }>(
+      `/datasources/${encodeURIComponent(id)}/purge`, { method: 'DELETE' }),
   datasourceTest: (id: string) =>
     request<{ status: string; version?: string; error?: string }>(`/datasources/${encodeURIComponent(id)}/test`, { method: 'POST' }),
   datasourceDiscover: (id: string) =>
     request<{ source_id: string; tables_found: number; columns_found: number; resources_created: number; created: string[] }>(
       `/datasources/${encodeURIComponent(id)}/discover`, { method: 'POST' }),
+  datasourceSchemas: (id: string) =>
+    request<string[]>(`/datasources/${encodeURIComponent(id)}/schemas`),
   datasourceTables: (id: string) =>
     request<{ source_id: string; database: string; tables: { table_schema: string; table_name: string; column_count: string }[] }>(
       `/datasources/${encodeURIComponent(id)}/tables`),
 
+  datasourceLifecycle: (id: string) =>
+    request<LifecycleResponse>(`/datasources/${encodeURIComponent(id)}/lifecycle`),
+  datasourceLifecycleSummary: () =>
+    request<LifecycleSummary[]>('/datasources/lifecycle-summary'),
+
+  // Resource mapping helpers
+  resourcesUnmapped: (dataSourceId: string) =>
+    request<{ resource_id: string; resource_type: string; parent_id: string | null; display_name: string; attributes: Record<string, unknown> }[]>(
+      `/browse/resources/unmapped?data_source_id=${encodeURIComponent(dataSourceId)}`),
+  resourcesMapped: (dataSourceId: string) =>
+    request<{ resource_id: string; resource_type: string; parent_id: string | null; display_name: string; attributes: Record<string, unknown>; module_name: string | null }[]>(
+      `/browse/resources/mapped?data_source_id=${encodeURIComponent(dataSourceId)}`),
+  resourcesBulkParent: (mappings: { resource_id: string; parent_id: string | null }[]) =>
+    request<{ updated: number }>('/browse/resources/bulk-parent', { method: 'PUT', body: JSON.stringify({ mappings }) }),
+  resourceModules: () =>
+    request<{ resource_id: string; display_name: string; parent_id: string | null }[]>('/browse/resources?type=module'),
+
+  poolUncredentialedRoles: () =>
+    request<{ pg_role: string; profile_id: string; connection_mode: string; data_source_id: string | null }[]>('/pool/uncredentialed-roles'),
+
   poolSyncGrants: () => request<{ actions: { action: string; detail: string }[] }>('/pool/sync/grants', { method: 'POST' }),
   poolSyncPgbouncer: () => request<{ config: string }>('/pool/sync/pgbouncer', { method: 'POST' }),
   poolSyncPgbouncerApply: () => request<{ applied: boolean; config_path: string; reload: string }>('/pool/sync/pgbouncer/apply', { method: 'POST' }),
+
+  poolSyncExternalGrants: (data_source_id?: string) =>
+    request<{ actions: SyncAction[] }>('/pool/sync/external-grants', {
+      method: 'POST', body: JSON.stringify({ data_source_id }),
+    }),
+  poolSyncExternalDrift: (data_source_id: string) =>
+    request<DriftReport>('/pool/sync/external-grants/drift', {
+      method: 'POST', body: JSON.stringify({ data_source_id }),
+    }),
 
   poolMetabaseConnections: () => request<{
     metabase_url: string;
@@ -225,6 +259,19 @@ export const api = {
       access_scope: { allowed_tables: string[] | null; denied_columns: unknown; connection_mode: string };
     }[];
   }>('/pool/metabase-connections'),
+  poolCredentialCreate: (pg_role: string, password: string, rotate_interval?: string) =>
+    request<PoolCredential>('/pool/credentials', {
+      method: 'POST',
+      body: JSON.stringify({ pg_role, password, rotate_interval }),
+    }),
+  poolCredentialDelete: (pg_role: string) =>
+    request<{ deactivated: string }>(`/pool/credentials/${encodeURIComponent(pg_role)}`, {
+      method: 'DELETE',
+    }),
+  poolCredentialReactivate: (pg_role: string) =>
+    request<PoolCredential>(`/pool/credentials/${encodeURIComponent(pg_role)}/reactivate`, { method: 'POST' }),
+  poolAssignmentReactivate: (id: number) =>
+    request<PoolAssignment>(`/pool/assignments/${id}/reactivate`, { method: 'POST' }),
   poolCredentialRotate: (pg_role: string, new_password: string) =>
     request<{ pg_role: string; is_active: boolean; last_rotated: string }>(
       `/pool/credentials/${encodeURIComponent(pg_role)}/rotate`,
@@ -270,6 +317,8 @@ export type PoolProfile = {
   rls_applies: boolean;
   description: string | null;
   is_active: boolean;
+  data_source_id: string | null;
+  allowed_modules: string[] | null;
   assignment_count?: string;
 };
 
@@ -333,4 +382,60 @@ export type ActionItem = {
   title: string;
   detail: string;
   meta?: unknown;
+};
+
+export type SyncAction = {
+  action: string;
+  detail: string;
+  data_source_id: string;
+  profile_id: string;
+  status: 'ok' | 'error';
+  error?: string;
+};
+
+export type DriftItem = {
+  pg_role: string;
+  type: 'role_missing' | 'role_extra_privilege' | 'grant_missing' | 'grant_extra' | 'column_grant_extra';
+  detail: string;
+};
+
+export type DriftReport = {
+  data_source_id: string;
+  checked_at: string;
+  items: DriftItem[];
+};
+
+export type PhaseStatus = 'not_started' | 'done' | 'action_needed';
+
+export type LifecyclePhases = {
+  connection:   { status: PhaseStatus };
+  discovery:    { status: PhaseStatus; tables: number; columns: number; last_discovered: string | null };
+  organization: { status: PhaseStatus; mapped: number; unmapped: number };
+  profiles:     { status: PhaseStatus; count: number; profile_ids: string[] };
+  credentials:  { status: PhaseStatus; credentialed: number; uncredentialed: number; next_rotation: string | null };
+  deployment:   { status: PhaseStatus; last_sync: string | null };
+};
+
+export type LifecycleResponse = {
+  source_id: string;
+  display_name: string;
+  db_type: string;
+  host: string;
+  port: number;
+  database_name: string;
+  is_active: boolean;
+  phases: LifecyclePhases;
+};
+
+export type LifecycleSummary = {
+  source_id: string;
+  display_name: string;
+  db_type: string;
+  host: string;
+  port: number;
+  database_name: string;
+  is_active: boolean;
+  phases_done: number;
+  phases_total: number;
+  next_action: string;
 };

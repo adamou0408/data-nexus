@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, Client } from 'pg';
 import { decrypt } from './lib/crypto';
 
 // ============================================================
@@ -47,6 +47,29 @@ export async function getDataSourcePool(sourceId: string): Promise<Pool> {
 
   dataSourcePools.set(sourceId, dsPool);
   return dsPool;
+}
+
+// Single client connection for DDL operations (caller must call client.end())
+export async function getDataSourceClient(sourceId: string): Promise<Client> {
+  const result = await authzPool.query(
+    'SELECT * FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE',
+    [sourceId]
+  );
+  if (result.rows.length === 0) {
+    throw new Error(`Data source not found or inactive: ${sourceId}`);
+  }
+  const ds = result.rows[0];
+  const client = new Client({
+    host: ds.host,
+    port: ds.port,
+    database: ds.database_name,
+    user: ds.connector_user,
+    password: decrypt(ds.connector_password),
+    connectionTimeoutMillis: 10000,
+  });
+  await client.connect();
+  await client.query('SET statement_timeout = \'30s\'');
+  return client;
 }
 
 // Resolve which data source a table belongs to (via authz_resource.attributes)

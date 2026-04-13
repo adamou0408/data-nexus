@@ -384,4 +384,45 @@ FROM authz_pool_credentials;
 
 ---
 
+## 未來方向：AI Agent 整合（Phase 2 — 數據中心上線後啟動）
+
+> **來源**：2026-02-11 內部信件討論（KS Pua → Kelvin → Adam 等），主旨：企業流程 AI 自動化方向研究  
+> **決策**：先完成數據中心（Data Nexus）上線，累積資料與經驗後，再啟動「智能分析師 2.0」計畫  
+> **狀態**：待啟動（blocked on Data Nexus production 上線）
+
+### 背景
+
+內部討論參考了多 Agent 架構在企業流程自動化的應用案例（如 Intuit QuickBooks 的 AI 財稅平台），該類平台利用多個專責 Agent 協作完成自動化操作、系統整合、AI 分析報告等任務。討論中歸納出一套通用的技術組合：LLM + Ontology + RAG + RPA + HITL（人機協作）。
+
+### 與 Data Nexus 的關係
+
+Data Nexus 作為 Phison 內部數據中心的授權管理層，是未來 AI Agent 整合的前置基礎設施：
+
+1. **資料存取授權**：AI Agent 需要存取企業資料時，需通過 Data Nexus 的三條路徑（Path A/B/C）進行權限控管
+2. **資料來源整合**：Data Source Registry 提供了多資料源連線管理能力，未來 Agent 需要整合多種 ERP、資料庫時可復用此架構
+3. **稽核追蹤**：AI Agent 的每次資料存取都能透過 audit log 記錄，滿足合規需求
+4. **欄位級控管**：denied_columns + column masking 可控制 Agent 能取得哪些欄位，避免敏感資料外洩
+
+### 未來可能的 Agent 整合項目
+
+以下為信件中提及的方向，待數據中心上線後再行評估：
+
+| # | 方向 | 說明 | Data Nexus 關聯 |
+|---|------|------|----------------|
+| 1 | 自動化操作 | 將人員手動操作流程拆解為 Agent 可承接的任務 | Agent 需 Path B 存取權限 |
+| 2 | 系統整合 | 整合多種 ERP、外部資料源 | 復用 Data Source Registry |
+| 3 | AI 分析報告 | 自動產生 BI 儀表板和分析報告 | 復用 Metabase BI 整合（Path C） |
+
+### 相關人員
+
+| 角色 | 人員 | 職責 |
+|------|------|------|
+| 決策 | KS Pua | 提出企業 AI 自動化方向 |
+| 協調 | 詹清文 (Kelvin) | 轉發並評估內部應用轉換 |
+| 規劃 | 歐瀝元 (Adam) | 應用端 solution 分派、定調「數據中心先行」策略 |
+| 研究 | 梁志玄 (zhixuan_liang) | 多 Agent 架構研究、競品分析 |
+| 研究 | 王昱筌 (Ricky) | 應用端 solution 研究 |
+
+---
+
 *本文件由工程團隊維護，如有功能變更或優先順序調整，請直接更新本文件並於 git commit message 中說明變更原因。*

@@ -67,6 +67,18 @@
 - [x] Admin CRUD: Search/filter on all 5 entity sections
 - [x] Path C: pgbouncer live reload (apply+reload endpoint + writable volume)
 
+- [x] Path C: External DB Grant Sync (sync SSOT grants to remote DBs)
+- [x] Path C: Credential rotation auto-syncs to remote DBs
+- [x] Path C: Drift detection (SSOT vs remote DB comparison)
+- [x] V025: External sync support (sync_log table + data_source tracking)
+- [x] V026: `allowed_modules` column on pool profiles
+- [x] Metadata-driven table-to-module mapping (bulk API + UI)
+- [x] Relational pool profiles (allowed_modules → recursive CTE expansion at sync time)
+- [x] Table Mapping UI in DataSourcesSection (prefix grouping, module dropdown, bulk save)
+- [x] Profile Form: allowed_modules field + Modules column in profiles table
+- [x] pg_k8cluster scenario: Tiptop ERP modules + profile mapping
+- [x] Greenplum compatibility: two-step table query, RLS skip, graceful column revoke
+
 ### Remaining
 (Milestone 3 complete — remaining items moved to Milestone 4)
 
@@ -113,6 +125,8 @@
 | V022 | Config-Driven UI Engine (authz_ui_page + fn_ui_page/fn_ui_root) | Done |
 | V023 | Fix authz_sync_pgbouncer_config() STABLE → VOLATILE | Done |
 | V024 | Fix authz_check_from_cache() deny-wins + authz_resolve() include deny in L0 | Done |
+| V025 | External sync support (authz_sync_log + last_grant_sync_at) | Done |
+| V026 | `allowed_modules` TEXT[] on authz_db_pool_profile | Done |
 | data/V003 | 6 remaining business tables migrated to nexus_data | Done |
 | data/V004 | Path C RLS: remove current_setting(), add identity-only pg_has_role | Done |
 

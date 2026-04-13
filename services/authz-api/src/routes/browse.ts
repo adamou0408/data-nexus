@@ -33,11 +33,12 @@ browseRouter.get('/roles', async (_req, res) => {
   }
 });
 
-browseRouter.get('/resources', async (_req, res) => {
+browseRouter.get('/resources', async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT * FROM authz_resource WHERE is_active = TRUE ORDER BY resource_id
-    `);
+    const typeFilter = req.query.type as string | undefined;
+    const result = typeFilter
+      ? await pool.query('SELECT * FROM authz_resource WHERE is_active = TRUE AND resource_type = $1 ORDER BY resource_id', [typeFilter])
+      : await pool.query('SELECT * FROM authz_resource WHERE is_active = TRUE ORDER BY resource_id');
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -676,6 +677,75 @@ browseRouter.delete('/roles/:id/permissions/:permId', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
+  }
+});
+
+// --- Resources: Unmapped tables for a data source ---
+browseRouter.get('/resources/unmapped', async (req, res) => {
+  const dsId = req.query.data_source_id as string;
+  if (!dsId) return res.status(400).json({ error: 'data_source_id query param required' });
+  try {
+    const result = await pool.query(`
+      SELECT resource_id, resource_type, parent_id, display_name, attributes, is_active, created_at
+      FROM authz_resource
+      WHERE resource_type = 'table'
+        AND parent_id IS NULL
+        AND is_active = TRUE
+        AND attributes->>'data_source_id' = $1
+      ORDER BY resource_id
+    `, [dsId]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// --- Resources: Mapped tables for a data source ---
+browseRouter.get('/resources/mapped', async (req, res) => {
+  const dsId = req.query.data_source_id as string;
+  if (!dsId) return res.status(400).json({ error: 'data_source_id query param required' });
+  try {
+    const result = await pool.query(`
+      SELECT r.resource_id, r.resource_type, r.parent_id, r.display_name, r.attributes,
+             p.display_name AS module_name
+      FROM authz_resource r
+      LEFT JOIN authz_resource p ON p.resource_id = r.parent_id
+      WHERE r.resource_type = 'table'
+        AND r.parent_id IS NOT NULL
+        AND r.is_active = TRUE
+        AND r.attributes->>'data_source_id' = $1
+      ORDER BY r.parent_id, r.resource_id
+    `, [dsId]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// --- Resources: Bulk update parent_id (table-to-module mapping) ---
+browseRouter.put('/resources/bulk-parent', async (req, res) => {
+  const { mappings } = req.body;
+  if (!Array.isArray(mappings) || mappings.length === 0) {
+    return res.status(400).json({ error: 'mappings array required: [{resource_id, parent_id}]' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let updated = 0;
+    for (const m of mappings) {
+      const result = await client.query(
+        'UPDATE authz_resource SET parent_id = $2, updated_at = now() WHERE resource_id = $1 AND is_active = TRUE',
+        [m.resource_id, m.parent_id || null]
+      );
+      updated += result.rowCount || 0;
+    }
+    await client.query('COMMIT');
+    res.json({ updated });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: String(err) });
+  } finally {
+    client.release();
   }
 });
 

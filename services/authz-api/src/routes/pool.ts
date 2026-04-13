@@ -4,12 +4,29 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { pool, getDataSourcePool } from '../db';
 import { audit } from '../audit';
+import { syncExternalGrants, syncRemoteCredential, detectRemoteDrift } from '../lib/remote-sync';
 
 export const poolRouter = Router();
 
 function getUserId(req: Request): string {
   return (req as any).authzUser?.user_id || 'unknown';
 }
+
+// List roles that don't have credentials yet (for SSOT dropdown)
+poolRouter.get('/uncredentialed-roles', async (_req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT dp.pg_role, dp.profile_id, dp.connection_mode, dp.data_source_id
+      FROM authz_db_pool_profile dp
+      LEFT JOIN authz_pool_credentials pc ON pc.pg_role = dp.pg_role AND pc.is_active = TRUE
+      WHERE dp.is_active = TRUE AND pc.pg_role IS NULL
+      ORDER BY dp.pg_role
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
 
 // List all pool profiles
 poolRouter.get('/profiles', async (_req, res) => {
@@ -49,20 +66,23 @@ poolRouter.post('/profiles', async (req, res) => {
     profile_id, pg_role, allowed_schemas, allowed_tables,
     denied_columns, connection_mode, max_connections = 5,
     ip_whitelist, valid_hours, rls_applies = true, description,
+    data_source_id, allowed_modules,
   } = req.body;
   try {
     const result = await pool.query(`
       INSERT INTO authz_db_pool_profile
         (profile_id, pg_role, allowed_schemas, allowed_tables,
          denied_columns, connection_mode, max_connections,
-         ip_whitelist, valid_hours, rls_applies, description)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         ip_whitelist, valid_hours, rls_applies, description, data_source_id, allowed_modules)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
       RETURNING *
     `, [
       profile_id, pg_role, allowed_schemas, allowed_tables,
       denied_columns ? JSON.stringify(denied_columns) : null,
       connection_mode, max_connections,
       ip_whitelist, valid_hours, rls_applies, description,
+      data_source_id || null,
+      allowed_modules || null,
     ]);
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'pool_profile_create', resource_id: profile_id, decision: 'allow', context: { pg_role, connection_mode } });
     res.status(201).json(result.rows[0]);
@@ -77,6 +97,7 @@ poolRouter.put('/profiles/:id', async (req, res) => {
     allowed_schemas, allowed_tables, denied_columns,
     connection_mode, max_connections, ip_whitelist,
     valid_hours, rls_applies, description, is_active,
+    data_source_id, allowed_modules,
   } = req.body;
   try {
     const result = await pool.query(`
@@ -91,6 +112,8 @@ poolRouter.put('/profiles/:id', async (req, res) => {
         rls_applies = COALESCE($9, rls_applies),
         description = COALESCE($10, description),
         is_active = COALESCE($11, is_active),
+        data_source_id = COALESCE($12, data_source_id),
+        allowed_modules = COALESCE($13, allowed_modules),
         updated_at = now()
       WHERE profile_id = $1
       RETURNING *
@@ -99,6 +122,7 @@ poolRouter.put('/profiles/:id', async (req, res) => {
       denied_columns ? JSON.stringify(denied_columns) : null,
       connection_mode, max_connections, ip_whitelist,
       valid_hours, rls_applies, description, is_active,
+      data_source_id, allowed_modules,
     ]);
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Profile not found' });
@@ -178,6 +202,23 @@ poolRouter.delete('/assignments/:id', async (req, res) => {
   }
 });
 
+// Reactivate assignment
+poolRouter.post('/assignments/:id/reactivate', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'UPDATE authz_db_pool_assignment SET is_active = TRUE WHERE id = $1 RETURNING id, subject_id, profile_id, is_active',
+      [req.params.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Assignment not found' });
+    }
+    audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'pool_assignment_reactivate', resource_id: `assignment:${req.params.id}`, decision: 'allow' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // --- Pool Credentials ---
 
 // List credentials (without password_hash)
@@ -189,6 +230,59 @@ poolRouter.get('/credentials', async (_req, res) => {
       ORDER BY pg_role
     `);
     res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Create credential for a PG role
+poolRouter.post('/credentials', async (req, res) => {
+  const { pg_role, password, rotate_interval = '90 days' } = req.body;
+  try {
+    const hash = `md5${require('crypto').createHash('md5').update(password + pg_role).digest('hex')}`;
+    const result = await pool.query(`
+      INSERT INTO authz_pool_credentials (pg_role, password_hash, rotate_interval)
+      VALUES ($1, $2, $3::interval)
+      RETURNING pg_role, is_active, last_rotated, rotate_interval
+    `, [pg_role, hash, rotate_interval]);
+    audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'credential_create', resource_id: `credential:${pg_role}`, decision: 'allow' });
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Deactivate credential (soft delete)
+poolRouter.delete('/credentials/:pg_role', async (req, res) => {
+  const { pg_role } = req.params;
+  try {
+    const result = await pool.query(
+      `UPDATE authz_pool_credentials SET is_active = FALSE WHERE pg_role = $1 RETURNING pg_role`,
+      [pg_role]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Credential not found' });
+    }
+    audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'credential_deactivate', resource_id: `credential:${pg_role}`, decision: 'allow' });
+    res.json({ deactivated: pg_role });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Reactivate credential
+poolRouter.post('/credentials/:pg_role/reactivate', async (req, res) => {
+  const { pg_role } = req.params;
+  try {
+    const result = await pool.query(
+      `UPDATE authz_pool_credentials SET is_active = TRUE WHERE pg_role = $1 RETURNING pg_role, is_active, last_rotated, rotate_interval`,
+      [pg_role]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Credential not found' });
+    }
+    audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'credential_reactivate', resource_id: `credential:${pg_role}`, decision: 'allow' });
+    res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -209,8 +303,15 @@ poolRouter.post('/credentials/:pg_role/rotate', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Credential not found' });
     }
-    audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'credential_rotate', resource_id: `credential:${pg_role}`, decision: 'allow' });
-    res.json(result.rows[0]);
+
+    // Push new password to all linked remote DBs
+    let remoteSync: any[] = [];
+    try {
+      remoteSync = await syncRemoteCredential(pg_role, hash, getUserId(req));
+    } catch { /* remote sync failure should not block local rotation */ }
+
+    audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'credential_rotate', resource_id: `credential:${pg_role}`, decision: 'allow', context: { remote_sync_count: remoteSync.length } });
+    res.json({ ...result.rows[0], remote_sync: remoteSync });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -339,6 +440,34 @@ stats_users = nexus_admin
       config_path: configPath,
       reload: reloadResult,
     });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// --- External DB Grant Sync ---
+
+// Sync grants to external databases
+poolRouter.post('/sync/external-grants', async (req, res) => {
+  const { data_source_id } = req.body;
+  try {
+    const actions = await syncExternalGrants(data_source_id, getUserId(req));
+    res.json({ actions });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Detect drift between SSOT and remote DB grants
+poolRouter.post('/sync/external-grants/drift', async (req, res) => {
+  const { data_source_id } = req.body;
+  if (!data_source_id) {
+    return res.status(400).json({ error: 'data_source_id is required' });
+  }
+  try {
+    const report = await detectRemoteDrift(data_source_id);
+    audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'detect_drift', resource_id: `datasource:${data_source_id}`, decision: 'allow', context: { drift_items: report.items.length } });
+    res.json(report);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

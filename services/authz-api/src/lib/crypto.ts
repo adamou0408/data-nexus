@@ -14,7 +14,7 @@ function getKey(): Buffer {
   const keyHex = process.env.ENCRYPTION_KEY;
   if (!keyHex || keyHex.length !== 64) {
     // Dev fallback — deterministic key for POC (NOT for production)
-    return Buffer.from('a]0'.repeat(10) + 'ab', 'hex').subarray(0, 32);
+    return Buffer.from('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'hex');
   }
   return Buffer.from(keyHex, 'hex');
 }

@@ -381,6 +381,184 @@ The architecture document (v2.3) is the complete blueprint.
 
 ---
 
+## 六、Secrets / 連線資訊管理
+
+### SEC-06　Production 前 Secrets 管理改善計畫
+
+**狀態**：待處理　｜　**優先級**：P0（生產前必須完成）
+
+**現狀**
+
+目前 secrets 散布在多處，均為 POC 開發用途，但若照搬到 production 會造成安全風險。完整盤點如下：
+
+| # | 項目 | 位置 | 會上 GitHub? | 風險 |
+|---|------|------|:---:|------|
+| 1 | AuthZ DB 密碼 | `services/authz-api/src/db.ts:13` 預設值 `nexus_dev_password` | 是 | 低（開發用） |
+| 2 | LDAP bind 密碼 | `services/identity-sync/src/ldap-sync.ts:12` 預設值 `nexus_ldap_dev` | 是 | 低（開發用） |
+| 3 | Identity-sync DB 密碼 | `services/identity-sync/src/ldap-sync.ts:22` 預設值 `nexus_dev_password` | 是 | 低（開發用） |
+| 4 | AES-256 加密 fallback key | `services/authz-api/src/lib/crypto.ts:17` 硬編碼 dev key | 是 | **高** — production 忘設 `ENCRYPTION_KEY` 會用此 key |
+| 5 | Docker PG 密碼 | `deploy/docker-compose/docker-compose.yml:7` `nexus_dev_password` | 是 | 低（本地環境） |
+| 6 | Docker LDAP 密碼 | `deploy/docker-compose/docker-compose.ldap.yml:13` `nexus_ldap_dev` | 是 | 低（本地環境） |
+| 7 | PgBouncer userlist | `deploy/docker-compose/pgbouncer/userlist.txt` 明文密碼 | 是 | 中 — 密碼明文可見 |
+| 8 | 外部 DS connector_password | `authz_data_source` 表，AES-256-GCM 加密 | 否 | 安全（已加密） |
+| 9 | `ENCRYPTION_KEY` 環境變數 | 部署環境設定 | 否 | 安全 |
+
+**目標（6 個改善項）**
+
+#### SEC-06a　crypto.ts dev fallback key 加 production 擋板
+
+在 `crypto.ts` `getKey()` 中，當 `NODE_ENV === 'production'` 且 `ENCRYPTION_KEY` 未設定時，直接 throw Error 而非使用 fallback key。防止 production 意外用了可預測的加密金鑰。
+
+**檔案**：`services/authz-api/src/lib/crypto.ts:13-18`
+
+```typescript
+function getKey(): Buffer {
+  const keyHex = process.env.ENCRYPTION_KEY;
+  if (!keyHex || keyHex.length !== 64) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('ENCRYPTION_KEY env var is required in production (64-char hex)');
+    }
+    // Dev fallback — deterministic key for POC (NOT for production)
+    return Buffer.from('0123456789abcdef...', 'hex');
+  }
+  return Buffer.from(keyHex, 'hex');
+}
+```
+
+#### SEC-06b　新增 `.env.example` 範本
+
+建立 `.env.example` 列出所有需要設定的環境變數（不含實際值），讓新開發者和 DevOps 知道有哪些 secrets 需要配置。
+
+**新增檔案**：`.env.example`
+
+```env
+# AuthZ API
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=nexus_authz
+DB_USER=nexus_admin
+DB_PASSWORD=         # Required in production
+ENCRYPTION_KEY=      # 64-char hex, required in production
+
+# Identity Sync
+LDAP_URL=ldap://localhost:389
+LDAP_BIND_DN=cn=admin,dc=phison,dc=com
+LDAP_BIND_PASSWORD=  # Required in production
+PG_PASSWORD=         # Required in production
+
+# PgBouncer
+PGBOUNCER_HOST=localhost
+PGBOUNCER_PORT=6432
+```
+
+#### SEC-06c　PgBouncer userlist 改用 MD5 hash
+
+將 `deploy/docker-compose/pgbouncer/userlist.txt` 從明文密碼改為 MD5 hash 格式（`"user" "md5<hash>"`），即使在 dev 環境也不暴露明文。
+
+**檔案**：`deploy/docker-compose/pgbouncer/userlist.txt`
+
+#### SEC-06d　確認 `.gitignore` 涵蓋所有 secrets 格式
+
+現有 `.gitignore` 已包含 `.env`、`.env.local`、`.env.*.local`。需確認：
+- `*.pem`、`*.key` 等憑證檔案也被 ignore
+- `secrets/` 目錄也被 ignore（未來若改用 file-based secrets）
+
+**檔案**：`.gitignore`
+
+#### SEC-06e　啟動時驗證關鍵環境變數
+
+在 `services/authz-api/src/index.ts` 啟動時，檢查 `NODE_ENV === 'production'` 下所有必要環境變數是否已設定。未設定則 log warning 並拒絕啟動。
+
+**檔案**：`services/authz-api/src/index.ts`
+
+#### SEC-06f　文件：Production Deployment Checklist
+
+在 `docs/` 新增 deployment checklist，列出上線前所有必須配置的 secrets 和環境變數。
+
+**檔案**：`docs/deployment-checklist.md`
+
+**影響範圍**
+
+| 檔案 | 修改類型 |
+|------|---------|
+| `services/authz-api/src/lib/crypto.ts` | 修改（加 production 擋板）|
+| `services/authz-api/src/index.ts` | 修改（加啟動檢查）|
+| `.env.example` | 新增 |
+| `.gitignore` | 修改（加 *.pem, *.key, secrets/）|
+| `deploy/docker-compose/pgbouncer/userlist.txt` | 修改（明文→MD5）|
+| `docs/deployment-checklist.md` | 新增 |
+
+**備註**：此項目是 Milestone 4（Production-ready）的前置條件之一。SEC-06a 優先級最高，因為它直接防止 production 加密金鑰洩漏。
+
+---
+
+## 七、開發環境 (DX)
+
+### DX-01　Shell script CRLF 換行符導致 Docker 容器啟動失敗
+
+**狀態**：已完成　｜　**優先級**：P1
+**完成於**：2026-04-13。新增 `.gitattributes` 強制 `*.sh` 使用 LF，並 re-normalize 現有 3 個 .sh 檔案。
+
+**現狀**
+
+Windows 環境下 git clone 的 `.sh` 檔案會帶有 CRLF（`\r\n`）換行符。Docker 容器（Linux）執行這些腳本時會報錯：`/bin/bash^M: bad interpreter: No such file or directory`，導致 PostgreSQL 初始化腳本 `init-db.sh` 執行失敗，容器直接 exit(126)。
+
+受影響檔案：
+- `deploy/docker-compose/init-db.sh`
+- `scripts/verify-milestone1.sh`
+- `scripts/verify-path-c.sh`
+
+**目標**
+
+根本解決方案：在 repo 根目錄新增 `.gitattributes`，強制 `.sh` 檔案使用 LF：
+
+```
+*.sh text eol=lf
+```
+
+臨時解決方案：手動執行 `sed -i 's/\r$//' <file>` 轉換。
+
+**影響範圍**：所有 `.sh` 檔案、新增 `.gitattributes`
+
+---
+
+### DX-02　Windows 開發者需手動安裝 GNU Make
+
+**狀態**：待處理　｜　**優先級**：P2
+
+**現狀**
+
+專案使用 `Makefile` 管理所有開發命令，但 Windows 不內建 `make`。新進開發者在 CMD 執行 `make help` 會得到「不是內部或外部命令」錯誤。即使透過 `winget install GnuWin32.Make` 安裝後，也可能因 PATH 未生效而需要重啟終端。
+
+**目標**
+
+在 `README.md` 或 startup guide 中加入 Windows 環境前置條件說明：
+1. 安裝方式：`choco install make` 或 `winget install GnuWin32.Make`
+2. 安裝後需重啟終端
+3. 驗證：`make --version`
+
+**影響範圍**：`docs/nexus-startup-guide.md`
+
+---
+
+### DX-03　本地服務 port 衝突無提示
+
+**狀態**：待處理　｜　**優先級**：P3
+
+**現狀**
+
+data-nexus 使用的 port（PostgreSQL 5432、Redis 6379、UI 5173）是常見預設 port，容易與開發者機器上其他專案衝突。`make up` 失敗時只顯示 Docker Compose 錯誤，無明確提示哪個 port 被佔用。
+
+**目標**
+
+二擇一：
+1. 在 `make up` 前加入 port 檢查腳本，提示衝突的 port 和佔用者
+2. 改用非預設 port（如 PG 15432、Redis 16379），或支援 `.env` 覆蓋 port mapping
+
+**影響範圍**：`Makefile`、`deploy/docker-compose/docker-compose.yml`
+
+---
+
 ## 新增項目格式範本
 
 複製以下範本新增項目：
