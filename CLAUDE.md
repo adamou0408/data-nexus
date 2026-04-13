@@ -65,6 +65,7 @@ data-nexus/
 | Progress & migrations | `docs/PROGRESS.md` | After completing features or adding migrations |
 | API & dashboard reference | `docs/api-reference.md` | After adding routes or tabs |
 | Architecture spec | `docs/phison-data-nexus-architecture-v2.4.md` | Architecture decisions |
+| Architecture diagrams | `docs/architecture-diagram.md` | After structural changes (new paths, services, or DB splits) |
 | ER diagram | `docs/er-diagram.md` | After DB schema changes |
 | Tech debt & backlog | `docs/backlog-tech-debt.md` | When discovering issues |
 | Feature requests | `docs/wishlist-features.md` | When receiving requirements |

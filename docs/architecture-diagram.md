@@ -1,5 +1,9 @@
 # Phison Data Nexus — Architecture Diagram
 
+> Visual quick-reference for the system architecture.
+> For detailed specs see [`phison-data-nexus-architecture-v2.4.md`](phison-data-nexus-architecture-v2.4.md).
+> For DB schema see [`er-diagram.md`](er-diagram.md).
+
 ## System Overview
 
 ```
