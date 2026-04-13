@@ -6,11 +6,14 @@ COMPOSE := docker compose -f deploy/docker-compose/docker-compose.yml
 PSQL    := $(COMPOSE) exec -T postgres psql -U nexus_admin -d nexus_authz
 
 COMPOSE_LDAP := docker compose -f deploy/docker-compose/docker-compose.yml -f deploy/docker-compose/docker-compose.ldap.yml
+COMPOSE_METABASE := docker compose -f deploy/docker-compose/docker-compose.yml -f deploy/docker-compose/docker-compose.metabase.yml
+COMPOSE_ALL := docker compose -f deploy/docker-compose/docker-compose.yml -f deploy/docker-compose/docker-compose.ldap.yml -f deploy/docker-compose/docker-compose.metabase.yml
 
 .PHONY: help up down restart status logs \
         db-reset db-psql db-migrate db-seed db-shell \
         verify clean dev dev-api dev-ui \
-        up-ldap down-ldap ldap-up ldap-down ldap-sync
+        up-ldap down-ldap ldap-up ldap-down ldap-sync \
+        metabase-up metabase-down up-all down-all clean-all
 
 # ── Help ─────────────────────────────────────────────────────
 
@@ -160,6 +163,26 @@ ldap-sync: ## Run LDAP → DB sync
 ldap-search: ## Search LDAP directory (quick verify)
 	$(COMPOSE_LDAP) exec openldap ldapsearch -x -H ldap://localhost -b "dc=phison,dc=com" -D "cn=admin,dc=phison,dc=com" -w nexus_ldap_dev "(objectClass=groupOfNames)" cn member
 
+# ── Metabase BI ─────────────────────────────────────────────
+
+metabase-up: ## Start Metabase BI (http://localhost:3100)
+	$(COMPOSE_METABASE) up -d metabase
+	@echo "Metabase starting at http://localhost:3100 (may take 1-2 min on first boot)"
+
+metabase-down: ## Stop Metabase
+	$(COMPOSE_METABASE) stop metabase
+
+up-all: ## Start everything (PG + Redis + LDAP + Metabase)
+	$(COMPOSE_ALL) up -d
+	@echo "All services starting..."
+	@echo "  Dashboard:    http://localhost:5173"
+	@echo "  API:          http://localhost:3001"
+	@echo "  Metabase:     http://localhost:3100"
+	@echo "  phpLDAPadmin: http://localhost:8090"
+
+down-all: ## Stop everything
+	$(COMPOSE_ALL) down
+
 # ── Cleanup ──────────────────────────────────────────────────
 
 clean: ## Stop services and remove volumes
@@ -169,3 +192,7 @@ clean: ## Stop services and remove volumes
 clean-ldap: ## Stop all services including LDAP and remove volumes
 	$(COMPOSE_LDAP) down -v
 	@echo "Cleaned (including LDAP volumes)."
+
+clean-all: ## Stop ALL services and remove ALL volumes
+	$(COMPOSE_ALL) down -v
+	@echo "Cleaned (all services + volumes)."

@@ -343,3 +343,58 @@ stats_users = nexus_admin
     res.status(500).json({ error: String(err) });
   }
 });
+
+// ============================================================
+// Metabase BI integration info (SSOT from pool profiles + data sources)
+// Returns connection templates for each pool role — admin uses these to
+// configure Metabase DB connections. No Metabase-specific data stored in DB.
+// ============================================================
+poolRouter.get('/metabase-connections', async (_req, res) => {
+  try {
+    // SSOT: pool profiles
+    const profiles = await pool.query(`
+      SELECT dp.profile_id, dp.pg_role, dp.description, dp.is_active,
+             dp.allowed_tables, dp.denied_columns, dp.connection_mode,
+             dp.data_source_id,
+             ds.display_name AS ds_name, ds.host AS ds_host, ds.port AS ds_port, ds.database_name
+      FROM authz_db_pool_profile dp
+      LEFT JOIN authz_data_source ds ON ds.source_id = dp.data_source_id
+      WHERE dp.is_active
+      ORDER BY dp.profile_id
+    `);
+
+    const metabaseUrl = process.env.METABASE_URL || 'http://localhost:3100';
+    const pgbouncerHost = process.env.PGBOUNCER_HOST || 'localhost';
+    const pgbouncerPort = parseInt(process.env.PGBOUNCER_PORT || '6432');
+
+    const connections = profiles.rows.map((p: any) => ({
+      profile_id: p.profile_id,
+      pg_role: p.pg_role,
+      description: p.description,
+      data_source: p.ds_name || 'default',
+      database: p.database_name || 'nexus_data',
+      // Connection template for Metabase setup
+      metabase_config: {
+        engine: 'postgres',
+        host: pgbouncerHost,
+        port: pgbouncerPort,
+        dbname: p.database_name || 'nexus_data',
+        user: p.pg_role,
+        // Password not included — admin must look up from pgbouncer userlist
+      },
+      access_scope: {
+        allowed_tables: p.allowed_tables,
+        denied_columns: p.denied_columns,
+        connection_mode: p.connection_mode,
+      },
+    }));
+
+    res.json({
+      metabase_url: metabaseUrl,
+      pgbouncer: { host: pgbouncerHost, port: pgbouncerPort },
+      connections,
+    });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});

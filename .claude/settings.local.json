@@ -31,7 +31,11 @@
       "Bash(./node_modules/.bin/tsc --noEmit)",
       "Bash(netstat -ano)",
       "Bash(awk '{print $NF}')",
-      "Bash(taskkill //PID 17660 //F)"
+      "Bash(taskkill //PID 17660 //F)",
+      "Bash(taskkill //PID 44672 //F)",
+      "Bash(python -m json.tool)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\([c['label'] for c in d['config']['components']]\\)\")",
+      "Bash(taskkill //PID 39420 //F)"
     ]
   }
 }

@@ -1,0 +1,36 @@
+# ============================================================
+# Metabase BI for Phison Data Nexus
+# Usage: docker compose -f docker-compose.yml -f docker-compose.metabase.yml up -d
+#
+# Metabase connects to nexus_data via pgbouncer (Path C).
+# Permissions enforced by PG native GRANT + RLS — SSOT, no Metabase permission layer.
+#
+# Default login: admin@nexus.dev / nexus_admin_2026
+# ============================================================
+
+services:
+  metabase:
+    image: metabase/metabase:latest
+    container_name: nexus-metabase
+    ports:
+      - "3100:3000"
+    environment:
+      # Metabase app database (H2 embedded for dev, PG for production)
+      MB_DB_TYPE: h2
+      MB_DB_FILE: /metabase-data/metabase.db
+      # Java timezone
+      JAVA_TIMEZONE: Asia/Taipei
+    volumes:
+      - metabase_data:/metabase-data
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+volumes:
+  metabase_data:

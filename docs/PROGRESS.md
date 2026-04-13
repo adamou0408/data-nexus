@@ -70,8 +70,13 @@
 ### Remaining
 (Milestone 3 complete — remaining items moved to Milestone 4)
 
-## Milestone 4: Production-Ready — NOT STARTED
+## Milestone 4: Production-Ready — IN PROGRESS
 
+### Done
+- [x] Metabase BI: Docker Compose + Makefile targets (`make metabase-up`)
+- [x] Metabase connects to nexus_data via pgbouncer Path C (SSOT — PG GRANT+RLS enforced)
+
+### Remaining
 - [ ] Redis L1 cache layer + `authz_check_from_cache()`
 - [ ] Helm chart + K8s deployment
 - [ ] Policy Simulator + Impact Analysis

@@ -4,12 +4,12 @@ import {
   Shield, Search, Grid3X3, Database, Table2,
   Server, List, FileText, LayoutDashboard,
   ChevronDown, LogOut, Loader2, User,
-  Menu, X, Code2, Layers,
+  Menu, X, Code2, Layers, BarChart3,
 } from 'lucide-react';
 
 export type TabId =
   | 'overview' | 'resolve' | 'check' | 'matrix'
-  | 'tables' | 'raw-tables' | 'rls'
+  | 'tables' | 'raw-tables' | 'rls' | 'metabase'
   | 'functions' | 'browser' | 'pool' | 'audit';
 
 type NavItem = {
@@ -42,6 +42,7 @@ const navGroups: NavGroup[] = [
     label: 'Data',
     items: [
       { id: 'tables', label: 'Data Explorer', icon: <Layers size={18} /> },
+      { id: 'metabase', label: 'Metabase BI', icon: <BarChart3 size={18} /> },
     ],
   },
   {

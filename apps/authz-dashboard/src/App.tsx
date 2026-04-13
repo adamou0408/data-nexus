@@ -12,6 +12,7 @@ import { AuditTab } from './components/AuditTab';
 import { TablesTab } from './components/TablesTab';
 import { FunctionsTab } from './components/FunctionsTab';
 import { ConfigEngine } from './components/ConfigEngine';
+import { MetabaseTab } from './components/MetabaseTab';
 
 function AppInner() {
   const [tab, setTab] = useState<TabId>('overview');
@@ -33,6 +34,7 @@ function AppInner() {
       {tab === 'check' && <CheckTab />}
       {tab === 'matrix' && <MatrixTab />}
       {tab === 'tables' && <ConfigEngine />}
+      {tab === 'metabase' && <MetabaseTab />}
       {tab === 'raw-tables' && <TablesTab />}
       {tab === 'functions' && <FunctionsTab />}
       {tab === 'rls' && <RlsTab />}

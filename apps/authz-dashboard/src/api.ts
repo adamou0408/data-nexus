@@ -214,6 +214,17 @@ export const api = {
   poolSyncGrants: () => request<{ actions: { action: string; detail: string }[] }>('/pool/sync/grants', { method: 'POST' }),
   poolSyncPgbouncer: () => request<{ config: string }>('/pool/sync/pgbouncer', { method: 'POST' }),
   poolSyncPgbouncerApply: () => request<{ applied: boolean; config_path: string; reload: string }>('/pool/sync/pgbouncer/apply', { method: 'POST' }),
+
+  poolMetabaseConnections: () => request<{
+    metabase_url: string;
+    pgbouncer: { host: string; port: number };
+    connections: {
+      profile_id: string; pg_role: string; description: string;
+      data_source: string; database: string;
+      metabase_config: { engine: string; host: string; port: number; dbname: string; user: string };
+      access_scope: { allowed_tables: string[] | null; denied_columns: unknown; connection_mode: string };
+    }[];
+  }>('/pool/metabase-connections'),
   poolCredentialRotate: (pg_role: string, new_password: string) =>
     request<{ pg_role: string; is_active: boolean; last_rotated: string }>(
       `/pool/credentials/${encodeURIComponent(pg_role)}/rotate`,
