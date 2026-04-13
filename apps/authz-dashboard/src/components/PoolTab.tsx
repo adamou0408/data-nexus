@@ -749,7 +749,17 @@ function SyncSection() {
             try { setPgbouncerConfig((await api.poolSyncPgbouncer()).config); } catch { /* ignore */ }
             setLoading(null);
           }} disabled={loading === 'pgbouncer'} className="btn-primary btn-sm">
-            <Play size={12} /> {loading === 'pgbouncer' ? 'Generating...' : 'Generate'}
+            <Play size={12} /> {loading === 'pgbouncer' ? 'Generating...' : 'Preview'}
+          </button>
+          <button onClick={async () => {
+            setLoading('pgbouncer-apply');
+            try {
+              const result = await api.poolSyncPgbouncerApply();
+              setPgbouncerConfig(`Applied: ${result.config_path}\nReload: ${result.reload}`);
+            } catch (e) { setPgbouncerConfig(`Error: ${String(e)}`); }
+            setLoading(null);
+          }} disabled={loading === 'pgbouncer-apply'} className="btn-sm bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium">
+            <Play size={12} /> {loading === 'pgbouncer-apply' ? 'Applying...' : 'Apply & Reload'}
           </button>
         </div>
         {pgbouncerConfig && (

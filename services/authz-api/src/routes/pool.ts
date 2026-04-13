@@ -1,4 +1,7 @@
 import { Router, Request } from 'express';
+import { Client } from 'pg';
+import * as fs from 'fs';
+import * as path from 'path';
 import { pool, getDataSourcePool } from '../db';
 import { audit } from '../audit';
 
@@ -258,6 +261,84 @@ poolRouter.post('/sync/pgbouncer', async (req, res) => {
     );
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'sync_pgbouncer', resource_id: `datasource:${data_source_id || 'default'}`, decision: 'allow', context: { db_host, db_port, db_name } });
     res.json({ config: result.rows[0].config });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Apply pgbouncer config + live reload
+// 1. Generate config from SSOT (authz_db_pool_profile)
+// 2. Write to pgbouncer.ini on the Docker volume
+// 3. Send RELOAD via pgbouncer admin console
+poolRouter.post('/sync/pgbouncer/apply', async (req, res) => {
+  const pgbouncerHost = process.env.PGBOUNCER_HOST || 'localhost';
+  const pgbouncerPort = parseInt(process.env.PGBOUNCER_PORT || '6432');
+  const configPath = process.env.PGBOUNCER_CONFIG_PATH
+    || path.resolve(__dirname, '../../../../deploy/docker-compose/pgbouncer/pgbouncer.ini');
+
+  try {
+    // Step 1: Generate [databases] section from SSOT
+    const result = await pool.query(
+      'SELECT authz_sync_pgbouncer_config($1, $2, $3) AS config',
+      ['postgres', 5432, 'nexus_data']
+    );
+    const generatedDatabases = result.rows[0].config;
+
+    // Step 2: Read existing config to preserve [pgbouncer] static settings
+    let existingConfig = '';
+    try { existingConfig = fs.readFileSync(configPath, 'utf-8'); } catch { /* first write */ }
+
+    // Extract the [pgbouncer] section from existing config (keep static settings)
+    const pgbouncerMatch = existingConfig.match(/\[pgbouncer\][\s\S]*/);
+    const pgbouncerSection = pgbouncerMatch ? pgbouncerMatch[0] : `[pgbouncer]
+listen_addr = 0.0.0.0
+listen_port = 6432
+auth_type = md5
+auth_file = /etc/pgbouncer/userlist.txt
+pool_mode = transaction
+default_pool_size = 20
+max_client_conn = 200
+admin_users = nexus_admin
+stats_users = nexus_admin
+`;
+
+    // Extract only [databases] from generated config
+    const dbMatch = generatedDatabases.match(/\[databases\][\s\S]*?(?=\[pgbouncer\]|$)/);
+    const dbSection = dbMatch ? dbMatch[0].trim() : generatedDatabases.split('[pgbouncer]')[0].trim();
+
+    // Merge: generated [databases] + static [pgbouncer]
+    const finalConfig = dbSection + '\n\n' + pgbouncerSection;
+
+    // Step 3: Write merged config file
+    fs.writeFileSync(configPath, finalConfig, 'utf-8');
+
+    // Step 3: Reload pgbouncer
+    // Use docker exec to send SIGHUP (admin console requires special auth setup)
+    let reloadResult = 'config_written';
+    try {
+      const { execSync } = require('child_process');
+      const containerName = process.env.PGBOUNCER_CONTAINER || 'docker-compose-pgbouncer-1';
+      execSync(`docker kill --signal=HUP ${containerName}`, { timeout: 5000 });
+      reloadResult = 'ok';
+    } catch (reloadErr) {
+      // Config is written even if reload fails — manual restart will pick it up
+      reloadResult = `config_written_reload_pending: ${String(reloadErr)}`;
+    }
+
+    audit({
+      access_path: 'B',
+      subject_id: getUserId(req),
+      action_id: 'apply_pgbouncer',
+      resource_id: 'system:pgbouncer',
+      decision: 'allow',
+      context: { configPath, reloadResult },
+    });
+
+    res.json({
+      applied: true,
+      config_path: configPath,
+      reload: reloadResult,
+    });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

@@ -2,7 +2,7 @@
 
 ## How to Read This Guide
 
-The architecture document (v2.3) is the **complete blueprint**. This guide is the **construction sequence** — what to build first, what to defer, and what to hand to other engineers/LLMs.
+The architecture document (v2.4) is the **complete blueprint**. This guide is the **construction sequence** — what to build first, what to defer, and what to hand to other engineers/LLMs.
 
 ---
 
@@ -14,7 +14,7 @@ Milestone 1 (Week 1-2): "AuthZ runs locally"
   → docker-compose up → can query permissions via psql
 
 Milestone 2 (Week 3-4): "First page is permission-aware"
-  → authz-service REST API running
+  → authz-api REST API running
   → One workbench page renders with visible_when from resolved config
   → RLS filters data, column masking works
 
@@ -246,10 +246,10 @@ echo "✅ Milestone 1 complete: AuthZ runs locally"
 
 ## Milestone 2: First Permission-Aware Page (Week 3-4)
 
-### Step 2.1: authz-service REST API
+### Step 2.1: authz-api REST API
 
 ```
-services/authz-service/
+services/authz-api/
 ├── package.json          ← express, pg, node-casbin
 ├── Dockerfile
 └── src/
@@ -358,14 +358,14 @@ export function LotDetail({ lot }) {
 
 The architecture document has a built-in **Transferable Mega-Prompt** (Section VII). Here's how to use it:
 
-### Scenario 1: "Help me build the authz-service REST API"
+### Scenario 1: "Help me build the authz-api REST API"
 
 ```
 Prompt to send:
 
 [Paste Section VII mega-prompt]
 
-Now implement the authz-service as a Node.js Express application.
+Now implement the authz-api as a Node.js Express application.
 Requirements:
 - POST /api/authz/resolve → calls authz_resolve() PG function
 - POST /api/authz/check → calls authz_check() PG function
@@ -402,7 +402,7 @@ Prompt to send:
 [Paste Section VII mega-prompt]
 
 Now create the Helm umbrella chart for K8s deployment.
-Reference the K8s topology in the architecture (authz-service 3 replicas,
+Reference the K8s topology in the architecture (authz-api 3 replicas,
 pgbouncer 2 replicas, PostgreSQL StatefulSet, CronJobs for sync/identity-sync).
 Include: HPA, PDB, NetworkPolicy, health probes, External Secrets references.
 Follow the values hierarchy: values.yaml (defaults) + values-dev.yaml + values-production.yaml.
@@ -453,5 +453,5 @@ Point out any gaps and suggest fixes aligned with the architecture.
 □ 10. First commit: "feat: authz schema + core functions + dev seed"
 
 → Milestone 1 checkpoint: authz_resolve() returns correct JSON ✅
-→ Next: build authz-service REST API (Milestone 2, Step 2.1)
+→ Next: build authz-api REST API (Milestone 2, Step 2.1)
 ```

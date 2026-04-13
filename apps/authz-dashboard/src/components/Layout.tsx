@@ -1,15 +1,15 @@
 import { ReactNode, useState, useEffect } from 'react';
-import { useAuthz, TEST_USERS } from '../AuthzContext';
+import { useAuthz } from '../AuthzContext';
 import {
   Shield, Search, Grid3X3, Database, Table2,
   Server, List, FileText, LayoutDashboard,
   ChevronDown, LogOut, Loader2, User,
-  Menu, X, Code2, Wrench,
+  Menu, X, Code2, Layers,
 } from 'lucide-react';
 
 export type TabId =
   | 'overview' | 'resolve' | 'check' | 'matrix'
-  | 'tables' | 'rls' | 'workbench'
+  | 'tables' | 'raw-tables' | 'rls'
   | 'functions' | 'browser' | 'pool' | 'audit';
 
 type NavItem = {
@@ -34,23 +34,23 @@ const navGroups: NavGroup[] = [
   {
     label: 'My Access',
     items: [
-      { id: 'resolve', label: 'Permission Resolver', icon: <Shield size={18} /> },
+      { id: 'resolve', label: 'My Permissions', icon: <Shield size={18} /> },
       { id: 'matrix', label: 'Permission Matrix', icon: <Grid3X3 size={18} /> },
     ],
   },
   {
-    label: 'Data Explorer',
+    label: 'Data',
     items: [
-      { id: 'tables', label: 'Data Explorer', icon: <Table2 size={18} /> },
-      { id: 'workbench', label: 'Data Workbench', icon: <Wrench size={18} /> },
+      { id: 'tables', label: 'Data Explorer', icon: <Layers size={18} /> },
     ],
   },
   {
     label: 'AuthZ Tools',
     items: [
-      { id: 'check', label: 'Permission Checker', icon: <Search size={18} />, adminOnly: true },
+      { id: 'check', label: 'Permission Tester', icon: <Search size={18} />, adminOnly: true },
       { id: 'rls', label: 'RLS Simulator', icon: <Database size={18} />, adminOnly: true },
       { id: 'functions', label: 'SQL Functions', icon: <Code2 size={18} />, adminOnly: true },
+      { id: 'raw-tables', label: 'Raw Tables', icon: <Table2 size={18} />, adminOnly: true },
     ],
   },
   {
@@ -72,7 +72,7 @@ export function Layout({
   onTabChange: (tab: TabId) => void;
   children: ReactNode;
 }) {
-  const { user, config, loading, login, logout } = useAuthz();
+  const { user, config, loading, users, usersLoading, login, logout } = useAuthz();
   const isAdmin = config?.resolved_roles?.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN') ?? false;
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -174,7 +174,7 @@ export function Layout({
               value={user?.id ?? ''}
               onChange={async (e) => {
                 if (e.target.value === '') { logout(); return; }
-                const u = TEST_USERS.find(u => u.id === e.target.value);
+                const u = users.find(u => u.id === e.target.value);
                 if (u) await login(u);
               }}
               className="w-full bg-slate-800 text-slate-200 border border-slate-700 rounded-lg
@@ -182,8 +182,8 @@ export function Layout({
                          hover:border-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500
                          focus:outline-none transition-colors"
             >
-              <option value="">Select User...</option>
-              {TEST_USERS.map(u => (
+              <option value="">{usersLoading ? 'Loading users...' : 'Select User...'}</option>
+              {users.map(u => (
                 <option key={u.id} value={u.id}>{u.label}</option>
               ))}
             </select>

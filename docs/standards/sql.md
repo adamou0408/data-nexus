@@ -1,7 +1,6 @@
 ---
 paths:
   - "database/**"
-  - "services/authz-service/sql/**"
   - "**/*.sql"
 ---
 

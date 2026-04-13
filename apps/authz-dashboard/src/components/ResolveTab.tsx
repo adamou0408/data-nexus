@@ -1,66 +1,38 @@
-import { useState } from 'react';
-import { api } from '../api';
-import { TEST_USERS } from '../AuthzContext';
+import { useAuthz } from '../AuthzContext';
 import { JsonView } from './JsonView';
-import { Shield, Play, ChevronRight } from 'lucide-react';
+import { Shield, ChevronRight, Info } from 'lucide-react';
 
 export function ResolveTab() {
-  const [selectedUser, setSelectedUser] = useState(0);
-  const [result, setResult] = useState<Record<string, unknown> | null>(null);
-  const [loading, setLoading] = useState(false);
+  const { user, config } = useAuthz();
 
-  const resolve = async () => {
-    const u = TEST_USERS[selectedUser];
-    setLoading(true);
-    try {
-      const data = await api.resolve(u.id, u.groups, u.attrs);
-      setResult(data as Record<string, unknown>);
-    } catch (err) {
-      setResult({ error: String(err) });
-    }
-    setLoading(false);
-  };
+  // Use the already-resolved config from AuthzContext (no extra API call needed)
+  const r = config as Record<string, unknown> | null;
 
-  const r = result;
+  if (!user || !r) {
+    return (
+      <div className="space-y-6">
+        <div className="page-header">
+          <h1 className="page-title">My Permissions</h1>
+          <p className="page-desc">Your resolved L0-L3 permission configuration</p>
+        </div>
+        <div className="card">
+          <div className="card-body text-center py-16">
+            <Info size={24} className="text-slate-400 mx-auto mb-3" />
+            <p className="text-slate-500 text-sm">Select a user from the sidebar to view permissions</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       {/* Page header */}
       <div className="page-header">
-        <h1 className="page-title">Permission Resolver</h1>
+        <h1 className="page-title">My Permissions</h1>
         <p className="page-desc">
-          Call <span className="code">authz_resolve()</span> to get the full L0-L3 permission config for any user
+          Resolved <span className="code">authz_resolve()</span> L0-L3 permission config for <strong>{user.label}</strong>
         </p>
-      </div>
-
-      {/* Input card */}
-      <div className="card">
-        <div className="card-body">
-          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] lg:grid-cols-[1fr_auto_auto] gap-4 items-end">
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                Test User
-              </label>
-              <select
-                value={selectedUser}
-                onChange={(e) => setSelectedUser(Number(e.target.value))}
-                className="select"
-              >
-                {TEST_USERS.map((u, i) => (
-                  <option key={u.id} value={i}>{u.label} ({u.id})</option>
-                ))}
-              </select>
-            </div>
-            <div className="text-xs text-slate-500 space-y-1 hidden lg:block">
-              <div>Groups: <span className="code">{JSON.stringify(TEST_USERS[selectedUser].groups)}</span></div>
-              <div>Attrs: <span className="code">{JSON.stringify(TEST_USERS[selectedUser].attrs)}</span></div>
-            </div>
-            <button onClick={resolve} disabled={loading} className="btn-primary w-full sm:w-auto">
-              <Play size={14} />
-              {loading ? 'Resolving...' : 'Resolve'}
-            </button>
-          </div>
-        </div>
       </div>
 
       {r && !r.error && (
@@ -121,12 +93,17 @@ export function ResolveTab() {
                 ) : (
                   <div className="space-y-3">
                     {Object.entries(
-                      r.L1_data_scope as Record<string, { rls_expression: string; subject_condition: unknown; resource_condition: unknown }>
+                      r.L1_data_scope as Record<string, { has_rls?: boolean; rls_expression?: string; resource_condition?: unknown }>
                     ).map(([name, policy]) => (
                       <div key={name} className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
                         <div className="text-sm font-medium text-slate-900 mb-1.5">{name}</div>
-                        <div className="font-mono text-xs bg-white px-3 py-2 rounded border border-amber-200 text-amber-800">
-                          WHERE {policy.rls_expression}
+                        <div className="text-xs bg-white px-3 py-2 rounded border border-amber-200 text-amber-800">
+                          {policy.rls_expression
+                            ? <span className="font-mono">WHERE {policy.rls_expression}</span>
+                            : policy.has_rls
+                              ? <span className="badge badge-amber">Row-level security active</span>
+                              : <span className="text-slate-400">No row filter</span>
+                          }
                         </div>
                       </div>
                     ))}
@@ -149,7 +126,7 @@ export function ResolveTab() {
                 ) : (
                   <div className="space-y-3">
                     {Object.entries(
-                      r.L2_column_masks as Record<string, Record<string, { mask_type: string; function: string }>>
+                      r.L2_column_masks as Record<string, Record<string, { mask_type: string; function?: string }>>
                     ).map(([policy, cols]) => (
                       <div key={policy} className="rounded-lg border border-purple-200 bg-purple-50/50 p-3">
                         <div className="text-sm font-medium text-slate-900 mb-2">{policy}</div>
@@ -159,7 +136,7 @@ export function ResolveTab() {
                               <span className="font-mono text-slate-700">{col}</span>
                               <ChevronRight size={12} className="text-slate-400" />
                               <span className="badge badge-purple">{rule.mask_type}</span>
-                              <span className="text-slate-500">{rule.function}</span>
+                              {rule.function && <span className="text-slate-500">{rule.function}</span>}
                             </div>
                           ))}
                         </div>

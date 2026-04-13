@@ -2,6 +2,7 @@ import { Router, Request } from 'express';
 import { Pool } from 'pg';
 import { pool as authzPool, evictDataSourcePool } from '../db';
 import { audit } from '../audit';
+import { encrypt, decrypt } from '../lib/crypto';
 
 function getUserId(req: Request): string {
   return (req as any).authzUser?.user_id || 'unknown';
@@ -91,7 +92,7 @@ datasourceRouter.post('/', async (req, res) => {
     `, [
       source_id, display_name, description,
       db_type, host, port, database_name, schemas,
-      connector_user, connector_password,
+      connector_user, encrypt(connector_password), // SEC-04: encrypt before storage
       owner_subject, registered_by,
     ]);
 
@@ -129,7 +130,7 @@ datasourceRouter.put('/:id', async (req, res) => {
     `, [
       req.params.id, display_name, description,
       host, port, database_name, schemas,
-      connector_user, connector_password,
+      connector_user, connector_password ? encrypt(connector_password) : undefined, // SEC-04
       owner_subject, is_active,
     ]);
 
@@ -178,7 +179,7 @@ datasourceRouter.post('/:id/test', async (req, res) => {
 
     const testPool = new Pool({
       host: ds.host, port: ds.port, database: ds.database_name,
-      user: ds.connector_user, password: ds.connector_password,
+      user: ds.connector_user, password: decrypt(ds.connector_password),
       max: 1, connectionTimeoutMillis: 5000,
     });
 
@@ -216,7 +217,7 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
     // Connect to the target data source
     const dsPool = new Pool({
       host: ds.host, port: ds.port, database: ds.database_name,
-      user: ds.connector_user, password: ds.connector_password,
+      user: ds.connector_user, password: decrypt(ds.connector_password),
       max: 1, connectionTimeoutMillis: 5000,
     });
 
@@ -332,7 +333,7 @@ datasourceRouter.get('/:id/tables', async (req, res) => {
 
     const dsPool = new Pool({
       host: ds.host, port: ds.port, database: ds.database_name,
-      user: ds.connector_user, password: ds.connector_password,
+      user: ds.connector_user, password: decrypt(ds.connector_password),
       max: 1, connectionTimeoutMillis: 5000,
     });
 

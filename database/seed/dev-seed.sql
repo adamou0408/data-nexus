@@ -201,8 +201,9 @@ INSERT INTO authz_role_permission (role_id, action_id, resource_id, effect) VALU
 
     -- ═══ OP: Operator ═══
     ('OP', 'read',    'module:mrp.lot_tracking',        'allow'),
-    -- OP column denials
+    -- OP column denials (operators see lot tracking but not pricing/customer data)
     ('OP', 'read',    'column:lot_status.unit_price',   'deny'),
+    ('OP', 'read',    'column:lot_status.cost',         'deny'),
     ('OP', 'read',    'column:lot_status.customer',     'deny'),
 
     -- ═══ QA: Quality Assurance ═══
@@ -213,8 +214,9 @@ INSERT INTO authz_role_permission (role_id, action_id, resource_id, effect) VALU
     ('QA', 'write',   'module:quality',                 'allow'),
     ('QA', 'read',    'module:engineering',             'allow'),
     ('QA', 'read',    'module:analytics.dashboard',     'allow'),
-    -- QA column denial
+    -- QA column denials (QA checks quality, not pricing)
     ('QA', 'read',    'column:lot_status.unit_price',   'deny'),
+    ('QA', 'read',    'column:lot_status.cost',         'deny'),
 
     -- ═══ SALES: Sales ═══
     ('SALES', 'read',  'module:mrp.lot_tracking',       'allow'),
@@ -223,6 +225,9 @@ INSERT INTO authz_role_permission (role_id, action_id, resource_id, effect) VALU
     ('SALES', 'write', 'module:sales.customer',         'allow'),
     ('SALES', 'read',  'module:analytics.dashboard',    'allow'),
     ('SALES', 'read',  'column:lot_status.unit_price',  'allow'),
+    -- SALES column denials (internal cost data is confidential)
+    ('SALES', 'read',  'column:lot_status.cost',        'deny'),
+    ('SALES', 'read',  'column:price_book.margin',      'deny'),
 
     -- ═══ FAE: Field Application Engineer ═══
     ('FAE', 'read',   'module:mrp.lot_tracking',        'allow'),
@@ -241,6 +246,9 @@ INSERT INTO authz_role_permission (role_id, action_id, resource_id, effect) VALU
     ('RD', 'read',    'module:mrp.npi',                 'allow'),
     ('RD', 'read',    'module:engineering',             'allow'),
     ('RD', 'write',   'module:engineering',             'allow'),
+    -- RD column denials (R&D focuses on design, not pricing)
+    ('RD', 'read',    'column:lot_status.unit_price',   'deny'),
+    ('RD', 'read',    'column:lot_status.cost',         'deny'),
 
     -- ═══ FW: Firmware Engineer ═══
     ('FW', 'read',    'module:mrp.lot_tracking',        'allow'),
@@ -248,6 +256,9 @@ INSERT INTO authz_role_permission (role_id, action_id, resource_id, effect) VALU
     ('FW', 'read',    'module:engineering',             'allow'),
     ('FW', 'write',   'module:engineering.firmware',     'allow'),
     ('FW', 'write',   'module:engineering.test_program', 'allow'),
+    -- FW column denials (firmware engineers don't need pricing data)
+    ('FW', 'read',    'column:lot_status.unit_price',   'deny'),
+    ('FW', 'read',    'column:lot_status.cost',         'deny'),
 
     -- ═══ FINANCE: Finance ═══
     ('FINANCE', 'read',  'module:sales.order_mgmt',     'allow'),
@@ -667,7 +678,7 @@ INSERT INTO authz_data_source (
 ('ds:local',
  'Local Business Database',
  'nexus_data — business data (lot_status, sales_order) separated from authz policy store',
- 'postgresql', 'postgres', 5432, 'nexus_data', '{public}',
+ 'postgresql', 'localhost', 5432, 'nexus_data', '{public}',
  'nexus_admin', 'nexus_dev_password',
  'user:sys_admin', 'system');
 

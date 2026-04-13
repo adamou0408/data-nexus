@@ -2,7 +2,7 @@
 
 > **This file is the SSOT for project progress.**
 > All sessions should read this first and update it when completing work.
-> Last updated: 2026-04-12
+> Last updated: 2026-04-13
 
 ---
 
@@ -27,7 +27,7 @@
 - [x] API AuthZ middleware (requireAuth / requireRole / requirePermission)
 - [x] Auth headers (X-User-Id, X-User-Groups)
 
-## Milestone 3: All Three Paths Enforced — IN PROGRESS
+## Milestone 3: All Three Paths Enforced — DONE
 
 ### Done
 - [x] Path B: Express middleware wired (requireAuth, requirePermission, requireRole)
@@ -60,10 +60,15 @@
 - [x] W-IT-03/04, W-DBA-04: Already implemented via action-items API
 - [x] Business DB: resource attributes tagged with data_source_id
 - [x] Business DB: ds:local host corrected for Docker networking
+- [x] Config-Driven UI Engine Phase 1 (V022 authz_ui_page + fn_ui_page/fn_ui_root + /api/config-exec + ConfigEngine.tsx)
+- [x] Shared masked-query helper (JS-side masks, no cross-DB dependency)
+- [x] Data V003: 6 remaining business tables migrated to nexus_data
+- [x] Admin CRUD: BrowserTab SSOT dropdowns (roles, groups, actions, resources, parent_id)
+- [x] Admin CRUD: Search/filter on all 5 entity sections
+- [x] Path C: pgbouncer live reload (apply+reload endpoint + writable volume)
 
 ### Remaining
-- [ ] AuthZ Admin CRUD pages (subjects, roles, resources, policies editor)
-- [ ] Path C: pgbouncer live reload integration
+(Milestone 3 complete — remaining items moved to Milestone 4)
 
 ## Milestone 4: Production-Ready — NOT STARTED
 
@@ -99,6 +104,12 @@
 | V018 | Group membership table + authz_resolve_user_groups() | Done |
 | V019 | Path C native RLS (PG roles, GRANT, RLS policies, views) | Done |
 | V020 | Data Source Registry (authz_data_source) + pool_profile FK | Done |
+| V021 | Create 6 physical business tables in nexus_authz | Done |
+| V022 | Config-Driven UI Engine (authz_ui_page + fn_ui_page/fn_ui_root) | Done |
+| V023 | Fix authz_sync_pgbouncer_config() STABLE → VOLATILE | Done |
+| V024 | Fix authz_check_from_cache() deny-wins + authz_resolve() include deny in L0 | Done |
+| data/V003 | 6 remaining business tables migrated to nexus_data | Done |
+| data/V004 | Path C RLS: remove current_setting(), add identity-only pg_has_role | Done |
 
 ## Services
 

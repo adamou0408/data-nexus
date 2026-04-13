@@ -244,8 +244,8 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
                           <div key={name} className="flex items-center gap-2 text-xs">
                             <Eye size={12} className="text-amber-500 shrink-0" />
                             <span className="font-medium text-slate-700">{name}</span>
-                            {policy?.rls_expression && (
-                              <span className="text-slate-400 font-mono text-[10px] truncate max-w-[200px]">{policy.rls_expression}</span>
+                            {policy?.has_rls && (
+                              <span className="badge badge-amber text-[10px]">RLS Active</span>
                             )}
                           </div>
                         ))}
@@ -270,7 +270,7 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
           </div>
           <div className="card-body space-y-2">
             <QuickAction
-              icon={<Shield size={16} />} label="Resolve Permissions"
+              icon={<Shield size={16} />} label="My Permissions"
               desc="View your L0-L3 permission config"
               onClick={() => onNavigate('resolve')}
             />
@@ -280,20 +280,15 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
               onClick={() => onNavigate('matrix')}
             />
             <QuickAction
-              icon={<Table2Icon />} label="Tables & Schema"
-              desc="Browse business data tables"
+              icon={<Table2Icon />} label="Data Explorer"
+              desc="Browse business data with access control"
               onClick={() => onNavigate('tables')}
-            />
-            <QuickAction
-              icon={<Database size={16} />} label="Data Workbench"
-              desc="Live data with column masking"
-              onClick={() => onNavigate('workbench')}
             />
             {isAdmin && (
               <>
                 <QuickAction
-                  icon={<Search size={16} />} label="Permission Checker"
-                  desc="Check any user's permission"
+                  icon={<Search size={16} />} label="Permission Tester"
+                  desc="Test any user's permission"
                   onClick={() => onNavigate('check')}
                 />
                 <QuickAction

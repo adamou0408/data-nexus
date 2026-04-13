@@ -13,8 +13,8 @@ export function TablesTab() {
 
   useEffect(() => {
     setLoading(true);
-    api.tables().then(setTables).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+    api.tables(user?.id, user?.groups).then(setTables).catch(() => {}).finally(() => setLoading(false));
+  }, [user]);
 
   const explore = async (table: string) => {
     setSelectedTable(table);
@@ -22,8 +22,7 @@ export function TablesTab() {
     setResult(null);
     try {
       if (user) {
-        const u = (await import('../AuthzContext')).TEST_USERS.find(u => u.id === user.id);
-        const r = await api.dataExplorer(user.id, u?.groups || [], u?.attrs || {}, table);
+        const r = await api.dataExplorer(user.id, user.groups, user.attrs, table);
         setResult(r);
       } else {
         // Not logged in — show raw schema only
@@ -72,9 +71,9 @@ export function TablesTab() {
   return (
     <div className="space-y-6">
       <div className="page-header">
-        <h1 className="page-title">Data Explorer</h1>
+        <h1 className="page-title">Raw Tables</h1>
         <p className="page-desc">
-          Browse business data tables with your permission context applied
+          Direct table access with permission context — admin debugging tool
         </p>
       </div>
 

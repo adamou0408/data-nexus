@@ -12,7 +12,7 @@ type AuditEvent = {
 const buffer: AuditEvent[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-const FLUSH_INTERVAL_MS = 2000;
+const FLUSH_INTERVAL_MS = 1000; // security.md requires ≤ 1s for deny events
 const FLUSH_SIZE = 20;
 
 async function flush() {
@@ -45,8 +45,8 @@ function scheduleFlush() {
 
 export function audit(event: AuditEvent) {
   buffer.push(event);
-  if (buffer.length >= FLUSH_SIZE) {
-    flush();
+  if (buffer.length >= FLUSH_SIZE || event.decision === 'deny') {
+    flush(); // deny events flush immediately per security.md
   } else {
     scheduleFlush();
   }

@@ -9,7 +9,8 @@ import { rlsRouter } from './routes/rls-simulate';
 import { browseRouter } from './routes/browse';
 import { poolRouter } from './routes/pool';
 import { datasourceRouter } from './routes/datasource';
-import { requireRole } from './middleware/authz';
+import { configExecRouter } from './routes/config-exec';
+import { requireRole, requireAuth } from './middleware/authz';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001');
@@ -33,6 +34,9 @@ app.use('/api/filter', filterRouter);
 app.use('/api/matrix', matrixRouter);
 app.use('/api/rls', rlsRouter);
 app.use('/api/browse', browseRouter);
+
+// Config-Driven UI (requires auth — fine-grained checks done internally)
+app.use('/api/config-exec', requireAuth, configExecRouter);
 
 // Admin APIs (require ADMIN or AUTHZ_ADMIN role via X-User-Id header)
 app.use('/api/pool', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), poolRouter);

@@ -30,8 +30,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  resolve: (user_id: string, groups: string[], attributes: Record<string, string>) =>
-    request('/resolve', { method: 'POST', body: JSON.stringify({ user_id, groups, attributes }) }),
+  resolve: (user_id: string, groups: string[], attributes: Record<string, string>, detailed = false) =>
+    request('/resolve', { method: 'POST', body: JSON.stringify({ user_id, groups, attributes, _detailed: detailed }) }),
 
   check: (user_id: string, groups: string[], action: string, resource: string) =>
     request<{ allowed: boolean }>('/check', { method: 'POST', body: JSON.stringify({ user_id, groups, action, resource }) }),
@@ -53,6 +53,26 @@ export const api = {
 
   rlsData: () => request<Record<string, unknown>[]>('/rls/data'),
 
+  // Config-Driven UI engine
+  configExecRoot: () =>
+    request<{ config: Record<string, unknown> }>('/config-exec/root', { method: 'POST', body: '{}' }),
+
+  configExecPage: (pageId: string, params?: Record<string, string>) =>
+    request<{
+      config: Record<string, unknown>;
+      data: Record<string, unknown>[];
+      meta: {
+        filteredCount: number;
+        totalCount: number;
+        columnMasks: Record<string, string>;
+        resolvedRoles: string[];
+        filterClause: string;
+      };
+    }>('/config-exec', {
+      method: 'POST',
+      body: JSON.stringify({ page_id: pageId, params }),
+    }),
+
   matrix: (action?: string) => request<{
     permissions: { role_id: string; action_id: string; resource_id: string; effect: string }[];
     roles: { role_id: string; display_name: string }[];
@@ -60,6 +80,8 @@ export const api = {
     actions: { action_id: string; display_name: string }[];
   }>(`/matrix${action ? `?action=${action}` : ''}`),
 
+  subjectProfiles: () => request<UserProfile[]>('/browse/subjects/profiles'),
+  batchChecks: () => request<{ action: string; resource: string }[]>('/browse/batch-checks'),
   subjects: () => request<Record<string, unknown>[]>('/browse/subjects'),
   roles: () => request<Record<string, unknown>[]>('/browse/roles'),
   resources: () => request<Record<string, unknown>[]>('/browse/resources'),
@@ -71,6 +93,61 @@ export const api = {
     if (isAdmin) qs.set('is_admin', 'true');
     return request<ActionItem[]>(`/browse/action-items?${qs}`);
   },
+  // --- Entity CRUD ---
+  // Subjects
+  subjectCreate: (data: { subject_id: string; subject_type: string; display_name: string; ldap_dn?: string; attributes?: Record<string, string> }) =>
+    request<Record<string, unknown>>('/browse/subjects', { method: 'POST', body: JSON.stringify(data) }),
+  subjectUpdate: (id: string, data: { display_name?: string; ldap_dn?: string; attributes?: Record<string, string>; is_active?: boolean }) =>
+    request<Record<string, unknown>>(`/browse/subjects/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  subjectDelete: (id: string) =>
+    request(`/browse/subjects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  subjectAddGroup: (subjectId: string, groupId: string) =>
+    request(`/browse/subjects/${encodeURIComponent(subjectId)}/groups`, { method: 'POST', body: JSON.stringify({ group_id: groupId }) }),
+  subjectRemoveGroup: (subjectId: string, groupId: string) =>
+    request(`/browse/subjects/${encodeURIComponent(subjectId)}/groups/${encodeURIComponent(groupId)}`, { method: 'DELETE' }),
+  subjectAddRole: (subjectId: string, data: { role_id: string; valid_from?: string; valid_until?: string; granted_by?: string }) =>
+    request(`/browse/subjects/${encodeURIComponent(subjectId)}/roles`, { method: 'POST', body: JSON.stringify(data) }),
+  subjectRemoveRole: (subjectId: string, roleId: string) =>
+    request(`/browse/subjects/${encodeURIComponent(subjectId)}/roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' }),
+
+  // Roles
+  roleCreate: (data: { role_id: string; display_name: string; description?: string; is_system?: boolean }) =>
+    request<Record<string, unknown>>('/browse/roles', { method: 'POST', body: JSON.stringify(data) }),
+  roleUpdate: (id: string, data: { display_name?: string; description?: string; is_active?: boolean }) =>
+    request<Record<string, unknown>>(`/browse/roles/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  roleDelete: (id: string) =>
+    request(`/browse/roles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  rolePermissions: (id: string) =>
+    request<Record<string, unknown>[]>(`/browse/roles/${encodeURIComponent(id)}/permissions`),
+  roleAddPermission: (roleId: string, data: { action_id: string; resource_id: string; effect?: string }) =>
+    request(`/browse/roles/${encodeURIComponent(roleId)}/permissions`, { method: 'POST', body: JSON.stringify(data) }),
+  roleRemovePermission: (roleId: string, permId: number) =>
+    request(`/browse/roles/${encodeURIComponent(roleId)}/permissions/${permId}`, { method: 'DELETE' }),
+
+  // Resources
+  resourceCreate: (data: { resource_id: string; resource_type: string; display_name: string; parent_id?: string; attributes?: Record<string, unknown> }) =>
+    request<Record<string, unknown>>('/browse/resources', { method: 'POST', body: JSON.stringify(data) }),
+  resourceUpdate: (id: string, data: { display_name?: string; parent_id?: string; attributes?: Record<string, unknown>; is_active?: boolean }) =>
+    request<Record<string, unknown>>(`/browse/resources/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  resourceDelete: (id: string) =>
+    request(`/browse/resources/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // Policies
+  policyCreate: (data: Record<string, unknown>) =>
+    request<Record<string, unknown>>('/browse/policies', { method: 'POST', body: JSON.stringify(data) }),
+  policyUpdate: (id: number, data: Record<string, unknown>) =>
+    request<Record<string, unknown>>(`/browse/policies/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  policyDelete: (id: number) =>
+    request(`/browse/policies/${id}`, { method: 'DELETE' }),
+
+  // Actions
+  actionCreate: (data: { action_id: string; display_name: string; description?: string; applicable_paths?: string[] }) =>
+    request<Record<string, unknown>>('/browse/actions', { method: 'POST', body: JSON.stringify(data) }),
+  actionUpdate: (id: string, data: { display_name?: string; description?: string; applicable_paths?: string[]; is_active?: boolean }) =>
+    request<Record<string, unknown>>(`/browse/actions/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  actionDelete: (id: string) =>
+    request(`/browse/actions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
   auditLogs: (params?: { subject?: string; action?: string; path?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();
     if (params?.subject) qs.set('subject', params.subject);
@@ -101,7 +178,12 @@ export const api = {
   poolAssignmentDelete: (id: number) =>
     request(`/pool/assignments/${id}`, { method: 'DELETE' }),
   poolCredentials: () => request<PoolCredential[]>('/pool/credentials'),
-  tables: () => request<{ table_name: string; column_count: string }[]>('/browse/tables'),
+  tables: (userId?: string, groups?: string[]) => {
+    const qs = new URLSearchParams();
+    if (userId) qs.set('user_id', userId);
+    if (groups?.length) qs.set('groups', groups.join(','));
+    return request<{ table_name: string; column_count: string }[]>(`/browse/tables?${qs}`);
+  },
   tableSchema: (table: string) =>
     request<{ table: string; columns: TableColumn[]; sample_data: Record<string, unknown>[] }>(
       `/browse/tables/${encodeURIComponent(table)}`
@@ -131,11 +213,19 @@ export const api = {
 
   poolSyncGrants: () => request<{ actions: { action: string; detail: string }[] }>('/pool/sync/grants', { method: 'POST' }),
   poolSyncPgbouncer: () => request<{ config: string }>('/pool/sync/pgbouncer', { method: 'POST' }),
+  poolSyncPgbouncerApply: () => request<{ applied: boolean; config_path: string; reload: string }>('/pool/sync/pgbouncer/apply', { method: 'POST' }),
   poolCredentialRotate: (pg_role: string, new_password: string) =>
     request<{ pg_role: string; is_active: boolean; last_rotated: string }>(
       `/pool/credentials/${encodeURIComponent(pg_role)}/rotate`,
       { method: 'POST', body: JSON.stringify({ new_password }) }
     ),
+};
+
+export type UserProfile = {
+  id: string;
+  label: string;
+  groups: string[];
+  attrs: Record<string, string>;
 };
 
 export type DataSource = {

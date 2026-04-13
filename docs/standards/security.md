@@ -5,7 +5,7 @@
 
 ## 觸發條件
 
-修改以下任一路徑時自動觸發：authz-service、authz-client、database、任何包含 `authz_check` 或 `authz_resolve` 呼叫的檔案。
+修改以下任一路徑時自動觸發：authz-api、database、任何包含 `authz_check` 或 `authz_resolve` 呼叫的檔案。
 
 ## 執行指令
 
@@ -43,7 +43,7 @@
 
 - 確認 cache invalidation 路徑完整：policy 變更 → PG NOTIFY → Redis flush → L2 miss → re-resolve。
 - 確認沒有繞過 cache invalidation 的寫入路徑（例如直接 UPDATE authz_policy 而不觸發 trigger）。
-- 確認 explicit deny 規則不從 cache 讀取，而是即時查詢 DB。
+- [ADR 2026-04-13] Deny-wins from cache: `authz_check_from_cache()` 同時檢查 allow 和 deny（deny 優先）。`authz_resolve()` 的 L0_functional 包含完整 allow + deny entries。Cache 中的 deny 與 DB 一致（因 NOTIFY 觸發 invalidation）。
 
 ## 輸出
 
@@ -58,3 +58,17 @@
 - [x] Policy 變更走 pending_review 流程
 - [x] Cache invalidation 路徑完整
 ```
+
+## ADR: Path C RLS Policy (2026-04-13)
+
+**決策**：Path C RLS 改用 identity-only policy（`pg_has_role()` / `USING(TRUE)`），不再使用 `current_setting()`。
+
+**原因**：
+- `current_setting('app.product_line')` 在 Path C 直接 DB 連線時可被偽造（SEC-3）
+- pgbouncer 不設 session variable，所以 `current_setting()` 永遠回傳 NULL（policy 無效）
+- Row-level data filtering 的 SSOT 是 `authz_filter()` 在應用層注入 WHERE clause，三條路徑共用
+
+**結果**：
+- Path A：API 層設 session variable + `current_setting()` RLS（受控環境）
+- Path C：RLS 只驗證角色身份（`USING(TRUE)` for authorized roles），row filtering 由應用層處理
+- 三條路徑的 row filtering 邏輯統一由 `authz_filter()` 決定（SSOT）

@@ -1,12 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '../api';
-import { TEST_USERS } from '../AuthzContext';
+import { useAuthz } from '../AuthzContext';
 import { Database, Play, ArrowLeftRight, Lock, ShieldOff } from 'lucide-react';
-
-const TABLES = [
-  { id: 'lot_status', label: 'lot_status', hint: 'Filtered by product_line' },
-  { id: 'sales_order', label: 'sales_order', hint: 'Filtered by region' },
-];
 
 type SimResult = {
   table: string;
@@ -19,19 +14,32 @@ type SimResult = {
 };
 
 export function RlsTab() {
+  const { users } = useAuthz();
   const [leftUser, setLeftUser] = useState(0);
   const [rightUser, setRightUser] = useState(3);
+  const [tables, setTables] = useState<{ table_name: string; column_count: string }[]>([]);
   const [table, setTable] = useState('lot_status');
   const [leftResult, setLeftResult] = useState<SimResult | null>(null);
   const [rightResult, setRightResult] = useState<SimResult | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Fetch business tables from DB
+  useEffect(() => {
+    api.tables().then(t => {
+      setTables(t);
+      if (t.length > 0 && !t.find(x => x.table_name === table)) setTable(t[0].table_name);
+    }).catch(() => {});
+  }, []);
+
   const simulate = async () => {
+    const lu = users[leftUser];
+    const ru = users[rightUser];
+    if (!lu || !ru) return;
     setLoading(true);
     try {
       const [l, r] = await Promise.all([
-        api.rlsSimulate(TEST_USERS[leftUser].id, TEST_USERS[leftUser].groups, TEST_USERS[leftUser].attrs, table),
-        api.rlsSimulate(TEST_USERS[rightUser].id, TEST_USERS[rightUser].groups, TEST_USERS[rightUser].attrs, table),
+        api.rlsSimulate(lu.id, lu.groups, lu.attrs, table),
+        api.rlsSimulate(ru.id, ru.groups, ru.attrs, table),
       ]);
       setLeftResult(l);
       setRightResult(r);
@@ -54,16 +62,16 @@ export function RlsTab() {
           {/* Table selector */}
           <div>
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Target Table</label>
-            <div className="flex gap-2">
-              {TABLES.map(t => (
-                <button key={t.id} onClick={() => setTable(t.id)}
+            <div className="flex gap-2 flex-wrap">
+              {tables.map(t => (
+                <button key={t.table_name} onClick={() => setTable(t.table_name)}
                   className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                    table === t.id
+                    table === t.table_name
                       ? 'bg-blue-600 text-white shadow-sm'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}>
-                  <div>{t.label}</div>
-                  <div className="text-[10px] opacity-75 mt-0.5">{t.hint}</div>
+                  <div>{t.table_name}</div>
+                  <div className="text-[10px] opacity-75 mt-0.5">{t.column_count} cols</div>
                 </button>
               ))}
             </div>
@@ -76,7 +84,7 @@ export function RlsTab() {
                 User A
               </label>
               <select value={leftUser} onChange={e => setLeftUser(Number(e.target.value))} className="select">
-                {TEST_USERS.map((u, i) => <option key={u.id} value={i}>{u.label}</option>)}
+                {users.map((u, i) => <option key={u.id} value={i}>{u.label}</option>)}
               </select>
             </div>
             <div className="hidden sm:block pb-2">
@@ -87,7 +95,7 @@ export function RlsTab() {
                 User B
               </label>
               <select value={rightUser} onChange={e => setRightUser(Number(e.target.value))} className="select">
-                {TEST_USERS.map((u, i) => <option key={u.id} value={i}>{u.label}</option>)}
+                {users.map((u, i) => <option key={u.id} value={i}>{u.label}</option>)}
               </select>
             </div>
           </div>
@@ -102,8 +110,8 @@ export function RlsTab() {
       {/* Results side-by-side */}
       {leftResult && rightResult && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <ResultPanel result={leftResult} label={TEST_USERS[leftUser].label} />
-          <ResultPanel result={rightResult} label={TEST_USERS[rightUser].label} />
+          <ResultPanel result={leftResult} label={users[leftUser].label} />
+          <ResultPanel result={rightResult} label={users[rightUser].label} />
         </div>
       )}
     </div>

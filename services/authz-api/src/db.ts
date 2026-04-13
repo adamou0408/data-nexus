@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { decrypt } from './lib/crypto';
 
 // ============================================================
 // AuthZ policy store — always exactly one
@@ -35,13 +36,12 @@ export async function getDataSourcePool(sourceId: string): Promise<Pool> {
   }
 
   const ds = result.rows[0];
-  // TECH_DEBT: POC reads plaintext password. Production must decrypt.
   const dsPool = new Pool({
     host: ds.host,
     port: ds.port,
     database: ds.database_name,
     user: ds.connector_user,
-    password: ds.connector_password,
+    password: decrypt(ds.connector_password), // SEC-04: decrypt from DB ciphertext
     max: 5,
   });
 

@@ -1,16 +1,15 @@
 ---
 paths:
-  - "services/authz-service/**"
-  - "packages/authz-client/**"
-  - "packages/authz-types/**"
+  - "services/authz-api/**"
   - "database/**"
+  - "apps/authz-dashboard/**"
 ---
 
 # 三路徑影響分析
 
 > 本規則是 AuthZ 專案專用，補充 Dev Kit 的通用 code-review。
 
-修改 authz-service、authz-client、authz-types 或 database 時，必須在提交前完成三路徑影響分析。
+修改 authz-api、authz-dashboard 或 database 時，必須在提交前完成三路徑影響分析。
 
 ## 執行指令
 
