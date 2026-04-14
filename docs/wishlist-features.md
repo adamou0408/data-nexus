@@ -359,9 +359,106 @@ FROM authz_pool_credentials;
 
 ---
 
+### W-MGR-03　L3 Composite Action — 核簽工作流
+
+**目標角色**：部門主管、IT Admin、一般員工
+
+**問題描述**
+
+DB 已有 `authz_composite_action` 表（定義核簽鏈：target_action + target_resource + approval_chain + preconditions + timeout_hours），`authz_resolve()` 已查詢並回傳 `L3_actions`，前端 ResolveTab / CheckTab 已能顯示 approval chain 步驟。但目前資料為 0 筆，整個 L3 層是空殼——沒有「發起申請」的機制、沒有「審批紀錄」的儲存、沒有「待辦通知」的入口、`authz_check()` 碰到 L3 action 不會攔截。
+
+業務場景：NPI 閘門審核（E28 SSD 的 G2→G3 需 PE Lead → QA Lead → VP 三步核簽）、Lot Hold/Release（營運請求 → PE 核准）、Price Change（Sales 提案 → Finance 審核 → VP 批准）。這些流程目前全靠口頭或 email，無法在系統內追蹤和稽核。
+
+**建議做法**
+
+#### 第 1 層：DB — 流程狀態追蹤
+
+新增兩張表：
+
+```sql
+-- 核簽申請單
+CREATE TABLE authz_workflow_request (
+    request_id      BIGSERIAL PRIMARY KEY,
+    composite_action_id  BIGINT NOT NULL REFERENCES authz_composite_action(id),
+    requester       TEXT NOT NULL,              -- 發起人 subject_id
+    target_record   JSONB NOT NULL DEFAULT '{}', -- 針對哪筆資料 e.g. {"gate_id": 5}
+    current_step    INTEGER NOT NULL DEFAULT 1,
+    status          TEXT NOT NULL DEFAULT 'pending', -- pending/approved/rejected/cancelled/expired
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at      TIMESTAMPTZ                -- 根據 timeout_hours 算出
+);
+
+-- 每一步的審批紀錄
+CREATE TABLE authz_approval_record (
+    record_id       BIGSERIAL PRIMARY KEY,
+    request_id      BIGINT NOT NULL REFERENCES authz_workflow_request(request_id),
+    step_number     INTEGER NOT NULL,
+    approver        TEXT NOT NULL,              -- 審批人 subject_id
+    decision        TEXT NOT NULL,              -- approved / rejected
+    comment         TEXT,
+    decided_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+#### 第 2 層：API — 核簽流程端點
+
+| Endpoint | 誰用 | 功能 |
+|----------|------|------|
+| `POST /api/workflow/request` | 發起人 | 提交核簽申請 |
+| `GET /api/workflow/my-pending` | 審批人 | 我的待審清單 |
+| `GET /api/workflow/:id` | 相關人 | 查看申請詳情 + 審批鏈進度 |
+| `POST /api/workflow/:id/approve` | 審批人 | 核准當前步驟 |
+| `POST /api/workflow/:id/reject` | 審批人 | 駁回（整條鏈中止） |
+| `POST /api/workflow/:id/cancel` | 發起人 | 撤回申請 |
+
+關鍵改動：修改 `authz_check()` — 當 action 命中 `authz_composite_action` 時，回傳 `requires_approval` 而不是直接 allow/deny。
+
+#### 第 3 層：Dashboard UI — 3 個新功能區塊
+
+**A. 審批收件匣（Approval Inbox）**
+- sidebar 加「Approvals」入口，帶紅色 badge 顯示待審數量
+- 列表顯示：申請人、動作、資源、目前步驟、到期時間
+- 一鍵 Approve / Reject + 填寫意見
+
+**B. 申請提交（觸發點整合）**
+- 嵌在業務操作中，非獨立頁面
+- 例如：在 NPI Gate Checklist 點「Pass Gate」→ 系統檢查到這是 L3 action → 跳出核簽申請 modal
+- 例如：在 Lot 管理點「Hold Lot」→ 同樣攔截
+
+**C. 流程進度追蹤**
+- 視覺化 step progress bar（Step 1: PE ✅ → Step 2: QA ⏳ → Step 3: VP 🔒）
+- 在申請詳情頁和相關業務頁面都能看到
+
+#### 第 4 層：整合 — 讓卡控真正生效
+
+| 整合點 | 做什麼 |
+|--------|--------|
+| Path A (Config-SM UI) | 按鈕渲染前先檢查 L3，顯示「需核簽」而非直接執行 |
+| Path B (API middleware) | middleware 攔截 L3 action，回 `403 { reason: "approval_required" }` |
+| 過期處理 | 排程檢查 `expires_at`，自動將過期申請標記為 expired |
+| Audit 整合 | 核簽過程寫入 `authz_audit_log`，誰在什麼時候簽了什麼 |
+
+**預估工作量**：大（DB 2 張新表 + API 6 個新 endpoint + middleware 改動 + 前端 3 個新元件 + 業務整合）
+
+**業務影響**：高。將目前口頭/email 的核簽流程系統化，可稽核、可追蹤、可自動到期，是 ISMS 合規和流程管控的關鍵功能。
+
+---
+
 ## 優先排序總結
 
 以「實作工作量 vs. 解決的業務痛點」排序，同工作量者以影響範圍大者優先。
+
+### 當前開發焦點（2026-04-14 決定）
+
+以下三項為目前優先推進的功能方向，其餘項目暫緩：
+
+| 焦點 | 對應項目 | 說明 |
+|------|---------|------|
+| **Admin 連線管理** | Data Source Registry UI 完善 | Admin 可在 Dashboard 設定、測試、管理外部資料庫連線資訊 |
+| **Data Mining 模組** | Config-SM 商業邏輯頁面 | 以 module 為單位的資料探勘功能，metadata-driven 動態頁面 |
+| **Metabase BI 自助開發** | Metabase 整合強化 | 讓 BI 使用者能在 Metabase 自由建立儀表板和報表，降低進入門檻 |
+
+### 完整優先排序
 
 | 優先順序 | 功能 ID | 功能名稱 | 工作量 | 業務影響 | 直接解決的問題 |
 |---------|--------|---------|-------|---------|-------------|
@@ -377,10 +474,13 @@ FROM authz_pool_credentials;
 | 10 | W-DBA-01 | pgbouncer 一鍵部署 | 中 | 高 | Path C 最後一公里，現在仍是半手動 |
 | 11 | W-DBA-02 | pgbouncer 連線監控 | 中 | 高 | 生產可視性，從被動變主動 |
 | 12 | W-MGR-02 | 臨時授權申請流程 | 中 | 中 | 建立可稽核的存取申請機制 |
+| 13 | W-MGR-03 | L3 核簽工作流 | 大 | 高 | NPI 閘門、Lot Hold 等核簽流程系統化 |
 
 **建議優先執行 1-7**：全部是「小工作量」，合計約 2-3 天工程量，但能解決最常見的使用者痛點和現有的合規缺口。
 
 **功能 10-11**（pgbouncer 操作與監控）雖然業務影響高，但涉及 Docker/K8s API 整合，建議在 Milestone 4（Production-ready）時一起規劃。
+
+**功能 13**（L3 核簽工作流）工作量最大，但業務價值高。建議在三個當前焦點項目穩定後再啟動，作為下一階段的重點功能。
 
 ---
 
