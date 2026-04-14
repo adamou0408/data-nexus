@@ -118,7 +118,12 @@ export async function buildMaskedSelect(opts: {
     columnsOverride = {}, path = 'A',
   } = opts;
 
-  const resourceType = `table:${table}`;
+  // Try view: prefix first, fall back to table:
+  const viewCheck = await authzPool.query(
+    `SELECT 1 FROM authz_resource WHERE resource_id = $1 AND is_active = TRUE`,
+    [`view:${table}`]
+  );
+  const resourceType = viewCheck.rows.length > 0 ? `view:${table}` : `table:${table}`;
 
   // Step 1: Get RLS filter from authz_filter()
   const filterResult = await authzPool.query(

@@ -14,11 +14,11 @@ async function loadAllowedTables(): Promise<Record<string, { resourceType: strin
     return ALLOWED_TABLES;
   }
 
-  // Get business tables (exclude authz_* internal tables)
+  // Get business tables and views (exclude authz_* internal tables)
   const tablesResult = await pool.query(`
     SELECT table_name
     FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+    WHERE table_schema = 'public' AND table_type IN ('BASE TABLE', 'VIEW')
       AND table_name NOT LIKE 'authz_%'
     ORDER BY table_name
   `);

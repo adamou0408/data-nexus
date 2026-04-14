@@ -5,7 +5,7 @@ import { Table2, ChevronRight, CheckCircle2, XCircle, Lock, Eye, EyeOff, Filter,
 
 export function TablesTab() {
   const { user } = useAuthz();
-  const [tables, setTables] = useState<{ table_name: string; column_count: string }[]>([]);
+  const [tables, setTables] = useState<{ table_name: string; table_type?: string; column_count: string }[]>([]);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [result, setResult] = useState<DataExplorerResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -82,28 +82,36 @@ export function TablesTab() {
         <div className="card-header">
           <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
             <Table2 size={16} className="text-blue-600" />
-            Business Data Tables
+            Business Data Tables & Views
           </h3>
-          <span className="text-xs text-slate-400">{tables.length} tables</span>
+          <span className="text-xs text-slate-400">
+            {tables.filter(t => t.table_type !== 'VIEW').length} tables, {tables.filter(t => t.table_type === 'VIEW').length} views
+          </span>
         </div>
         {loading ? (
           <div className="card-body text-center py-8 text-slate-400">Loading...</div>
         ) : (
           <div className="card-body">
             <div className="flex gap-2 flex-wrap">
-              {tables.map(t => (
-                <button key={t.table_name} onClick={() => explore(t.table_name)}
-                  className={`btn btn-sm font-mono text-xs gap-1 ${
-                    selectedTable === t.table_name
-                      ? 'bg-blue-600 text-white hover:bg-blue-700'
-                      : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-50'
-                  }`}>
-                  {t.table_name}
-                  <span className={`text-[10px] ${selectedTable === t.table_name ? 'text-blue-200' : 'text-slate-400'}`}>
-                    ({t.column_count})
-                  </span>
-                </button>
-              ))}
+              {tables.map(t => {
+                const isView = t.table_type === 'VIEW';
+                return (
+                  <button key={t.table_name} onClick={() => explore(t.table_name)}
+                    className={`btn btn-sm font-mono text-xs gap-1 ${
+                      selectedTable === t.table_name
+                        ? 'bg-blue-600 text-white hover:bg-blue-700'
+                        : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-50'
+                    }`}>
+                    <span className={`text-[10px] font-bold ${selectedTable === t.table_name ? 'text-blue-200' : isView ? 'text-purple-500' : 'text-emerald-500'}`}>
+                      {isView ? '[V]' : '[T]'}
+                    </span>
+                    {t.table_name}
+                    <span className={`text-[10px] ${selectedTable === t.table_name ? 'text-blue-200' : 'text-slate-400'}`}>
+                      ({t.column_count})
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}

@@ -72,16 +72,19 @@ export async function getDataSourceClient(sourceId: string): Promise<Client> {
   return client;
 }
 
-// Resolve which data source a table belongs to (via authz_resource.attributes)
+// Resolve which data source a table/view belongs to (via authz_resource.attributes)
 export async function resolveDataSource(table: string): Promise<string | null> {
-  const result = await authzPool.query(
-    `SELECT attributes->>'data_source_id' AS ds_id
-     FROM authz_resource
-     WHERE resource_id = $1 AND attributes ? 'data_source_id'`,
-    [`table:${table}`]
-  );
-  if (result.rows.length > 0 && result.rows[0].ds_id) {
-    return result.rows[0].ds_id;
+  // Try both table: and view: prefixes
+  for (const prefix of ['table', 'view']) {
+    const result = await authzPool.query(
+      `SELECT attributes->>'data_source_id' AS ds_id
+       FROM authz_resource
+       WHERE resource_id = $1 AND attributes ? 'data_source_id'`,
+      [`${prefix}:${table}`]
+    );
+    if (result.rows.length > 0 && result.rows[0].ds_id) {
+      return result.rows[0].ds_id;
+    }
   }
   // Fallback: check if there's only one active data source
   const fallback = await authzPool.query(

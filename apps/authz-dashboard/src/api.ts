@@ -213,7 +213,7 @@ export const api = {
     const qs = new URLSearchParams();
     if (userId) qs.set('user_id', userId);
     if (groups?.length) qs.set('groups', groups.join(','));
-    return request<{ table_name: string; column_count: string }[]>(`/browse/tables?${qs}`);
+    return request<{ table_name: string; table_type?: string; column_count: string }[]>(`/browse/tables?${qs}`);
   },
   tableSchema: (table: string) =>
     request<{ table: string; columns: TableColumn[]; sample_data: Record<string, unknown>[] }>(
@@ -227,7 +227,7 @@ export const api = {
   // Data Source Registry
   datasources: () => request<DataSource[]>('/datasources'),
   datasource: (id: string) => request<DataSource>(`/datasources/${encodeURIComponent(id)}`),
-  datasourceCreate: (data: Partial<DataSource> & { connector_password: string }) =>
+  datasourceCreate: (data: Partial<DataSource> & { connector_password?: string }) =>
     request<DataSource>('/datasources', { method: 'POST', body: JSON.stringify(data) }),
   datasourceUpdate: (id: string, data: Partial<DataSource>) =>
     request<DataSource>(`/datasources/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),

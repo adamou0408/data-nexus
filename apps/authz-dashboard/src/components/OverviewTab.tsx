@@ -49,22 +49,22 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
           <StatCard
             icon={<Users size={20} />} iconBg="bg-blue-100 text-blue-600"
             value={stats?.subjects ?? '-'} label="Subjects"
-            onClick={() => onNavigate('browser')}
+            onClick={() => onNavigate('access-subjects')}
           />
           <StatCard
             icon={<Shield size={20} />} iconBg="bg-emerald-100 text-emerald-600"
             value={stats?.roles ?? '-'} label="Roles"
-            onClick={() => onNavigate('browser')}
+            onClick={() => onNavigate('access-roles')}
           />
           <StatCard
             icon={<Database size={20} />} iconBg="bg-purple-100 text-purple-600"
             value={stats?.resources ?? '-'} label="Resources"
-            onClick={() => onNavigate('browser')}
+            onClick={() => onNavigate('access-resources')}
           />
           <StatCard
             icon={<FileText size={20} />} iconBg="bg-amber-100 text-amber-600"
             value={stats?.policies ?? '-'} label="ABAC Policies"
-            onClick={() => onNavigate('browser')}
+            onClick={() => onNavigate('access-policies')}
           />
         </div>
       )}
@@ -356,9 +356,9 @@ function actionGuidance(
       };
     case 'role_expiring':
       return {
-        hint: '授權即將到期，如需延期請至 Entity Browser 處理。',
-        label: 'Go to Entity Browser',
-        action: () => onNavigate('browser'),
+        hint: '授權即將到期，如需延期請至 Access Manager 處理。',
+        label: 'Go to Access Manager',
+        action: () => onNavigate('access-subjects'),
       };
     case 'access_denied':
       return {

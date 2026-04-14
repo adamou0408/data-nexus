@@ -123,6 +123,7 @@ browseReadRouter.get('/batch-checks', async (_req, res) => {
     const typeActions: Record<string, string[]> = {
       module: ['read', 'write', 'approve', 'export', 'connect'],
       table:  ['read', 'write'],
+      view:   ['read'],
       column: ['read'],
       web_page: ['read'],
       web_api: ['read', 'execute'],
@@ -300,19 +301,20 @@ browseReadRouter.get('/tables', async (req, res) => {
 
   try {
     const result = await pool.query(`
-      SELECT table_name,
+      SELECT table_name, table_type,
         (SELECT count(*) FROM information_schema.columns c
          WHERE c.table_schema = 'public' AND c.table_name = t.table_name) AS column_count
       FROM information_schema.tables t
-      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+      WHERE table_schema = 'public' AND table_type IN ('BASE TABLE', 'VIEW')
         AND table_name NOT LIKE 'authz_%'
       ORDER BY table_name
     `);
 
     if (userId) {
       const filtered = [];
-      for (const row of result.rows as { table_name: string; column_count: string }[]) {
-        const resourceId = `table:${row.table_name}`;
+      for (const row of result.rows as { table_name: string; table_type: string; column_count: string }[]) {
+        const prefix = row.table_type === 'VIEW' ? 'view' : 'table';
+        const resourceId = `${prefix}:${row.table_name}`;
         const checkResult = await pool.query(
           'SELECT authz_check($1, $2, $3, $4) AS allowed',
           [userId, groups, 'read', resourceId]

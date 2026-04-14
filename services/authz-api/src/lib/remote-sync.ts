@@ -50,7 +50,7 @@ export async function expandModulesToTables(modules: string[], dataSourceId: str
       WHERE r.is_active = TRUE
     )
     SELECT resource_id FROM descendants
-    WHERE resource_type = 'table'
+    WHERE resource_type IN ('table', 'view')
       AND resource_id IN (
         SELECT resource_id FROM authz_resource
         WHERE attributes->>'data_source_id' = $2

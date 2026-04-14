@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api, PoolProfile, PoolAssignment, PoolCredential, DataSource, SyncAction, DriftItem, LifecycleResponse, LifecycleSummary, PhaseStatus } from '../api';
+import { autoId } from '../utils/slugify';
 import { Server, Key, RefreshCw, Play, ChevronRight, ChevronDown, Plus, Pencil, Trash2, X, RotateCw, Database, Zap, Search, AlertTriangle, Undo2, Check, ArrowLeft, FolderSearch } from 'lucide-react';
 
 /* ── Danger Confirm Modal ── */
@@ -283,10 +284,7 @@ function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => voi
     api.subjects().then((s: any[]) => setSubjectList(s.map(x => ({ subject_id: x.subject_id, display_name: x.display_name })))).catch(() => {});
   }, []);
 
-  const suggestSourceId = (name: string) => {
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-    return slug ? `ds:${slug}` : '';
-  };
+  const suggestSourceId = autoId.dataSource;
 
   const dbTypePortDefaults: Record<string, string> = { postgresql: '5432', greenplum: '5432' };
 
@@ -298,7 +296,7 @@ function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => voi
         db_type: form.db_type,
         host: form.host, port: parseInt(form.port), database_name: form.database_name,
         schemas: form.schemas.split(',').map(s => s.trim()),
-        connector_user: form.connector_user, connector_password: form.connector_password,
+        connector_user: form.connector_user, connector_password: form.connector_password || undefined,
         owner_subject: form.owner_subject || undefined,
       });
       onCreated(form.source_id);
@@ -365,8 +363,8 @@ function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => voi
             <input className="input font-mono" placeholder="gpadmin" value={form.connector_user} onChange={e => setForm(f => ({ ...f, connector_user: e.target.value }))} />
           </div>
           <div>
-            <label className="label">Connector Password</label>
-            <input className="input" type="password" value={form.connector_password} onChange={e => setForm(f => ({ ...f, connector_password: e.target.value }))} />
+            <label className="label">Connector Password <span className="text-slate-400 font-normal text-[10px]">(optional)</span></label>
+            <input className="input" type="password" placeholder="Leave blank for trust/cert auth" value={form.connector_password} onChange={e => setForm(f => ({ ...f, connector_password: e.target.value }))} />
           </div>
           <div>
             <label className="label">Owner (subject)</label>
@@ -379,7 +377,7 @@ function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => voi
           </div>
         </div>
         <div className="flex gap-2">
-          <button onClick={handleCreate} disabled={creating || !form.source_id || !form.host || !form.database_name || !form.connector_user || !form.connector_password}
+          <button onClick={handleCreate} disabled={creating || !form.source_id || !form.host || !form.database_name || !form.connector_user}
             className="btn btn-sm bg-green-600 text-white hover:bg-green-700 disabled:opacity-40">
             {creating ? 'Creating...' : 'Register & Test Connection'}
           </button>
@@ -1006,10 +1004,7 @@ function ProfileForm({ initial, isCreate, onSave, onCancel, saving, error, locke
     } else { setDsSchemas(['public']); }
   }, [form.data_source_id, lockedDsId]);
 
-  const suggestPgRole = (profileId: string) => {
-    const suffix = profileId.replace(/^pool:/, '');
-    return suffix ? `nexus_${suffix}` : '';
-  };
+  const suggestPgRole = autoId.pgRole;
 
   const modeDefaults: Record<string, number> = { readonly: 20, readwrite: 10, admin: 5 };
 

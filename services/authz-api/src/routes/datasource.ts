@@ -141,7 +141,8 @@ datasourceRouter.post('/', async (req, res) => {
   // Step 1: Test connection
   const testPool = new Pool({
     host, port, database: database_name,
-    user: connector_user, password: connector_password,
+    user: connector_user,
+    ...(connector_password ? { password: connector_password } : {}),
     max: 1,
     connectionTimeoutMillis: 5000,
   });
@@ -170,7 +171,7 @@ datasourceRouter.post('/', async (req, res) => {
     `, [
       source_id, display_name, description,
       db_type, host, port, database_name, schemas,
-      connector_user, encrypt(connector_password), // SEC-04: encrypt before storage
+      connector_user, connector_password ? encrypt(connector_password) : null, // SEC-04: encrypt before storage
       owner_subject, registered_by,
     ]);
 
@@ -271,10 +272,10 @@ datasourceRouter.delete('/:id/purge', async (req, res) => {
       [req.params.id]
     );
 
-    // 2. Delete discovered table resources
+    // 2. Delete discovered table, view, and function resources
     const tblResult = await client.query(
       `DELETE FROM authz_resource
-       WHERE resource_type = 'table' AND attributes->>'data_source_id' = $1`,
+       WHERE resource_type IN ('table', 'view', 'function') AND attributes->>'data_source_id' = $1`,
       [req.params.id]
     );
 
@@ -342,7 +343,7 @@ datasourceRouter.post('/:id/test', async (req, res) => {
 
     const testPool = new Pool({
       host: ds.host, port: ds.port, database: ds.database_name,
-      user: ds.connector_user, password: decrypt(ds.connector_password),
+      user: ds.connector_user, ...(ds.connector_password ? { password: decrypt(ds.connector_password) } : {}),
       max: 1, connectionTimeoutMillis: 5000,
     });
 
@@ -380,19 +381,19 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
     // Connect to the target data source
     const dsPool = new Pool({
       host: ds.host, port: ds.port, database: ds.database_name,
-      user: ds.connector_user, password: decrypt(ds.connector_password),
+      user: ds.connector_user, ...(ds.connector_password ? { password: decrypt(ds.connector_password) } : {}),
       max: 1, connectionTimeoutMillis: 15000,
     });
 
     try {
       await dsPool.query("SET statement_timeout = '90s'");
 
-      // Get tables from allowed schemas
+      // Get tables and views from allowed schemas
       const tablesResult = await dsPool.query(`
-        SELECT table_schema, table_name
+        SELECT table_schema, table_name, table_type
         FROM information_schema.tables
         WHERE table_schema = ANY($1)
-          AND table_type = 'BASE TABLE'
+          AND table_type IN ('BASE TABLE', 'VIEW')
         ORDER BY table_schema, table_name
       `, [ds.schemas]);
 
@@ -413,7 +414,10 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
       const skipped: string[] = [];
 
       for (const table of tables) {
-        const resourceId = `table:${table.table_name}`;
+        const isView = table.table_type === 'VIEW';
+        const resourcePrefix = isView ? 'view' : 'table';
+        const resourceId = `${resourcePrefix}:${table.table_name}`;
+        const resourceType = isView ? 'view' : 'table';
         // Extract alphabetic prefix for mapping UI grouping (e.g. azf_file → azf)
         const prefixMatch = table.table_name.match(/^([a-z]+)/i);
         const tablePrefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
@@ -425,12 +429,12 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
 
         const upsertResult = await authzPool.query(`
           INSERT INTO authz_resource (resource_id, resource_type, display_name, attributes)
-          VALUES ($1, 'table', $2, $3)
+          VALUES ($1, $4, $2, $3)
           ON CONFLICT (resource_id) DO UPDATE SET
             attributes = authz_resource.attributes || $3::jsonb,
             updated_at = now()
           RETURNING (xmax = 0) AS is_new
-        `, [resourceId, `${table.table_schema}.${table.table_name}`, attrs]);
+        `, [resourceId, `${table.table_schema}.${table.table_name}`, attrs, resourceType]);
 
         if (upsertResult.rows[0].is_new) {
           created.push(resourceId);
@@ -438,7 +442,7 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
           skipped.push(resourceId);
         }
 
-        // Create column resources
+        // Create column resources (for both tables and views)
         const tableCols = columns.filter(
           (c: any) => c.table_schema === table.table_schema && c.table_name === table.table_name
         );
@@ -464,18 +468,59 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
         }
       }
 
+      // Discover functions and procedures
+      const functionsResult = await dsPool.query(`
+        SELECT p.proname AS function_name, n.nspname AS schema_name,
+               pg_get_function_arguments(p.oid) AS arguments,
+               pg_get_function_result(p.oid) AS return_type,
+               CASE p.provolatile WHEN 'i' THEN 'IMMUTABLE' WHEN 's' THEN 'STABLE' ELSE 'VOLATILE' END AS volatility
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = ANY($1)
+          AND p.prokind IN ('f', 'p')
+          AND p.proname NOT LIKE 'pg_%'
+        ORDER BY n.nspname, p.proname
+      `, [ds.schemas]);
+
+      for (const fn of functionsResult.rows) {
+        const fnResourceId = `function:${fn.schema_name}.${fn.function_name}`;
+        const fnAttrs = JSON.stringify({
+          data_source_id: ds.source_id,
+          arguments: fn.arguments,
+          return_type: fn.return_type,
+          volatility: fn.volatility,
+        });
+
+        const fnResult = await authzPool.query(`
+          INSERT INTO authz_resource (resource_id, resource_type, display_name, attributes)
+          VALUES ($1, 'function', $2, $3)
+          ON CONFLICT (resource_id) DO UPDATE SET
+            attributes = authz_resource.attributes || $3::jsonb,
+            updated_at = now()
+          RETURNING (xmax = 0) AS is_new
+        `, [fnResourceId, `${fn.schema_name}.${fn.function_name}(${fn.arguments})`, fnAttrs]);
+
+        if (fnResult.rows[0].is_new) {
+          created.push(fnResourceId);
+        }
+      }
+
       // Update last_synced_at
       await authzPool.query(
         'UPDATE authz_data_source SET last_synced_at = now() WHERE source_id = $1',
         [ds.source_id]
       );
 
-      audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_discover', resource_id: ds.source_id, decision: 'allow', context: { tables_found: tables.length, resources_created: created.length } });
-      logAdminAction(authzPool, { userId: getUserId(req), action: 'DISCOVER_DATASOURCE', resourceType: 'data_source', resourceId: ds.source_id, details: { tables_found: tables.length, resources_created: created.length }, ip: getClientIp(req) });
+      const viewCount = tables.filter((t: any) => t.table_type === 'VIEW').length;
+      const tableCount = tables.length - viewCount;
+      audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_discover', resource_id: ds.source_id, decision: 'allow', context: { tables_found: tableCount, views_found: viewCount, functions_found: functionsResult.rows.length, resources_created: created.length } });
+      logAdminAction(authzPool, { userId: getUserId(req), action: 'DISCOVER_DATASOURCE', resourceType: 'data_source', resourceId: ds.source_id, details: { tables_found: tableCount, views_found: viewCount, functions_found: functionsResult.rows.length, resources_created: created.length }, ip: getClientIp(req) });
 
       res.json({
         source_id: ds.source_id,
-        tables_found: tables.length,
+        tables_found: tableCount,
+        views_found: viewCount,
+        functions_found: functionsResult.rows.length,
         columns_found: columns.length,
         resources_created: created.length,
         resources_updated: skipped.length,
@@ -502,7 +547,7 @@ datasourceRouter.get('/:id/schemas', async (req, res) => {
     const ds = dsResult.rows[0];
     const dsPool = new Pool({
       host: ds.host, port: ds.port, database: ds.database_name,
-      user: ds.connector_user, password: decrypt(ds.connector_password),
+      user: ds.connector_user, ...(ds.connector_password ? { password: decrypt(ds.connector_password) } : {}),
       max: 1, connectionTimeoutMillis: 10000,
     });
     try {
@@ -529,7 +574,7 @@ datasourceRouter.get('/:id/lifecycle', async (req, res) => {
                count(*) FILTER (WHERE parent_id IS NULL) AS unmapped,
                count(*) FILTER (WHERE parent_id IS NOT NULL) AS mapped
         FROM authz_resource
-        WHERE resource_type = 'table' AND is_active = TRUE
+        WHERE resource_type IN ('table', 'view') AND is_active = TRUE
           AND attributes->>'data_source_id' = $1
       ),
       columns AS (
@@ -624,7 +669,7 @@ datasourceRouter.get('/:id/tables', async (req, res) => {
 
     const dsPool = new Pool({
       host: ds.host, port: ds.port, database: ds.database_name,
-      user: ds.connector_user, password: decrypt(ds.connector_password),
+      user: ds.connector_user, ...(ds.connector_password ? { password: decrypt(ds.connector_password) } : {}),
       max: 1, connectionTimeoutMillis: 15000,
     });
 
@@ -633,9 +678,9 @@ datasourceRouter.get('/:id/tables', async (req, res) => {
 
       // Two-step query: avoids correlated subquery (slow on Greenplum)
       const tablesResult = await dsPool.query(`
-        SELECT table_schema, table_name
+        SELECT table_schema, table_name, table_type
         FROM information_schema.tables
-        WHERE table_schema = ANY($1) AND table_type = 'BASE TABLE'
+        WHERE table_schema = ANY($1) AND table_type IN ('BASE TABLE', 'VIEW')
         ORDER BY table_schema, table_name
       `, [ds.schemas]);
 
@@ -654,6 +699,7 @@ datasourceRouter.get('/:id/tables', async (req, res) => {
       const tables = tablesResult.rows.map((t: any) => ({
         table_schema: t.table_schema,
         table_name: t.table_name,
+        table_type: t.table_type,
         column_count: countMap.get(`${t.table_schema}.${t.table_name}`) || '0',
       }));
 

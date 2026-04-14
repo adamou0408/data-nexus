@@ -2,15 +2,17 @@ import { ReactNode, useState, useEffect } from 'react';
 import { useAuthz } from '../AuthzContext';
 import {
   Shield, Search, Grid3X3, Database, Table2,
-  Server, List, FileText, LayoutDashboard,
+  Server, FileText, LayoutDashboard,
   ChevronDown, LogOut, Loader2, User,
   Menu, X, Code2, Layers, BarChart3,
+  Users, Zap, ShieldCheck, KeyRound, FolderTree,
 } from 'lucide-react';
 
 export type TabId =
   | 'overview' | 'resolve' | 'check' | 'matrix'
-  | 'tables' | 'raw-tables' | 'rls' | 'metabase'
-  | 'functions' | 'browser' | 'pool' | 'audit';
+  | 'tables' | 'raw-tables' | 'rls' | 'metabase' | 'functions'
+  | 'access-resources' | 'access-policies' | 'pool'
+  | 'access-subjects' | 'access-roles' | 'access-actions' | 'audit';
 
 type NavItem = {
   id: TabId;
@@ -55,10 +57,19 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: 'Administration',
+    label: 'Data Policy',
     items: [
-      { id: 'browser', label: 'Entity Browser', icon: <List size={18} />, adminOnly: true },
-      { id: 'pool', label: 'Connection Pools', icon: <Server size={18} />, adminOnly: true },
+      { id: 'access-resources', label: 'Resources', icon: <FolderTree size={18} />, adminOnly: true },
+      { id: 'access-policies', label: 'Policies', icon: <ShieldCheck size={18} />, adminOnly: true },
+      { id: 'pool', label: 'Data Sources & Pools', icon: <Server size={18} />, adminOnly: true },
+    ],
+  },
+  {
+    label: 'Identity & Access',
+    items: [
+      { id: 'access-subjects', label: 'Subjects', icon: <Users size={18} />, adminOnly: true },
+      { id: 'access-roles', label: 'Roles', icon: <KeyRound size={18} />, adminOnly: true },
+      { id: 'access-actions', label: 'Actions', icon: <Zap size={18} />, adminOnly: true },
       { id: 'audit', label: 'Audit Log', icon: <FileText size={18} />, adminOnly: true },
     ],
   },
