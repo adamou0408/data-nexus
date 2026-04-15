@@ -7,7 +7,7 @@ import { ResolveTab } from './components/ResolveTab';
 import { CheckTab } from './components/CheckTab';
 import { MatrixTab } from './components/MatrixTab';
 import { RlsTab } from './components/RlsTab';
-import { PoolTab } from './components/PoolTab';
+import { PoolTab } from './components/pool';
 import { BrowserTab, Section } from './components/BrowserTab';
 import { AuditTab } from './components/AuditTab';
 import { TablesTab } from './components/TablesTab';
