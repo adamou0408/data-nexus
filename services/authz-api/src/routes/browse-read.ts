@@ -493,11 +493,11 @@ browseReadRouter.get('/resources/unmapped', async (req, res) => {
     const result = await pool.query(`
       SELECT resource_id, resource_type, parent_id, display_name, attributes, is_active, created_at
       FROM authz_resource
-      WHERE resource_type = 'table'
+      WHERE resource_type IN ('table', 'view')
         AND parent_id IS NULL
         AND is_active = TRUE
         AND attributes->>'data_source_id' = $1
-      ORDER BY resource_id
+      ORDER BY resource_type, resource_id
     `, [dsId]);
     res.json(result.rows);
   } catch (err) {
@@ -514,11 +514,29 @@ browseReadRouter.get('/resources/mapped', async (req, res) => {
              p.display_name AS module_name
       FROM authz_resource r
       LEFT JOIN authz_resource p ON p.resource_id = r.parent_id
-      WHERE r.resource_type = 'table'
+      WHERE r.resource_type IN ('table', 'view')
         AND r.parent_id IS NOT NULL
         AND r.is_active = TRUE
         AND r.attributes->>'data_source_id' = $1
-      ORDER BY r.parent_id, r.resource_id
+      ORDER BY r.parent_id, r.resource_type, r.resource_id
+    `, [dsId]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+browseReadRouter.get('/resources/functions', async (req, res) => {
+  const dsId = req.query.data_source_id as string;
+  if (!dsId) return res.status(400).json({ error: 'data_source_id query param required' });
+  try {
+    const result = await pool.query(`
+      SELECT resource_id, display_name, attributes
+      FROM authz_resource
+      WHERE resource_type = 'function'
+        AND is_active = TRUE
+        AND attributes->>'data_source_id' = $1
+      ORDER BY resource_id
     `, [dsId]);
     res.json(result.rows);
   } catch (err) {

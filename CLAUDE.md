@@ -69,6 +69,8 @@ data-nexus/
 | ER diagram | `docs/er-diagram.md` | After DB schema changes |
 | Tech debt & backlog | `docs/backlog-tech-debt.md` | When discovering issues |
 | Feature requests | `docs/wishlist-features.md` | When receiving requirements |
+| Data Mining plan | `docs/design-data-mining-engine.md` | When implementing data mining features |
+| Data Mining vision | `docs/design-data-mining-vision.md` | When trigger conditions are met (see §附錄D) |
 | Dev standards | `docs/standards/` | When rules change |
 | Available commands | `make help` | When adding Makefile targets |
 | Claude Code permissions | `.claude/settings.local.json` | When needing new allow patterns |

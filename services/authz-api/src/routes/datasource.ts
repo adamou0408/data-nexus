@@ -333,7 +333,7 @@ datasourceRouter.delete('/:id/purge', async (req, res) => {
 datasourceRouter.post('/:id/test', async (req, res) => {
   try {
     const dsResult = await authzPool.query(
-      'SELECT * FROM authz_data_source WHERE source_id = $1',
+      'SELECT source_id, host, port, database_name, connector_user, connector_password, schemas FROM authz_data_source WHERE source_id = $1',
       [req.params.id]
     );
     if (dsResult.rows.length === 0) {
@@ -370,7 +370,7 @@ datasourceRouter.post('/:id/test', async (req, res) => {
 datasourceRouter.post('/:id/discover', async (req, res) => {
   try {
     const dsResult = await authzPool.query(
-      'SELECT * FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE',
+      'SELECT source_id, host, port, database_name, connector_user, connector_password, schemas FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE',
       [req.params.id]
     );
     if (dsResult.rows.length === 0) {
@@ -405,13 +405,29 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
         ORDER BY table_schema, table_name, ordinal_position
       `, [ds.schemas]);
 
+      // Get table/view comments from pg_description
+      const commentsResult = await dsPool.query(`
+        SELECT c.relname AS table_name, n.nspname AS table_schema,
+               obj_description(c.oid, 'pg_class') AS table_comment
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = ANY($1)
+          AND c.relkind IN ('r', 'v', 'p')
+          AND obj_description(c.oid, 'pg_class') IS NOT NULL
+      `, [ds.schemas]);
+
+      const commentMap = new Map<string, string>();
+      for (const row of commentsResult.rows) {
+        commentMap.set(`${row.table_schema}.${row.table_name}`, row.table_comment);
+      }
+
       // Build discovered structure
       const tables = tablesResult.rows;
       const columns = columnsResult.rows;
 
       // Auto-create authz_resource entries
       const created: string[] = [];
-      const skipped: string[] = [];
+      const updated: string[] = [];
 
       for (const table of tables) {
         const isView = table.table_type === 'VIEW';
@@ -421,25 +437,29 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
         // Extract alphabetic prefix for mapping UI grouping (e.g. azf_file → azf)
         const prefixMatch = table.table_name.match(/^([a-z]+)/i);
         const tablePrefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
+        const tableComment = commentMap.get(`${table.table_schema}.${table.table_name}`) || null;
         const attrs = JSON.stringify({
           data_source_id: ds.source_id,
           table_schema: table.table_schema,
           ...(tablePrefix ? { table_prefix: tablePrefix } : {}),
+          ...(tableComment ? { table_comment: tableComment } : {}),
         });
 
+        const displayName = tableComment || `${table.table_schema}.${table.table_name}`;
         const upsertResult = await authzPool.query(`
           INSERT INTO authz_resource (resource_id, resource_type, display_name, attributes)
           VALUES ($1, $4, $2, $3)
           ON CONFLICT (resource_id) DO UPDATE SET
             attributes = authz_resource.attributes || $3::jsonb,
+            display_name = CASE WHEN authz_resource.display_name = $5 OR authz_resource.display_name IS NULL THEN $2 ELSE authz_resource.display_name END,
             updated_at = now()
           RETURNING (xmax = 0) AS is_new
-        `, [resourceId, `${table.table_schema}.${table.table_name}`, attrs, resourceType]);
+        `, [resourceId, displayName, attrs, resourceType, `${table.table_schema}.${table.table_name}`]);
 
         if (upsertResult.rows[0].is_new) {
           created.push(resourceId);
         } else {
-          skipped.push(resourceId);
+          updated.push(resourceId);
         }
 
         // Create column resources (for both tables and views)
@@ -523,7 +543,7 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
         functions_found: functionsResult.rows.length,
         columns_found: columns.length,
         resources_created: created.length,
-        resources_updated: skipped.length,
+        resources_updated: updated.length,
         created,
       });
     } finally {
@@ -538,7 +558,7 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
 datasourceRouter.get('/:id/schemas', async (req, res) => {
   try {
     const dsResult = await authzPool.query(
-      'SELECT * FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE',
+      'SELECT source_id, host, port, database_name, connector_user, connector_password, schemas FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE',
       [req.params.id]
     );
     if (dsResult.rows.length === 0) {
@@ -571,6 +591,8 @@ datasourceRouter.get('/:id/lifecycle', async (req, res) => {
     const result = await authzPool.query(`
       WITH tables AS (
         SELECT count(*) AS total,
+               count(*) FILTER (WHERE resource_type = 'table') AS table_count,
+               count(*) FILTER (WHERE resource_type = 'view') AS view_count,
                count(*) FILTER (WHERE parent_id IS NULL) AS unmapped,
                count(*) FILTER (WHERE parent_id IS NOT NULL) AS mapped
         FROM authz_resource
@@ -580,6 +602,11 @@ datasourceRouter.get('/:id/lifecycle', async (req, res) => {
       columns AS (
         SELECT count(*) AS total FROM authz_resource
         WHERE resource_type = 'column' AND is_active = TRUE
+          AND attributes->>'data_source_id' = $1
+      ),
+      functions AS (
+        SELECT count(*) AS total FROM authz_resource
+        WHERE resource_type = 'function' AND is_active = TRUE
           AND attributes->>'data_source_id' = $1
       ),
       profiles AS (
@@ -600,10 +627,11 @@ datasourceRouter.get('/:id/lifecycle', async (req, res) => {
       )
       SELECT ds.source_id, ds.display_name, ds.db_type, ds.host, ds.port,
              ds.database_name, ds.is_active, ds.last_synced_at,
-             t.total AS tables, t.mapped, t.unmapped,
-             c.total AS columns, p.total AS profile_count, p.ids AS profile_ids,
+             t.total AS tables, t.table_count, t.view_count, t.mapped, t.unmapped,
+             c.total AS columns, f.total AS functions,
+             p.total AS profile_count, p.ids AS profile_ids,
              cs.credentialed, cs.uncredentialed, cs.next_rotation
-      FROM authz_data_source ds, tables t, columns c, profiles p, cred_status cs
+      FROM authz_data_source ds, tables t, columns c, functions f, profiles p, cred_status cs
       WHERE ds.source_id = $1
     `, [req.params.id]);
 
@@ -612,10 +640,13 @@ datasourceRouter.get('/:id/lifecycle', async (req, res) => {
     }
 
     const r = result.rows[0];
-    const tables = Number(r.tables);
+    const tables = Number(r.table_count);
+    const views = Number(r.view_count);
+    const totalObjects = Number(r.tables);
     const mapped = Number(r.mapped);
     const unmapped = Number(r.unmapped);
     const columns = Number(r.columns);
+    const functions = Number(r.functions);
     const profileCount = Number(r.profile_count);
     const credentialed = Number(r.credentialed);
     const uncredentialed = Number(r.uncredentialed);
@@ -623,7 +654,7 @@ datasourceRouter.get('/:id/lifecycle', async (req, res) => {
     type PhaseStatus = 'not_started' | 'done' | 'action_needed';
 
     const connectionStatus: PhaseStatus = r.is_active ? 'done' : 'not_started';
-    const discoveryStatus: PhaseStatus = tables > 0 ? 'done' : 'not_started';
+    const discoveryStatus: PhaseStatus = totalObjects > 0 ? 'done' : 'not_started';
     const organizationStatus: PhaseStatus =
       tables === 0 ? 'not_started' :
       unmapped > 0 ? 'action_needed' : 'done';
@@ -643,7 +674,7 @@ datasourceRouter.get('/:id/lifecycle', async (req, res) => {
       is_active: r.is_active,
       phases: {
         connection:   { status: connectionStatus },
-        discovery:    { status: discoveryStatus, tables, columns, last_discovered: r.last_synced_at },
+        discovery:    { status: discoveryStatus, tables, views, columns, functions, last_discovered: r.last_synced_at },
         organization: { status: organizationStatus, mapped, unmapped },
         profiles:     { status: profilesStatus, count: profileCount, profile_ids: r.profile_ids || [] },
         credentials:  { status: credentialsStatus, credentialed, uncredentialed, next_rotation: r.next_rotation },
@@ -659,7 +690,7 @@ datasourceRouter.get('/:id/lifecycle', async (req, res) => {
 datasourceRouter.get('/:id/tables', async (req, res) => {
   try {
     const dsResult = await authzPool.query(
-      'SELECT * FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE',
+      'SELECT source_id, host, port, database_name, connector_user, connector_password, schemas FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE',
       [req.params.id]
     );
     if (dsResult.rows.length === 0) {

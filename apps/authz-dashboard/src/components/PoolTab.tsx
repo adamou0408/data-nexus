@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api, PoolProfile, PoolAssignment, PoolCredential, DataSource, SyncAction, DriftItem, LifecycleResponse, LifecycleSummary, PhaseStatus } from '../api';
+import { useToast } from './Toast';
 import { autoId } from '../utils/slugify';
 import { Server, Key, RefreshCw, Play, ChevronRight, ChevronDown, Plus, Pencil, Trash2, X, RotateCw, Database, Zap, Search, AlertTriangle, Undo2, Check, ArrowLeft, FolderSearch } from 'lucide-react';
 
@@ -180,13 +181,14 @@ export function PoolTab() {
    ══════════════════════════════════════════════════════════ */
 
 function DataSourceOverview({ onSelect }: { onSelect: (dsId: string) => void }) {
+  const toast = useToast();
   const [summaries, setSummaries] = useState<LifecycleSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [showOnboard, setShowOnboard] = useState(false);
 
   const load = useCallback(async () => {
     try { setSummaries(await api.datasourceLifecycleSummary()); }
-    catch { /* ignore */ }
+    catch (err) { toast.error('Failed to load data sources'); console.warn(err); }
     finally { setLoading(false); }
   }, []);
 
@@ -275,13 +277,14 @@ function LifecycleSummaryDots({ done, total }: { done: number; total: number }) 
 /* ── Onboard Form (inline, for new DS registration) ── */
 
 function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => void; onCancel: () => void }) {
+  const toast = useToast();
   const [form, setForm] = useState({ source_id: '', display_name: '', db_type: 'postgresql', host: '', port: '5432', database_name: '', schemas: 'public', connector_user: '', connector_password: '', owner_subject: '' });
   const [sourceIdManual, setSourceIdManual] = useState(false);
   const [subjectList, setSubjectList] = useState<{ subject_id: string; display_name: string }[]>([]);
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    api.subjects().then((s: any[]) => setSubjectList(s.map(x => ({ subject_id: x.subject_id, display_name: x.display_name })))).catch(() => {});
+    api.subjects().then((s: any[]) => setSubjectList(s.map(x => ({ subject_id: x.subject_id, display_name: x.display_name })))).catch(e => console.warn('Failed to load subjects:', e));
   }, []);
 
   const suggestSourceId = autoId.dataSource;
@@ -300,7 +303,7 @@ function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => voi
         owner_subject: form.owner_subject || undefined,
       });
       onCreated(form.source_id);
-    } catch (err) { alert(String(err)); }
+    } catch (err) { toast.error(String(err)); }
     finally { setCreating(false); }
   };
 
@@ -393,6 +396,7 @@ function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => voi
    ══════════════════════════════════════════════════════════ */
 
 function DataSourceLifecycle({ dsId, onBack }: { dsId: string; onBack: () => void }) {
+  const toast = useToast();
   const [lifecycle, setLifecycle] = useState<LifecycleResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -407,7 +411,7 @@ function DataSourceLifecycle({ dsId, onBack }: { dsId: string; onBack: () => voi
         const firstIncomplete = keys.find(k => lc.phases[k].status !== 'done');
         setExpanded(firstIncomplete || null);
       }
-    } catch { /* ignore */ }
+    } catch (err) { toast.error('Failed to load lifecycle'); console.warn(err); }
     finally { setLoading(false); }
   }, [dsId]);
 
@@ -479,14 +483,14 @@ function phaseSummary(key: string, phases: LifecycleResponse['phases']): string 
       return phases.connection.status === 'done' ? 'Connection active' : 'Not connected';
     case 'discovery':
       return phases.discovery.status === 'done'
-        ? `${phases.discovery.tables} tables, ${phases.discovery.columns} columns`
+        ? `${phases.discovery.tables} tables, ${phases.discovery.views ?? 0} views, ${phases.discovery.columns} columns`
         : phases.discovery.status === 'not_started' ? 'Run discovery to scan schema' : '';
     case 'organization':
       return phases.organization.status === 'done'
-        ? `All ${phases.organization.mapped} tables mapped`
+        ? `All ${phases.organization.mapped} tables & views mapped`
         : phases.organization.unmapped > 0
           ? `${phases.organization.unmapped} unmapped / ${phases.organization.mapped} mapped`
-          : 'No tables to map';
+          : 'No tables or views to map';
     case 'profiles':
       return phases.profiles.status === 'done'
         ? `${phases.profiles.count} profile${phases.profiles.count !== 1 ? 's' : ''} configured`
@@ -510,6 +514,7 @@ function phaseSummary(key: string, phases: LifecycleResponse['phases']): string 
    ══════════════════════════════════════════════════════════ */
 
 function ConnectionPhase({ dsId, lifecycle, onMutate, onPurged }: { dsId: string; lifecycle: LifecycleResponse; onMutate: () => void; onPurged: () => void }) {
+  const toast = useToast();
   const [testResult, setTestResult] = useState<{ status: string; version?: string; error?: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -528,7 +533,7 @@ function ConnectionPhase({ dsId, lifecycle, onMutate, onPurged }: { dsId: string
       const ds = await api.datasource(dsId);
       setForm({ display_name: ds.display_name, host: ds.host, port: String(ds.port), database_name: ds.database_name, schemas: ds.schemas.join(', '), connector_user: ds.connector_user, connector_password: '' });
       setEditing(true);
-    } catch (err) { alert(String(err)); }
+    } catch (err) { toast.error(String(err)); }
   };
 
   const handleSave = () => {
@@ -547,7 +552,7 @@ function ConnectionPhase({ dsId, lifecycle, onMutate, onPurged }: { dsId: string
           });
           setEditing(false);
           onMutate();
-        } catch (err) { alert(String(err)); }
+        } catch (err) { toast.error(String(err)); }
       },
     });
   };
@@ -559,14 +564,21 @@ function ConnectionPhase({ dsId, lifecycle, onMutate, onPurged }: { dsId: string
       impact: 'Pool profiles linked to this source will no longer be able to establish new connections.',
       onConfirm: async () => {
         try { await api.datasourceDelete(dsId); onMutate(); }
-        catch (err) { alert(String(err)); }
+        catch (err) { toast.error(String(err)); }
       },
     });
   };
 
-  const handleReactivate = async () => {
-    try { await api.datasourceUpdate(dsId, { is_active: true } as Partial<DataSource>); onMutate(); }
-    catch (err) { alert(String(err)); }
+  const handleReactivate = () => {
+    setDangerConfirm({
+      title: `Reactivate Data Source "${dsId}"`,
+      message: 'This will restore the data source and make it available for pool profiles again.',
+      impact: 'Pool profiles linked to this source will be able to re-establish connections.',
+      onConfirm: async () => {
+        try { await api.datasourceUpdate(dsId, { is_active: true } as Partial<DataSource>); onMutate(); }
+        catch (err) { toast.error(String(err)); }
+      },
+    });
   };
 
   const handlePurge = () => {
@@ -577,9 +589,9 @@ function ConnectionPhase({ dsId, lifecycle, onMutate, onPurged }: { dsId: string
       onConfirm: async () => {
         try {
           const result = await api.datasourcePurge(dsId);
-          alert(`Purged "${dsId}": ${result.tables_deleted} tables, ${result.columns_deleted} columns, ${result.profiles_deleted} profiles deleted.`);
+          toast.success(`Purged "${dsId}": ${result.tables_deleted} tables, ${result.columns_deleted} columns, ${result.profiles_deleted} profiles deleted.`);
           onPurged();
-        } catch (err) { alert(String(err)); }
+        } catch (err) { toast.error(String(err)); }
       },
     });
   };
@@ -666,18 +678,21 @@ function ConnectionPhase({ dsId, lifecycle, onMutate, onPurged }: { dsId: string
    ══════════════════════════════════════════════════════════ */
 
 function DiscoveryPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle: LifecycleResponse; onMutate: () => void }) {
+  const toast = useToast();
   const [discovering, setDiscovering] = useState(false);
-  const [discoverResult, setDiscoverResult] = useState<{ tables_found: number; resources_created: number } | null>(null);
-  const [tablesData, setTablesData] = useState<{ table_schema: string; table_name: string; column_count: string }[] | null>(null);
+  const [discoverResult, setDiscoverResult] = useState<{ tables_found: number; views_found: number; functions_found: number; resources_created: number } | null>(null);
+  const [tablesData, setTablesData] = useState<{ table_schema: string; table_name: string; table_type: string; column_count: string }[] | null>(null);
   const [loadingTables, setLoadingTables] = useState(false);
+  const [functionsData, setFunctionsData] = useState<{ resource_id: string; display_name: string; attributes: Record<string, unknown> }[] | null>(null);
+  const [loadingFunctions, setLoadingFunctions] = useState(false);
 
   const handleDiscover = async () => {
     setDiscovering(true);
     try {
       const result = await api.datasourceDiscover(dsId);
-      setDiscoverResult({ tables_found: result.tables_found, resources_created: result.resources_created });
+      setDiscoverResult({ tables_found: result.tables_found, views_found: result.views_found, functions_found: result.functions_found, resources_created: result.resources_created });
       onMutate();
-    } catch (err) { alert(String(err)); }
+    } catch (err) { toast.error(String(err)); }
     finally { setDiscovering(false); }
   };
 
@@ -687,8 +702,18 @@ function DiscoveryPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle
     try {
       const result = await api.datasourceTables(dsId);
       setTablesData(result.tables);
-    } catch (err) { alert(String(err)); }
+    } catch (err) { toast.error(String(err)); }
     finally { setLoadingTables(false); }
+  };
+
+  const handleViewFunctions = async () => {
+    if (functionsData) { setFunctionsData(null); return; }
+    setLoadingFunctions(true);
+    try {
+      const result = await api.resourcesFunctions(dsId);
+      setFunctionsData(result);
+    } catch (err) { toast.error(String(err)); }
+    finally { setLoadingFunctions(false); }
   };
 
   const disc = lifecycle.phases.discovery;
@@ -696,14 +721,22 @@ function DiscoveryPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle
   return (
     <div className="space-y-4">
       {disc.status === 'done' && (
-        <div className="grid grid-cols-3 gap-4 text-center">
+        <div className="grid grid-cols-5 gap-3 text-center">
           <div className="bg-slate-50 rounded-lg p-3">
             <div className="text-xl font-bold text-slate-900">{disc.tables}</div>
             <div className="text-xs text-slate-500">Tables</div>
           </div>
           <div className="bg-slate-50 rounded-lg p-3">
+            <div className="text-xl font-bold text-slate-900">{disc.views || 0}</div>
+            <div className="text-xs text-slate-500">Views</div>
+          </div>
+          <div className="bg-slate-50 rounded-lg p-3">
             <div className="text-xl font-bold text-slate-900">{disc.columns}</div>
             <div className="text-xs text-slate-500">Columns</div>
+          </div>
+          <div className="bg-slate-50 rounded-lg p-3">
+            <div className="text-xl font-bold text-slate-900">{disc.functions || 0}</div>
+            <div className="text-xs text-slate-500">Functions</div>
           </div>
           <div className="bg-slate-50 rounded-lg p-3">
             <div className="text-xs text-slate-500">Last Discovered</div>
@@ -714,9 +747,17 @@ function DiscoveryPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle
         </div>
       )}
 
+      {disc.status === 'not_started' && !discoverResult && (
+        <div className="text-center py-6 bg-slate-50 rounded-lg border border-dashed border-slate-300">
+          <FolderSearch size={28} className="mx-auto text-slate-400 mb-2" />
+          <div className="text-sm font-medium text-slate-600">Schema not yet discovered</div>
+          <div className="text-xs text-slate-400 mt-1">Click "Discover Schema" to scan tables, views, columns, and functions from the connected database.</div>
+        </div>
+      )}
+
       {discoverResult && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3 text-sm text-emerald-800">
-          Found {discoverResult.tables_found} tables, created {discoverResult.resources_created} new resources
+          Found {discoverResult.tables_found} tables, {discoverResult.views_found} views, {discoverResult.functions_found} functions — created {discoverResult.resources_created} new resources
         </div>
       )}
 
@@ -726,10 +767,16 @@ function DiscoveryPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle
           {discovering ? 'Discovering...' : disc.status === 'done' ? 'Re-discover' : 'Discover Schema'}
         </button>
         {disc.status === 'done' && (
-          <button onClick={handleViewTables} disabled={loadingTables} className="btn-secondary btn-sm gap-1">
-            {loadingTables ? <RefreshCw size={12} className="animate-spin" /> : <Database size={12} />}
-            {tablesData ? 'Hide Tables' : 'View Tables'}
-          </button>
+          <>
+            <button onClick={handleViewTables} disabled={loadingTables} className="btn-secondary btn-sm gap-1">
+              {loadingTables ? <RefreshCw size={12} className="animate-spin" /> : <Database size={12} />}
+              {tablesData ? 'Hide Tables' : 'View Tables'}
+            </button>
+            <button onClick={handleViewFunctions} disabled={loadingFunctions} className="btn-secondary btn-sm gap-1">
+              {loadingFunctions ? <RefreshCw size={12} className="animate-spin" /> : <Database size={12} />}
+              {functionsData ? 'Hide Functions' : 'View Functions'}
+            </button>
+          </>
         )}
       </div>
 
@@ -738,9 +785,48 @@ function DiscoveryPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle
           {tablesData.map(t => (
             <div key={`${t.table_schema}.${t.table_name}`} className="font-mono text-xs text-slate-700">
               {t.table_schema}.<span className="font-bold">{t.table_name}</span>
-              <span className="text-slate-400 ml-1">({t.column_count} cols)</span>
+              <span className={`text-xs ml-1 ${t.table_type === 'VIEW' ? 'text-blue-500' : 'text-slate-400'}`}>
+                ({t.table_type === 'VIEW' ? 'view' : `${t.column_count} cols`})
+              </span>
             </div>
           ))}
+        </div>
+      )}
+
+      {functionsData && (
+        <div className="mt-2">
+          {functionsData.length === 0 ? (
+            <div className="text-xs text-slate-400">No functions discovered.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="text-xs w-full">
+                <thead>
+                  <tr className="text-left text-slate-500 border-b">
+                    <th className="py-1 pr-4 font-medium">Function</th>
+                    <th className="py-1 pr-4 font-medium">Arguments</th>
+                    <th className="py-1 pr-4 font-medium">Returns</th>
+                    <th className="py-1 font-medium">Volatility</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {functionsData.map(fn => (
+                    <tr key={fn.resource_id} className="border-b border-slate-100">
+                      <td className="py-1.5 pr-4 font-mono font-bold text-slate-800">{fn.resource_id.replace('function:', '')}</td>
+                      <td className="py-1.5 pr-4 font-mono text-slate-600">{(fn.attributes.arguments as string) || '-'}</td>
+                      <td className="py-1.5 pr-4 font-mono text-slate-600">{(fn.attributes.return_type as string) || '-'}</td>
+                      <td className="py-1.5">
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                          fn.attributes.volatility === 'STABLE' ? 'bg-emerald-100 text-emerald-700' :
+                          fn.attributes.volatility === 'IMMUTABLE' ? 'bg-blue-100 text-blue-700' :
+                          'bg-amber-100 text-amber-700'
+                        }`}>{(fn.attributes.volatility as string) || 'VOLATILE'}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -752,14 +838,17 @@ function DiscoveryPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle
    ══════════════════════════════════════════════════════════ */
 
 function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle: LifecycleResponse; onMutate: () => void }) {
-  const [unmappedTables, setUnmappedTables] = useState<{ resource_id: string; display_name: string; attributes: Record<string, unknown> }[]>([]);
-  const [mappedTables, setMappedTables] = useState<{ resource_id: string; display_name: string; parent_id: string | null; module_name: string | null }[]>([]);
+  const toast = useToast();
+  const [unmappedTables, setUnmappedTables] = useState<{ resource_id: string; resource_type: string; display_name: string; attributes: Record<string, unknown> }[]>([]);
+  const [mappedTables, setMappedTables] = useState<{ resource_id: string; resource_type: string; display_name: string; parent_id: string | null; module_name: string | null; attributes: Record<string, unknown> }[]>([]);
   const [modules, setModules] = useState<{ resource_id: string; display_name: string; parent_id: string | null }[]>([]);
   const [pendingMappings, setPendingMappings] = useState<Record<string, string>>({});
   const [newModuleName, setNewModuleName] = useState('');
   const [newModuleDisplay, setNewModuleDisplay] = useState('');
   const [savingMapping, setSavingMapping] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
 
   const loadMapping = useCallback(async () => {
     try {
@@ -772,7 +861,7 @@ function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecy
       setMappedTables(mapped);
       setModules(mods);
       setPendingMappings({});
-    } catch (err) { alert(String(err)); }
+    } catch (err) { toast.error(String(err)); }
     finally { setLoaded(true); }
   }, [dsId]);
 
@@ -781,7 +870,7 @@ function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecy
   const groupByPrefix = (tables: typeof unmappedTables) => {
     const groups: Record<string, typeof unmappedTables> = {};
     for (const t of tables) {
-      const prefix = (t.attributes?.table_prefix as string) || t.resource_id.replace(/^table:/, '').match(/^([a-z]+)/i)?.[1]?.toLowerCase() || 'other';
+      const prefix = (t.attributes?.table_prefix as string) || t.resource_id.replace(/^(table|view):/, '').match(/^([a-z]+)/i)?.[1]?.toLowerCase() || 'other';
       (groups[prefix] = groups[prefix] || []).push(t);
     }
     return groups;
@@ -809,7 +898,7 @@ function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecy
       setModules(mods);
       setNewModuleName('');
       setNewModuleDisplay('');
-    } catch (err) { alert(String(err)); }
+    } catch (err) { toast.error(String(err)); }
   };
 
   const handleSaveMappings = async () => {
@@ -820,9 +909,20 @@ function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecy
       await api.resourcesBulkParent(entries.map(([resource_id, parent_id]) => ({ resource_id, parent_id })));
       await loadMapping();
       onMutate();
-    } catch (err) { alert(String(err)); }
+    } catch (err) { toast.error(String(err)); }
     finally { setSavingMapping(false); }
   };
+
+  const handleSaveDisplayName = async (resourceId: string) => {
+    try {
+      await api.resourceUpdate(resourceId, { display_name: editValue });
+      setUnmappedTables(prev => prev.map(t => t.resource_id === resourceId ? { ...t, display_name: editValue } : t));
+      setMappedTables(prev => prev.map(t => t.resource_id === resourceId ? { ...t, display_name: editValue } : t));
+      setEditingId(null);
+    } catch (err) { toast.error(String(err)); }
+  };
+
+  const stripPrefix = (id: string) => id.replace(/^(table|view):/, '');
 
   if (!loaded) return <div className="text-slate-400 text-sm">Loading mappings...</div>;
 
@@ -856,12 +956,12 @@ function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecy
       {/* Unmapped tables by prefix */}
       {unmappedTables.length > 0 && (
         <div>
-          <div className="text-xs font-semibold text-slate-700 mb-2">Unmapped Tables (grouped by prefix)</div>
+          <div className="text-xs font-semibold text-slate-700 mb-2">Unmapped Tables &amp; Views (grouped by prefix)</div>
           {Object.entries(groupByPrefix(unmappedTables)).map(([prefix, tables]) => (
             <div key={prefix} className="mb-3 bg-white rounded-lg border border-purple-200 p-3">
               <div className="flex items-center gap-2 mb-2">
                 <span className="font-mono text-xs font-bold text-purple-800 bg-purple-100 px-2 py-0.5 rounded">{prefix}_*</span>
-                <span className="text-xs text-slate-500">{tables.length} table{tables.length > 1 ? 's' : ''}</span>
+                <span className="text-xs text-slate-500">{tables.length} resource{tables.length > 1 ? 's' : ''}</span>
                 <span className="text-xs text-slate-400">|</span>
                 <label className="text-xs text-slate-600">Assign all to:</label>
                 <select className="input input-sm text-xs w-48" value=""
@@ -872,13 +972,39 @@ function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecy
                   ))}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-1">
+              <div className="grid grid-cols-1 gap-1">
                 {tables.map(t => {
-                  const tName = t.resource_id.replace(/^table:/, '');
+                  const tName = stripPrefix(t.resource_id);
+                  const isView = t.resource_type === 'view';
+                  const comment = (t.attributes?.table_comment as string) || '';
+                  const hasCustomName = t.display_name && t.display_name !== tName && t.display_name !== t.resource_id;
+                  const desc = hasCustomName ? t.display_name : comment;
+                  const isEditing = editingId === t.resource_id;
                   return (
-                    <div key={t.resource_id} className="flex items-center gap-2">
-                      <span className="font-mono text-xs text-slate-700 flex-1">{tName}</span>
-                      <select className="input input-sm text-xs w-44"
+                    <div key={t.resource_id} className="flex items-center gap-2 py-0.5">
+                      <span className={`text-[10px] px-1 py-0.5 rounded font-semibold leading-none ${isView ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
+                        {isView ? 'VIEW' : 'TABLE'}
+                      </span>
+                      <span className="font-mono text-xs text-slate-700 whitespace-nowrap">{tName}</span>
+                      {isEditing ? (
+                        <span className="flex items-center gap-1 flex-1 min-w-0">
+                          <input className="input input-sm text-xs flex-1 min-w-0" value={editValue}
+                            onChange={e => setEditValue(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') handleSaveDisplayName(t.resource_id); if (e.key === 'Escape') setEditingId(null); }}
+                            autoFocus />
+                          <button onClick={() => handleSaveDisplayName(t.resource_id)} className="text-emerald-600 hover:text-emerald-800"><Check size={12} /></button>
+                          <button onClick={() => setEditingId(null)} className="text-slate-400 hover:text-slate-600"><X size={12} /></button>
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 flex-1 min-w-0">
+                          {desc && <span className="text-xs text-slate-400 truncate" title={desc}>{desc}</span>}
+                          <button onClick={() => { setEditingId(t.resource_id); setEditValue(t.display_name || tName); }}
+                            className="text-slate-300 hover:text-purple-600 flex-shrink-0" title="Edit display name">
+                            <Pencil size={11} />
+                          </button>
+                        </span>
+                      )}
+                      <select className="input input-sm text-xs w-44 flex-shrink-0"
                         value={pendingMappings[t.resource_id] || ''}
                         onChange={e => setPendingMappings(prev => ({ ...prev, [t.resource_id]: e.target.value }))}>
                         <option value="">-- no module --</option>
@@ -901,24 +1027,35 @@ function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecy
         </div>
       )}
 
-      {/* Already mapped tables */}
+      {/* Already mapped tables & views */}
       {mappedTables.length > 0 && (
         <div>
           <div className="text-xs font-semibold text-slate-700 mb-2">Already Mapped</div>
-          <div className="grid grid-cols-2 gap-1">
-            {mappedTables.map(t => (
-              <div key={t.resource_id} className="font-mono text-xs text-slate-600 flex items-center gap-1">
-                <span>{t.resource_id.replace(/^table:/, '')}</span>
-                <span className="text-slate-400">&rarr;</span>
-                <span className="text-purple-600 font-semibold">{t.module_name || t.parent_id}</span>
-              </div>
-            ))}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+            {mappedTables.map(t => {
+              const isView = t.resource_type === 'view';
+              const tName = stripPrefix(t.resource_id);
+              const comment = (t.attributes?.table_comment as string) || '';
+              const hasCustomName = t.display_name && t.display_name !== tName && t.display_name !== t.resource_id;
+              const desc = hasCustomName ? t.display_name : comment;
+              return (
+                <div key={t.resource_id} className="text-xs flex items-center gap-1">
+                  <span className={`text-[10px] px-1 py-0.5 rounded font-semibold leading-none ${isView ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
+                    {isView ? 'VIEW' : 'TABLE'}
+                  </span>
+                  <span className="font-mono text-slate-600">{tName}</span>
+                  {desc && <span className="text-slate-400 truncate" title={desc}>({desc})</span>}
+                  <span className="text-slate-400">&rarr;</span>
+                  <span className="text-purple-600 font-semibold">{t.module_name || t.parent_id}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
 
       {unmappedTables.length === 0 && mappedTables.length === 0 && (
-        <div className="text-xs text-slate-400 text-center py-4">No table resources found. Run Discover first.</div>
+        <div className="text-xs text-slate-400 text-center py-4">No table or view resources found. Run Discover first.</div>
       )}
     </div>
   );
@@ -993,14 +1130,14 @@ function ProfileForm({ initial, isCreate, onSave, onCancel, saving, error, locke
     if (lockedDsId) {
       set('data_source_id', lockedDsId);
     }
-    api.datasources().then(ds => setDsList(ds.filter(d => d.is_active))).catch(() => {});
+    api.datasources().then(ds => setDsList(ds.filter(d => d.is_active))).catch(e => console.warn('Failed to load datasources:', e));
   }, []);
-  useEffect(() => { api.resourceModules().then(setModuleList).catch(() => {}); }, []);
+  useEffect(() => { api.resourceModules().then(setModuleList).catch(e => console.warn('Failed to load modules:', e)); }, []);
   useEffect(() => {
     const dsId = lockedDsId || form.data_source_id;
     if (dsId) {
       setSchemasLoading(true);
-      api.datasourceSchemas(dsId).then(s => setDsSchemas(s)).catch(() => setDsSchemas([])).finally(() => setSchemasLoading(false));
+      api.datasourceSchemas(dsId).then(s => setDsSchemas(s)).catch(e => { console.warn('Failed to load schemas:', e); setDsSchemas([]); }).finally(() => setSchemasLoading(false));
     } else { setDsSchemas(['public']); }
   }, [form.data_source_id, lockedDsId]);
 
@@ -1139,6 +1276,7 @@ function ProfileForm({ initial, isCreate, onSave, onCancel, saving, error, locke
 }
 
 function ProfilesPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle: LifecycleResponse; onMutate: () => void }) {
+  const toast = useToast();
   const [profiles, setProfiles] = useState<PoolProfile[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<PoolAssignment[]>([]);
@@ -1157,18 +1295,18 @@ function ProfilesPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle:
     try {
       const all = await api.poolProfiles();
       setProfiles(all.filter(p => p.data_source_id === dsId));
-    } catch { /* ignore */ }
+    } catch (err) { toast.error('Failed to load profiles'); console.warn(err); }
     finally { setLoading(false); }
   }, [dsId]);
 
   useEffect(() => { loadProfiles(); }, [loadProfiles]);
   useEffect(() => {
-    api.subjects().then((s: any[]) => setSubjectOptions(s.map(x => ({ subject_id: x.subject_id, display_name: x.display_name })))).catch(() => {});
+    api.subjects().then((s: any[]) => setSubjectOptions(s.map(x => ({ subject_id: x.subject_id, display_name: x.display_name })))).catch(e => console.warn('Failed to load subjects:', e));
   }, []);
 
   const loadAssignments = async (profileId: string) => {
     setSelected(profileId);
-    try { setAssignments(await api.poolAssignments(profileId)); } catch { setAssignments([]); }
+    try { setAssignments(await api.poolAssignments(profileId)); } catch (err) { console.warn('Failed to load assignments:', err); setAssignments([]); }
   };
 
   const handleSave = async (form: ProfileFormData) => {
@@ -1196,14 +1334,21 @@ function ProfilesPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle:
           await api.poolProfileDelete(profileId);
           if (selected === profileId) { setSelected(null); setAssignments([]); }
           await loadProfiles(); onMutate();
-        } catch (e) { alert(e instanceof Error ? e.message : 'Delete failed'); }
+        } catch (e) { toast.error(e instanceof Error ? e.message : 'Delete failed'); }
       },
     });
   };
 
-  const handleReactivate = async (profileId: string) => {
-    try { await api.poolProfileUpdate(profileId, { is_active: true } as Partial<PoolProfile>); await loadProfiles(); onMutate(); }
-    catch (e) { alert(e instanceof Error ? e.message : 'Reactivate failed'); }
+  const handleReactivate = (profileId: string) => {
+    setDangerConfirm({
+      title: `Reactivate Profile "${profileId}"`,
+      message: 'This will restore the pool profile and its subject assignments.',
+      impact: 'Assigned users will regain Path C database access through this profile.',
+      onConfirm: async () => {
+        try { await api.poolProfileUpdate(profileId, { is_active: true } as Partial<PoolProfile>); await loadProfiles(); onMutate(); }
+        catch (e) { toast.error(e instanceof Error ? e.message : 'Reactivate failed'); }
+      },
+    });
   };
 
   const handleAssign = async () => {
@@ -1212,18 +1357,31 @@ function ProfilesPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle:
       await api.poolAssignmentCreate({ subject_id: newSubjectId.trim(), profile_id: selected });
       setNewSubjectId(''); setShowAssignForm(false);
       await loadAssignments(selected);
-    } catch (e) { alert(e instanceof Error ? e.message : 'Assign failed'); }
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Assign failed'); }
   };
 
-  const handleRemoveAssignment = async (assignmentId: number) => {
-    if (!confirm('Remove this assignment?')) return;
-    try { await api.poolAssignmentDelete(assignmentId); if (selected) await loadAssignments(selected); }
-    catch (e) { alert(e instanceof Error ? e.message : 'Remove failed'); }
+  const handleRemoveAssignment = (assignmentId: number) => {
+    setDangerConfirm({
+      title: 'Remove Assignment',
+      message: 'This will revoke the subject\'s access through this pool profile.',
+      impact: 'The user will lose Path C database access for this profile immediately.',
+      onConfirm: async () => {
+        try { await api.poolAssignmentDelete(assignmentId); if (selected) await loadAssignments(selected); }
+        catch (e) { toast.error(e instanceof Error ? e.message : 'Remove failed'); }
+      },
+    });
   };
 
-  const handleReactivateAssignment = async (assignmentId: number) => {
-    try { await api.poolAssignmentReactivate(assignmentId); if (selected) await loadAssignments(selected); }
-    catch (e) { alert(e instanceof Error ? e.message : 'Reactivate failed'); }
+  const handleReactivateAssignment = (assignmentId: number) => {
+    setDangerConfirm({
+      title: 'Reactivate Assignment',
+      message: 'This will restore the subject\'s access through this pool profile.',
+      impact: 'The user will regain Path C database access for this profile.',
+      onConfirm: async () => {
+        try { await api.poolAssignmentReactivate(assignmentId); if (selected) await loadAssignments(selected); }
+        catch (e) { toast.error(e instanceof Error ? e.message : 'Reactivate failed'); }
+      },
+    });
   };
 
   const modeStyle: Record<string, string> = { readonly: 'badge-green', readwrite: 'badge-amber', admin: 'badge-red' };
@@ -1249,6 +1407,14 @@ function ProfilesPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle:
             className="btn-primary btn-sm gap-1"><Plus size={12} /> Create Profile</button>
         )}
       </div>
+
+      {profiles.length === 0 && !showForm && (
+        <div className="text-center py-6 bg-slate-50 rounded-lg border border-dashed border-slate-300">
+          <Server size={28} className="mx-auto text-slate-400 mb-2" />
+          <div className="text-sm font-medium text-slate-600">No pool profiles yet</div>
+          <div className="text-xs text-slate-400 mt-1">Profiles define PG role + access scope (schemas, tables, modules). Create one to start assigning users.</div>
+        </div>
+      )}
 
       {profiles.length > 0 && (
         <div className="table-container">
@@ -1371,6 +1537,7 @@ function ProfilesPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle:
    ══════════════════════════════════════════════════════════ */
 
 function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => void }) {
+  const toast = useToast();
   const [creds, setCreds] = useState<PoolCredential[]>([]);
   const [loading, setLoading] = useState(true);
   const [rotatingRole, setRotatingRole] = useState<string | null>(null);
@@ -1393,7 +1560,7 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
       ]);
       const dsRoles = new Set(allProfiles.filter(p => p.data_source_id === dsId).map(p => p.pg_role));
       setCreds(allCreds.filter(c => dsRoles.has(c.pg_role)));
-    } catch { /* ignore */ }
+    } catch (err) { toast.error('Failed to load credentials'); console.warn(err); }
     finally { setLoading(false); }
   }, [dsId]);
 
@@ -1403,7 +1570,7 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
     if (showCreateForm) {
       api.poolUncredentialedRoles()
         .then((r: any[]) => setUncredRoles(r.filter((x: any) => x.data_source_id === dsId)))
-        .catch(() => setUncredRoles([]));
+        .catch(e => { console.warn('Failed to load uncredentialed roles:', e); setUncredRoles([]); });
       setManualPgRole(false);
     }
   }, [showCreateForm, dsId]);
@@ -1411,7 +1578,7 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
   const doRotate = async (pg_role: string, password: string) => {
     setRotating(true);
     try { await api.poolCredentialRotate(pg_role, password); setRotatingRole(null); setNewPassword(''); await loadCreds(); onMutate(); }
-    catch (e) { alert(e instanceof Error ? e.message : 'Rotate failed'); }
+    catch (e) { toast.error(e instanceof Error ? e.message : 'Rotate failed'); }
     finally { setRotating(false); }
   };
 
@@ -1434,13 +1601,20 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
       setShowCreateForm(false);
       setCreateForm({ pg_role: '', password: '', rotate_interval: '90 days' });
       await loadCreds(); onMutate();
-    } catch (e) { alert(e instanceof Error ? e.message : 'Create failed'); }
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Create failed'); }
     finally { setCreating(false); }
   };
 
-  const handleReactivateCred = async (pg_role: string) => {
-    try { await api.poolCredentialReactivate(pg_role); await loadCreds(); onMutate(); }
-    catch (e) { alert(e instanceof Error ? e.message : 'Reactivate failed'); }
+  const handleReactivateCred = (pg_role: string) => {
+    setDangerConfirm({
+      title: `Reactivate Credential "${pg_role}"`,
+      message: 'This will restore the credential and allow connections using this PG role.',
+      impact: 'Pool profiles using this role will be able to authenticate again.',
+      onConfirm: async () => {
+        try { await api.poolCredentialReactivate(pg_role); await loadCreds(); onMutate(); }
+        catch (e) { toast.error(e instanceof Error ? e.message : 'Reactivate failed'); }
+      },
+    });
   };
 
   const handleDeleteCred = (pg_role: string) => {
@@ -1450,7 +1624,7 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
       impact: 'Any pool profile using this PG role will lose connectivity.',
       onConfirm: async () => {
         try { await api.poolCredentialDelete(pg_role); await loadCreds(); onMutate(); }
-        catch (e) { alert(e instanceof Error ? e.message : 'Delete failed'); }
+        catch (e) { toast.error(e instanceof Error ? e.message : 'Delete failed'); }
       },
     });
   };
@@ -1573,7 +1747,11 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
       )}
 
       {creds.length === 0 && !showCreateForm && (
-        <div className="text-sm text-slate-400 text-center py-4">No credentials found for this data source's profiles</div>
+        <div className="text-center py-6 bg-slate-50 rounded-lg border border-dashed border-slate-300">
+          <Key size={28} className="mx-auto text-slate-400 mb-2" />
+          <div className="text-sm font-medium text-slate-600">No credentials configured</div>
+          <div className="text-xs text-slate-400 mt-1">Create pool profiles first (Phase 4), then add PG role credentials here for database access.</div>
+        </div>
       )}
 
       <DangerConfirmModal state={dangerConfirm} onClose={() => setDangerConfirm(null)} />
@@ -1586,6 +1764,7 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
    ══════════════════════════════════════════════════════════ */
 
 function DeploymentPhase({ dsId, onMutate }: { dsId: string; onMutate: () => void }) {
+  const toast = useToast();
   const [loading, setLoading] = useState<string | null>(null);
   const [extActions, setExtActions] = useState<SyncAction[] | null>(null);
   const [driftItems, setDriftItems] = useState<DriftItem[] | null>(null);
@@ -1630,7 +1809,7 @@ function DeploymentPhase({ dsId, onMutate }: { dsId: string; onMutate: () => voi
       impact: 'Active database sessions may experience permission changes mid-query.',
       onConfirm: async () => {
         setLoading('grants');
-        try { setGrantResult((await api.poolSyncGrants()).actions); onMutate(); } catch { /* ignore */ }
+        try { setGrantResult((await api.poolSyncGrants()).actions); onMutate(); } catch (err) { toast.error('Sync local grants failed'); console.warn(err); }
         setLoading(null);
       },
     });
@@ -1654,6 +1833,12 @@ function DeploymentPhase({ dsId, onMutate }: { dsId: string; onMutate: () => voi
 
   return (
     <div className="space-y-4">
+      {!extActions && !driftItems && !grantResult && !pgbouncerConfig && (
+        <div className="text-xs text-slate-500 bg-slate-50 rounded-lg p-3 border border-slate-200">
+          <span className="font-medium">Deploy permissions to external databases.</span> "Sync to Remote DB" pushes GRANT/REVOKE to the target. "Check Drift" compares remote state with SSOT. "Sync Local Grants" applies roles inside the AuthZ database. "PgBouncer" manages connection pool routing.
+        </div>
+      )}
+
       {/* External DB Sync (primary action) */}
       <div className="flex gap-2 flex-wrap">
         <button onClick={handleExternalSync} disabled={loading === 'ext-sync'} className="btn-primary btn-sm gap-1">
@@ -1668,7 +1853,7 @@ function DeploymentPhase({ dsId, onMutate }: { dsId: string; onMutate: () => voi
         </button>
         <button onClick={async () => {
           setLoading('pgbouncer');
-          try { setPgbouncerConfig((await api.poolSyncPgbouncer()).config); } catch { /* ignore */ }
+          try { setPgbouncerConfig((await api.poolSyncPgbouncer()).config); } catch (err) { toast.error('PgBouncer preview failed'); console.warn(err); }
           setLoading(null);
         }} disabled={loading === 'pgbouncer'} className="btn-secondary btn-sm gap-1">
           <Play size={12} /> {loading === 'pgbouncer' ? 'Generating...' : 'PgBouncer Preview'}

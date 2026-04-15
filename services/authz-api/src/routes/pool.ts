@@ -30,7 +30,7 @@ poolRouter.get('/profiles', async (_req, res) => {
   try {
     const result = await pool.query(`
       SELECT dp.*,
-        (SELECT count(*) FROM authz_db_pool_assignment da
+        (SELECT count(*)::int FROM authz_db_pool_assignment da
          WHERE da.profile_id = dp.profile_id AND da.is_active) AS assignment_count
       FROM authz_db_pool_profile dp
       ORDER BY dp.profile_id

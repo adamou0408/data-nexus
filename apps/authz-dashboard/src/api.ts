@@ -239,12 +239,12 @@ export const api = {
   datasourceTest: (id: string) =>
     request<{ status: string; version?: string; error?: string }>(`/datasources/${encodeURIComponent(id)}/test`, { method: 'POST' }),
   datasourceDiscover: (id: string) =>
-    request<{ source_id: string; tables_found: number; columns_found: number; resources_created: number; created: string[] }>(
+    request<{ source_id: string; tables_found: number; views_found: number; functions_found: number; columns_found: number; resources_created: number; created: string[] }>(
       `/datasources/${encodeURIComponent(id)}/discover`, { method: 'POST' }),
   datasourceSchemas: (id: string) =>
     request<string[]>(`/datasources/${encodeURIComponent(id)}/schemas`),
   datasourceTables: (id: string) =>
-    request<{ source_id: string; database: string; tables: { table_schema: string; table_name: string; column_count: string }[] }>(
+    request<{ source_id: string; database: string; tables: { table_schema: string; table_name: string; table_type: string; column_count: string }[] }>(
       `/datasources/${encodeURIComponent(id)}/tables`),
 
   datasourceLifecycle: (id: string) =>
@@ -263,6 +263,9 @@ export const api = {
     request<{ updated: number }>('/browse/resources/bulk-parent', { method: 'PUT', body: JSON.stringify({ mappings }) }),
   resourceModules: () =>
     request<{ resource_id: string; display_name: string; parent_id: string | null }[]>('/browse/resources?type=module'),
+  resourcesFunctions: (dataSourceId: string) =>
+    request<{ resource_id: string; display_name: string; attributes: Record<string, unknown> }[]>(
+      `/browse/resources/functions?data_source_id=${encodeURIComponent(dataSourceId)}`),
 
   poolUncredentialedRoles: () =>
     request<{ pg_role: string; profile_id: string; connection_mode: string; data_source_id: string | null }[]>('/pool/uncredentialed-roles'),
@@ -351,7 +354,7 @@ export type PoolProfile = {
   is_active: boolean;
   data_source_id: string | null;
   allowed_modules: string[] | null;
-  assignment_count?: string;
+  assignment_count?: number;
 };
 
 export type PoolAssignment = {
@@ -441,7 +444,7 @@ export type PhaseStatus = 'not_started' | 'done' | 'action_needed';
 
 export type LifecyclePhases = {
   connection:   { status: PhaseStatus };
-  discovery:    { status: PhaseStatus; tables: number; columns: number; last_discovered: string | null };
+  discovery:    { status: PhaseStatus; tables: number; views: number; columns: number; functions: number; last_discovered: string | null };
   organization: { status: PhaseStatus; mapped: number; unmapped: number };
   profiles:     { status: PhaseStatus; count: number; profile_ids: string[] };
   credentials:  { status: PhaseStatus; credentialed: number; uncredentialed: number; next_rotation: string | null };
