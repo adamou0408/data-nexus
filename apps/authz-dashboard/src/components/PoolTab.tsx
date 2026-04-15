@@ -185,6 +185,7 @@ function DataSourceOverview({ onSelect }: { onSelect: (dsId: string) => void }) 
   const [summaries, setSummaries] = useState<LifecycleSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [showOnboard, setShowOnboard] = useState(false);
+  const [dsSearch, setDsSearch] = useState('');
 
   const load = useCallback(async () => {
     try { setSummaries(await api.datasourceLifecycleSummary()); }
@@ -223,8 +224,23 @@ function DataSourceOverview({ onSelect }: { onSelect: (dsId: string) => void }) 
         </div>
       )}
 
+      {summaries.length > 1 && (
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input className="input pl-9 text-sm" placeholder="Search data sources by name, host, database..."
+            value={dsSearch} onChange={e => setDsSearch(e.target.value)} />
+        </div>
+      )}
+
       <div className="grid gap-3">
-        {summaries.map(ds => (
+        {summaries.filter(ds => {
+          if (!dsSearch.trim()) return true;
+          const q = dsSearch.toLowerCase();
+          return (ds.display_name?.toLowerCase().includes(q))
+            || ds.source_id.toLowerCase().includes(q)
+            || ds.host.toLowerCase().includes(q)
+            || ds.database_name.toLowerCase().includes(q);
+        }).map(ds => (
           <div key={ds.source_id}
             className="card hover:shadow-md transition-shadow cursor-pointer"
             onClick={() => onSelect(ds.source_id)}>
@@ -352,6 +368,9 @@ function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => voi
               Port <span className="text-slate-400 text-[10px] font-normal">({form.db_type})</span>
             </label>
             <input className="input" type="number" value={form.port} onChange={e => setForm(f => ({ ...f, port: e.target.value }))} />
+            {form.port && (isNaN(parseInt(form.port)) || parseInt(form.port) < 1 || parseInt(form.port) > 65535) && (
+              <div className="text-xs text-red-500 mt-0.5">Port must be 1–65535</div>
+            )}
           </div>
           <div>
             <label className="label">Database Name</label>
@@ -360,6 +379,7 @@ function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => voi
           <div>
             <label className="label">Schemas (comma-separated)</label>
             <input className="input" value={form.schemas} onChange={e => setForm(f => ({ ...f, schemas: e.target.value }))} />
+            {!form.schemas.trim() && <div className="text-xs text-red-500 mt-0.5">At least one schema is required</div>}
           </div>
           <div>
             <label className="label">Connector User</label>
@@ -380,7 +400,8 @@ function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => voi
           </div>
         </div>
         <div className="flex gap-2">
-          <button onClick={handleCreate} disabled={creating || !form.source_id || !form.host || !form.database_name || !form.connector_user}
+          <button onClick={handleCreate} disabled={creating || !form.source_id || !form.host || !form.database_name || !form.connector_user
+              || !form.schemas.trim() || isNaN(parseInt(form.port)) || parseInt(form.port) < 1 || parseInt(form.port) > 65535}
             className="btn btn-sm bg-green-600 text-white hover:bg-green-700 disabled:opacity-40">
             {creating ? 'Creating...' : 'Register & Test Connection'}
           </button>
@@ -755,7 +776,15 @@ function DiscoveryPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle
         </div>
       )}
 
-      {discoverResult && (
+      {discovering && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-6 text-center animate-pulse">
+          <RefreshCw size={24} className="mx-auto text-blue-500 animate-spin mb-2" />
+          <div className="text-sm font-medium text-blue-700">Scanning database schemas...</div>
+          <div className="text-xs text-blue-400 mt-1">Discovering tables, views, columns, and functions — this may take a minute for large databases</div>
+        </div>
+      )}
+
+      {discoverResult && !discovering && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3 text-sm text-emerald-800">
           Found {discoverResult.tables_found} tables, {discoverResult.views_found} views, {discoverResult.functions_found} functions — created {discoverResult.resources_created} new resources
         </div>
@@ -849,6 +878,7 @@ function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecy
   const [loaded, setLoaded] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
+  const [tableSearch, setTableSearch] = useState('');
 
   const loadMapping = useCallback(async () => {
     try {
@@ -956,8 +986,26 @@ function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecy
       {/* Unmapped tables by prefix */}
       {unmappedTables.length > 0 && (
         <div>
-          <div className="text-xs font-semibold text-slate-700 mb-2">Unmapped Tables &amp; Views (grouped by prefix)</div>
-          {Object.entries(groupByPrefix(unmappedTables)).map(([prefix, tables]) => (
+          <div className="flex items-center gap-3 mb-2">
+            <div className="text-xs font-semibold text-slate-700">Unmapped Tables &amp; Views (grouped by prefix)</div>
+            {unmappedTables.length > 10 && (
+              <div className="relative flex-1 max-w-xs">
+                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input className="input input-sm text-xs pl-7" placeholder="Filter tables..." value={tableSearch} onChange={e => setTableSearch(e.target.value)} />
+              </div>
+            )}
+          </div>
+          {(() => {
+            const filtered = tableSearch.trim()
+              ? unmappedTables.filter(t => {
+                  const q = tableSearch.toLowerCase();
+                  return t.resource_id.toLowerCase().includes(q) || (t.display_name || '').toLowerCase().includes(q);
+                })
+              : unmappedTables;
+            if (filtered.length === 0 && tableSearch.trim()) {
+              return <div className="text-xs text-slate-400 text-center py-3">No tables match "{tableSearch}"</div>;
+            }
+            return Object.entries(groupByPrefix(filtered)).map(([prefix, tables]) => (
             <div key={prefix} className="mb-3 bg-white rounded-lg border border-purple-200 p-3">
               <div className="flex items-center gap-2 mb-2">
                 <span className="font-mono text-xs font-bold text-purple-800 bg-purple-100 px-2 py-0.5 rounded">{prefix}_*</span>
@@ -1017,7 +1065,8 @@ function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecy
                 })}
               </div>
             </div>
-          ))}
+          ));
+          })()}
           <button onClick={handleSaveMappings}
             disabled={savingMapping || Object.values(pendingMappings).filter(Boolean).length === 0}
             className="btn btn-sm bg-purple-600 text-white hover:bg-purple-700 gap-1 mt-2">
@@ -1222,6 +1271,9 @@ function ProfileForm({ initial, isCreate, onSave, onCancel, saving, error, locke
             </label>
             <input type="number" value={form.max_connections} onChange={e => set('max_connections', Number(e.target.value))}
               min={1} max={100} className="input" />
+            {(form.max_connections < 1 || form.max_connections > 100) && (
+              <div className="text-xs text-red-500 mt-0.5">Must be 1–100</div>
+            )}
           </div>
           <ChipSelect
             label={`Allowed Schemas${schemasLoading ? ' (loading...)' : form.data_source_id || lockedDsId ? ' (from data source)' : ''}`}
@@ -1266,7 +1318,7 @@ function ProfileForm({ initial, isCreate, onSave, onCancel, saving, error, locke
         </div>
         <div className="flex gap-2 justify-end">
           <button onClick={onCancel} className="btn-secondary btn-sm">Cancel</button>
-          <button onClick={() => onSave(form)} disabled={saving} className="btn-primary btn-sm">
+          <button onClick={() => onSave(form)} disabled={saving || form.max_connections < 1 || form.max_connections > 100} className="btn-primary btn-sm">
             {saving ? 'Saving...' : isCreate ? 'Create' : 'Save Changes'}
           </button>
         </div>
@@ -1287,6 +1339,8 @@ function ProfilesPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle:
   const [saving, setSaving] = useState(false);
   const [showAssignForm, setShowAssignForm] = useState(false);
   const [newSubjectId, setNewSubjectId] = useState('');
+  const [subjectSearch, setSubjectSearch] = useState('');
+  const [subjectDropdownOpen, setSubjectDropdownOpen] = useState(false);
   const [subjectOptions, setSubjectOptions] = useState<{ subject_id: string; display_name: string }[]>([]);
   const [dangerConfirm, setDangerConfirm] = useState<ConfirmState>(null);
 
@@ -1357,6 +1411,7 @@ function ProfilesPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle:
       await api.poolAssignmentCreate({ subject_id: newSubjectId.trim(), profile_id: selected });
       setNewSubjectId(''); setShowAssignForm(false);
       await loadAssignments(selected);
+      await loadProfiles();
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Assign failed'); }
   };
 
@@ -1366,7 +1421,7 @@ function ProfilesPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle:
       message: 'This will revoke the subject\'s access through this pool profile.',
       impact: 'The user will lose Path C database access for this profile immediately.',
       onConfirm: async () => {
-        try { await api.poolAssignmentDelete(assignmentId); if (selected) await loadAssignments(selected); }
+        try { await api.poolAssignmentDelete(assignmentId); if (selected) await loadAssignments(selected); await loadProfiles(); }
         catch (e) { toast.error(e instanceof Error ? e.message : 'Remove failed'); }
       },
     });
@@ -1378,7 +1433,7 @@ function ProfilesPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle:
       message: 'This will restore the subject\'s access through this pool profile.',
       impact: 'The user will regain Path C database access for this profile.',
       onConfirm: async () => {
-        try { await api.poolAssignmentReactivate(assignmentId); if (selected) await loadAssignments(selected); }
+        try { await api.poolAssignmentReactivate(assignmentId); if (selected) await loadAssignments(selected); await loadProfiles(); }
         catch (e) { toast.error(e instanceof Error ? e.message : 'Reactivate failed'); }
       },
     });
@@ -1480,17 +1535,49 @@ function ProfilesPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle:
           <div className="card-body">
             {showAssignForm && (
               <div className="flex gap-2 items-end mb-4 pb-4 border-b border-slate-100">
-                <div className="flex-1">
+                <div className="flex-1 relative">
                   <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Subject</label>
-                  <select value={newSubjectId} onChange={e => setNewSubjectId(e.target.value)} className="select font-mono text-xs">
-                    <option value="">-- Select subject --</option>
-                    {subjectOptions.map(s => (
-                      <option key={s.subject_id} value={s.subject_id}>{s.subject_id} — {s.display_name}</option>
-                    ))}
-                  </select>
+                  <div className="relative">
+                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input className="input font-mono text-xs pl-7"
+                      placeholder="Search subjects..."
+                      value={subjectSearch}
+                      onChange={e => { setSubjectSearch(e.target.value); setSubjectDropdownOpen(true); setNewSubjectId(''); }}
+                      onFocus={() => setSubjectDropdownOpen(true)}
+                    />
+                    {newSubjectId && (
+                      <button onClick={() => { setNewSubjectId(''); setSubjectSearch(''); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                  {subjectDropdownOpen && !newSubjectId && (
+                    <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-auto">
+                      {subjectOptions
+                        .filter(s => {
+                          if (!subjectSearch.trim()) return true;
+                          const q = subjectSearch.toLowerCase();
+                          return s.subject_id.toLowerCase().includes(q) || s.display_name.toLowerCase().includes(q);
+                        })
+                        .map(s => (
+                          <button key={s.subject_id} type="button"
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-blue-50 font-mono"
+                            onClick={() => { setNewSubjectId(s.subject_id); setSubjectSearch(`${s.subject_id} — ${s.display_name}`); setSubjectDropdownOpen(false); }}>
+                            <span className="font-semibold">{s.subject_id}</span> <span className="text-slate-400">— {s.display_name}</span>
+                          </button>
+                        ))}
+                      {subjectOptions.filter(s => {
+                        if (!subjectSearch.trim()) return true;
+                        const q = subjectSearch.toLowerCase();
+                        return s.subject_id.toLowerCase().includes(q) || s.display_name.toLowerCase().includes(q);
+                      }).length === 0 && (
+                        <div className="px-3 py-2 text-xs text-slate-400">No matching subjects</div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <button onClick={handleAssign} disabled={!newSubjectId.trim()} className="btn-primary btn-sm">Assign</button>
-                <button onClick={() => setShowAssignForm(false)} className="btn-secondary btn-sm">Cancel</button>
+                <button onClick={() => { setShowAssignForm(false); setSubjectSearch(''); setNewSubjectId(''); setSubjectDropdownOpen(false); }} className="btn-secondary btn-sm">Cancel</button>
               </div>
             )}
             {assignments.length === 0 ? (
@@ -1549,6 +1636,21 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
   const [dangerConfirm, setDangerConfirm] = useState<ConfirmState>(null);
   const [uncredRoles, setUncredRoles] = useState<{ profile_id: string; pg_role: string }[]>([]);
   const [manualPgRole, setManualPgRole] = useState(false);
+  const [passwordConfirm, setPasswordConfirm] = useState('');
+
+  const getPasswordStrength = (pw: string) => {
+    if (!pw) return null;
+    if (pw.length < 8) return { label: 'Too short (min 8)', color: 'bg-red-500', pct: 20 };
+    let score = 0;
+    if (pw.length >= 12) score++;
+    if (/[A-Z]/.test(pw)) score++;
+    if (/[0-9]/.test(pw)) score++;
+    if (/[^A-Za-z0-9]/.test(pw)) score++;
+    if (score <= 1) return { label: 'Weak', color: 'bg-orange-500', pct: 40 };
+    if (score === 2) return { label: 'Fair', color: 'bg-yellow-500', pct: 60 };
+    if (score === 3) return { label: 'Good', color: 'bg-blue-500', pct: 80 };
+    return { label: 'Strong', color: 'bg-green-500', pct: 100 };
+  };
 
   // Load credentials + filter to those linked to this DS's profiles
   const loadCreds = useCallback(async () => {
@@ -1566,14 +1668,19 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
 
   useEffect(() => { loadCreds(); }, [loadCreds]);
 
+  const refreshUncredRoles = useCallback(() => {
+    api.poolUncredentialedRoles()
+      .then((r: any[]) => setUncredRoles(r.filter((x: any) => x.data_source_id === dsId)))
+      .catch(e => { console.warn('Failed to load uncredentialed roles:', e); setUncredRoles([]); });
+  }, [dsId]);
+
   useEffect(() => {
     if (showCreateForm) {
-      api.poolUncredentialedRoles()
-        .then((r: any[]) => setUncredRoles(r.filter((x: any) => x.data_source_id === dsId)))
-        .catch(e => { console.warn('Failed to load uncredentialed roles:', e); setUncredRoles([]); });
+      refreshUncredRoles();
       setManualPgRole(false);
+      setPasswordConfirm('');
     }
-  }, [showCreateForm, dsId]);
+  }, [showCreateForm, dsId, refreshUncredRoles]);
 
   const doRotate = async (pg_role: string, password: string) => {
     setRotating(true);
@@ -1583,7 +1690,7 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
   };
 
   const handleRotate = (pg_role: string) => {
-    if (!newPassword.trim()) return;
+    if (newPassword.length < 8) return;
     const pw = newPassword;
     setDangerConfirm({
       title: `Rotate Password for "${pg_role}"`,
@@ -1600,7 +1707,8 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
       await api.poolCredentialCreate(createForm.pg_role, createForm.password, createForm.rotate_interval);
       setShowCreateForm(false);
       setCreateForm({ pg_role: '', password: '', rotate_interval: '90 days' });
-      await loadCreds(); onMutate();
+      setPasswordConfirm('');
+      await loadCreds(); refreshUncredRoles(); onMutate();
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Create failed'); }
     finally { setCreating(false); }
   };
@@ -1623,7 +1731,7 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
       message: 'This will mark the credential as inactive.',
       impact: 'Any pool profile using this PG role will lose connectivity.',
       onConfirm: async () => {
-        try { await api.poolCredentialDelete(pg_role); await loadCreds(); onMutate(); }
+        try { await api.poolCredentialDelete(pg_role); await loadCreds(); refreshUncredRoles(); onMutate(); }
         catch (e) { toast.error(e instanceof Error ? e.message : 'Delete failed'); }
       },
     });
@@ -1670,9 +1778,31 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
             </div>
             <div>
               <label className="label">Password</label>
-              <input className="input" type="password" placeholder="Initial password" value={createForm.password}
+              <input className="input" type="password" placeholder="Min 8 characters" value={createForm.password}
                 onChange={e => setCreateForm(f => ({ ...f, password: e.target.value }))} />
+              {(() => {
+                const s = getPasswordStrength(createForm.password);
+                if (!s) return null;
+                return (
+                  <div className="mt-1.5">
+                    <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                      <div className={`h-full ${s.color} rounded-full transition-all`} style={{ width: `${s.pct}%` }} />
+                    </div>
+                    <div className={`text-[10px] mt-0.5 ${s.pct <= 20 ? 'text-red-500' : s.pct <= 60 ? 'text-amber-600' : 'text-slate-500'}`}>{s.label}</div>
+                  </div>
+                );
+              })()}
             </div>
+            <div>
+              <label className="label">Confirm Password</label>
+              <input className="input" type="password" placeholder="Re-enter password" value={passwordConfirm}
+                onChange={e => setPasswordConfirm(e.target.value)} />
+              {passwordConfirm && passwordConfirm !== createForm.password && (
+                <div className="text-xs text-red-500 mt-0.5">Passwords do not match</div>
+              )}
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="label">Rotate Interval</label>
               <select className="select" value={createForm.rotate_interval}
@@ -1687,7 +1817,7 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
             </div>
           </div>
           <div className="flex gap-2">
-            <button onClick={handleCreateCred} disabled={creating || !createForm.pg_role.trim() || !createForm.password.trim()}
+            <button onClick={handleCreateCred} disabled={creating || !createForm.pg_role.trim() || createForm.password.length < 8 || createForm.password !== passwordConfirm}
               className="btn btn-sm bg-green-600 text-white hover:bg-green-700">
               {creating ? 'Creating...' : 'Create'}
             </button>
@@ -1718,14 +1848,28 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
                         <Undo2 size={12} /> Reactivate
                       </button>
                     ) : rotatingRole === c.pg_role ? (
-                      <div className="flex gap-2 items-center">
-                        <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
-                          placeholder="New password" className="input text-xs w-36"
-                          onKeyDown={e => e.key === 'Enter' && handleRotate(c.pg_role)} />
-                        <button onClick={() => handleRotate(c.pg_role)} disabled={rotating || !newPassword.trim()} className="btn-primary btn-sm">
-                          {rotating ? '...' : 'Confirm'}
-                        </button>
-                        <button onClick={() => { setRotatingRole(null); setNewPassword(''); }} className="btn-ghost btn-sm"><X size={14} /></button>
+                      <div className="space-y-1">
+                        <div className="flex gap-2 items-center">
+                          <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                            placeholder="Min 8 characters" className="input text-xs w-40"
+                            onKeyDown={e => e.key === 'Enter' && newPassword.length >= 8 && handleRotate(c.pg_role)} />
+                          <button onClick={() => handleRotate(c.pg_role)} disabled={rotating || newPassword.length < 8} className="btn-primary btn-sm">
+                            {rotating ? '...' : 'Confirm'}
+                          </button>
+                          <button onClick={() => { setRotatingRole(null); setNewPassword(''); }} className="btn-ghost btn-sm"><X size={14} /></button>
+                        </div>
+                        {(() => {
+                          const s = getPasswordStrength(newPassword);
+                          if (!s) return null;
+                          return (
+                            <div className="w-40">
+                              <div className="h-1 bg-slate-200 rounded-full overflow-hidden">
+                                <div className={`h-full ${s.color} rounded-full transition-all`} style={{ width: `${s.pct}%` }} />
+                              </div>
+                              <div className={`text-[10px] ${s.pct <= 20 ? 'text-red-500' : 'text-slate-400'}`}>{s.label}</div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     ) : (
                       <div className="flex gap-1">
@@ -1765,7 +1909,7 @@ function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: () => vo
 
 function DeploymentPhase({ dsId, onMutate }: { dsId: string; onMutate: () => void }) {
   const toast = useToast();
-  const [loading, setLoading] = useState<string | null>(null);
+  const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [extActions, setExtActions] = useState<SyncAction[] | null>(null);
   const [driftItems, setDriftItems] = useState<DriftItem[] | null>(null);
   const [grantResult, setGrantResult] = useState<{ action: string; detail: string }[] | null>(null);
@@ -1778,7 +1922,7 @@ function DeploymentPhase({ dsId, onMutate }: { dsId: string; onMutate: () => voi
       message: `This will sync roles and grants to the data source "${dsId}".`,
       impact: 'Roles will be created, passwords set, and GRANT/REVOKE executed on the remote database.',
       onConfirm: async () => {
-        setLoading('ext-sync');
+        setLoading(prev => ({ ...prev, 'ext-sync': true }));
         try {
           const result = await api.poolSyncExternalGrants(dsId);
           setExtActions(result.actions);
@@ -1786,20 +1930,20 @@ function DeploymentPhase({ dsId, onMutate }: { dsId: string; onMutate: () => voi
         } catch (e) {
           setExtActions([{ action: 'ERROR', detail: String(e), data_source_id: dsId, profile_id: '', status: 'error', error: String(e) }]);
         }
-        setLoading(null);
+        setLoading(prev => ({ ...prev, 'ext-sync': false }));
       },
     });
   };
 
   const handleCheckDrift = async () => {
-    setLoading('ext-drift');
+    setLoading(prev => ({ ...prev, 'ext-drift': true }));
     try {
       const report = await api.poolSyncExternalDrift(dsId);
       setDriftItems(report.items);
     } catch (e) {
       setDriftItems([{ pg_role: '-', type: 'role_missing', detail: `Error: ${String(e)}` }]);
     }
-    setLoading(null);
+    setLoading(prev => ({ ...prev, 'ext-drift': false }));
   };
 
   const handleSyncGrants = () => {
@@ -1808,9 +1952,9 @@ function DeploymentPhase({ dsId, onMutate }: { dsId: string; onMutate: () => voi
       message: 'This will execute authz_sync_db_grants() to create/modify PG roles and GRANT/REVOKE permissions.',
       impact: 'Active database sessions may experience permission changes mid-query.',
       onConfirm: async () => {
-        setLoading('grants');
+        setLoading(prev => ({ ...prev, grants: true }));
         try { setGrantResult((await api.poolSyncGrants()).actions); onMutate(); } catch (err) { toast.error('Sync local grants failed'); console.warn(err); }
-        setLoading(null);
+        setLoading(prev => ({ ...prev, grants: false }));
       },
     });
   };
@@ -1821,12 +1965,12 @@ function DeploymentPhase({ dsId, onMutate }: { dsId: string; onMutate: () => voi
       message: 'This will overwrite pgbouncer.ini and send a HUP signal to reload.',
       impact: 'PgBouncer will close idle connections and re-read the config.',
       onConfirm: async () => {
-        setLoading('pgbouncer-apply');
+        setLoading(prev => ({ ...prev, 'pgbouncer-apply': true }));
         try {
           const result = await api.poolSyncPgbouncerApply();
           setPgbouncerConfig(`Applied: ${result.config_path}\nReload: ${result.reload}`);
         } catch (e) { setPgbouncerConfig(`Error: ${String(e)}`); }
-        setLoading(null);
+        setLoading(prev => ({ ...prev, 'pgbouncer-apply': false }));
       },
     });
   };
@@ -1841,26 +1985,26 @@ function DeploymentPhase({ dsId, onMutate }: { dsId: string; onMutate: () => voi
 
       {/* External DB Sync (primary action) */}
       <div className="flex gap-2 flex-wrap">
-        <button onClick={handleExternalSync} disabled={loading === 'ext-sync'} className="btn-primary btn-sm gap-1">
-          <Play size={12} /> {loading === 'ext-sync' ? 'Syncing...' : 'Sync to Remote DB'}
+        <button onClick={handleExternalSync} disabled={loading['ext-sync']} className="btn-primary btn-sm gap-1">
+          {loading['ext-sync'] ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />} {loading['ext-sync'] ? 'Syncing...' : 'Sync to Remote DB'}
         </button>
-        <button onClick={handleCheckDrift} disabled={loading === 'ext-drift'}
+        <button onClick={handleCheckDrift} disabled={loading['ext-drift']}
           className="btn btn-sm bg-amber-600 text-white hover:bg-amber-700 gap-1">
-          <Search size={12} /> {loading === 'ext-drift' ? 'Checking...' : 'Check Drift'}
+          {loading['ext-drift'] ? <RefreshCw size={12} className="animate-spin" /> : <Search size={12} />} {loading['ext-drift'] ? 'Checking...' : 'Check Drift'}
         </button>
-        <button onClick={handleSyncGrants} disabled={loading === 'grants'} className="btn-secondary btn-sm gap-1">
-          <Play size={12} /> {loading === 'grants' ? 'Syncing...' : 'Sync Local Grants'}
+        <button onClick={handleSyncGrants} disabled={loading['grants']} className="btn-secondary btn-sm gap-1">
+          {loading['grants'] ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />} {loading['grants'] ? 'Syncing...' : 'Sync Local Grants'}
         </button>
         <button onClick={async () => {
-          setLoading('pgbouncer');
+          setLoading(prev => ({ ...prev, pgbouncer: true }));
           try { setPgbouncerConfig((await api.poolSyncPgbouncer()).config); } catch (err) { toast.error('PgBouncer preview failed'); console.warn(err); }
-          setLoading(null);
-        }} disabled={loading === 'pgbouncer'} className="btn-secondary btn-sm gap-1">
-          <Play size={12} /> {loading === 'pgbouncer' ? 'Generating...' : 'PgBouncer Preview'}
+          setLoading(prev => ({ ...prev, pgbouncer: false }));
+        }} disabled={loading['pgbouncer']} className="btn-secondary btn-sm gap-1">
+          <Play size={12} /> {loading['pgbouncer'] ? 'Generating...' : 'PgBouncer Preview'}
         </button>
-        <button onClick={handleApplyReload} disabled={loading === 'pgbouncer-apply'}
+        <button onClick={handleApplyReload} disabled={loading['pgbouncer-apply']}
           className="btn btn-sm bg-emerald-600 text-white hover:bg-emerald-700 gap-1">
-          <Play size={12} /> {loading === 'pgbouncer-apply' ? 'Applying...' : 'Apply & Reload PgBouncer'}
+          {loading['pgbouncer-apply'] ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />} {loading['pgbouncer-apply'] ? 'Applying...' : 'Apply & Reload PgBouncer'}
         </button>
       </div>
 

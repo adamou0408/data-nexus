@@ -4,7 +4,7 @@ import { pool as authzPool, evictDataSourcePool } from '../db';
 import { audit } from '../audit';
 import { encrypt, decrypt } from '../lib/crypto';
 import { logAdminAction } from '../lib/admin-audit';
-import { getUserId, getClientIp } from '../lib/request-helpers';
+import { getUserId, getClientIp, handleApiError } from '../lib/request-helpers';
 
 export const datasourceRouter = Router();
 
@@ -22,7 +22,7 @@ datasourceRouter.get('/', async (_req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -103,7 +103,7 @@ datasourceRouter.get('/lifecycle-summary', async (_req, res) => {
 
     res.json(summaries);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -124,7 +124,7 @@ datasourceRouter.get('/:id', async (req, res) => {
     }
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -179,7 +179,7 @@ datasourceRouter.post('/', async (req, res) => {
     logAdminAction(authzPool, { userId: getUserId(req), action: 'CREATE_DATASOURCE', resourceType: 'data_source', resourceId: source_id, details: { host, port, database_name }, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -223,7 +223,7 @@ datasourceRouter.put('/:id', async (req, res) => {
     logAdminAction(authzPool, { userId: getUserId(req), action: 'UPDATE_DATASOURCE', resourceType: 'data_source', resourceId: req.params.id, ip: getClientIp(req) });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -243,7 +243,7 @@ datasourceRouter.delete('/:id', async (req, res) => {
     logAdminAction(authzPool, { userId: getUserId(req), action: 'DEACTIVATE_DATASOURCE', resourceType: 'data_source', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ deactivated: req.params.id });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -323,7 +323,7 @@ datasourceRouter.delete('/:id/purge', async (req, res) => {
     });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   } finally {
     client.release();
   }
@@ -362,7 +362,7 @@ datasourceRouter.post('/:id/test', async (req, res) => {
       await testPool.end();
     }
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -388,151 +388,178 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
     try {
       await dsPool.query("SET statement_timeout = '90s'");
 
-      // Get tables and views from allowed schemas
-      const tablesResult = await dsPool.query(`
-        SELECT table_schema, table_name, table_type
-        FROM information_schema.tables
-        WHERE table_schema = ANY($1)
-          AND table_type IN ('BASE TABLE', 'VIEW')
-        ORDER BY table_schema, table_name
-      `, [ds.schemas]);
+      // ── Phase 1: Scan target database ──
+      const [tablesResult, columnsResult, commentsResult, functionsResult] = await Promise.all([
+        dsPool.query(`
+          SELECT table_schema, table_name, table_type
+          FROM information_schema.tables
+          WHERE table_schema = ANY($1) AND table_type IN ('BASE TABLE', 'VIEW')
+          ORDER BY table_schema, table_name
+        `, [ds.schemas]),
+        dsPool.query(`
+          SELECT table_schema, table_name, column_name, data_type, is_nullable
+          FROM information_schema.columns
+          WHERE table_schema = ANY($1)
+          ORDER BY table_schema, table_name, ordinal_position
+        `, [ds.schemas]),
+        dsPool.query(`
+          SELECT c.relname AS table_name, n.nspname AS table_schema,
+                 obj_description(c.oid, 'pg_class') AS table_comment
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = ANY($1)
+            AND c.relkind IN ('r', 'v', 'p')
+            AND obj_description(c.oid, 'pg_class') IS NOT NULL
+        `, [ds.schemas]),
+        dsPool.query(`
+          SELECT p.proname AS function_name, n.nspname AS schema_name,
+                 pg_get_function_arguments(p.oid) AS arguments,
+                 pg_get_function_result(p.oid) AS return_type,
+                 CASE p.provolatile WHEN 'i' THEN 'IMMUTABLE' WHEN 's' THEN 'STABLE' ELSE 'VOLATILE' END AS volatility
+          FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = ANY($1)
+            AND p.prokind IN ('f', 'p')
+            AND p.proname NOT LIKE 'pg_%'
+          ORDER BY n.nspname, p.proname
+        `, [ds.schemas]),
+      ]);
 
-      // Get columns for each table
-      const columnsResult = await dsPool.query(`
-        SELECT table_schema, table_name, column_name, data_type, is_nullable
-        FROM information_schema.columns
-        WHERE table_schema = ANY($1)
-        ORDER BY table_schema, table_name, ordinal_position
-      `, [ds.schemas]);
-
-      // Get table/view comments from pg_description
-      const commentsResult = await dsPool.query(`
-        SELECT c.relname AS table_name, n.nspname AS table_schema,
-               obj_description(c.oid, 'pg_class') AS table_comment
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = ANY($1)
-          AND c.relkind IN ('r', 'v', 'p')
-          AND obj_description(c.oid, 'pg_class') IS NOT NULL
-      `, [ds.schemas]);
+      const tables = tablesResult.rows;
+      const columns = columnsResult.rows;
 
       const commentMap = new Map<string, string>();
       for (const row of commentsResult.rows) {
         commentMap.set(`${row.table_schema}.${row.table_name}`, row.table_comment);
       }
 
-      // Build discovered structure
-      const tables = tablesResult.rows;
-      const columns = columnsResult.rows;
+      // ── Phase 2: Prepare batch arrays ──
 
-      // Auto-create authz_resource entries
-      const created: string[] = [];
-      const updated: string[] = [];
-
+      // Tables/views arrays
+      const tblIds: string[] = [], tblTypes: string[] = [], tblDisplays: string[] = [];
+      const tblAttrs: string[] = [], tblAutoNames: string[] = [];
       for (const table of tables) {
         const isView = table.table_type === 'VIEW';
-        const resourcePrefix = isView ? 'view' : 'table';
-        const resourceId = `${resourcePrefix}:${table.table_name}`;
-        const resourceType = isView ? 'view' : 'table';
-        // Extract alphabetic prefix for mapping UI grouping (e.g. azf_file → azf)
+        const resourceId = `${isView ? 'view' : 'table'}:${table.table_name}`;
         const prefixMatch = table.table_name.match(/^([a-z]+)/i);
         const tablePrefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
         const tableComment = commentMap.get(`${table.table_schema}.${table.table_name}`) || null;
-        const attrs = JSON.stringify({
+        const autoName = `${table.table_schema}.${table.table_name}`;
+
+        tblIds.push(resourceId);
+        tblTypes.push(isView ? 'view' : 'table');
+        tblDisplays.push(tableComment || autoName);
+        tblAttrs.push(JSON.stringify({
           data_source_id: ds.source_id,
           table_schema: table.table_schema,
           ...(tablePrefix ? { table_prefix: tablePrefix } : {}),
           ...(tableComment ? { table_comment: tableComment } : {}),
-        });
-
-        const displayName = tableComment || `${table.table_schema}.${table.table_name}`;
-        const upsertResult = await authzPool.query(`
-          INSERT INTO authz_resource (resource_id, resource_type, display_name, attributes)
-          VALUES ($1, $4, $2, $3)
-          ON CONFLICT (resource_id) DO UPDATE SET
-            attributes = authz_resource.attributes || $3::jsonb,
-            display_name = CASE WHEN authz_resource.display_name = $5 OR authz_resource.display_name IS NULL THEN $2 ELSE authz_resource.display_name END,
-            updated_at = now()
-          RETURNING (xmax = 0) AS is_new
-        `, [resourceId, displayName, attrs, resourceType, `${table.table_schema}.${table.table_name}`]);
-
-        if (upsertResult.rows[0].is_new) {
-          created.push(resourceId);
-        } else {
-          updated.push(resourceId);
-        }
-
-        // Create column resources (for both tables and views)
-        const tableCols = columns.filter(
-          (c: any) => c.table_schema === table.table_schema && c.table_name === table.table_name
-        );
-        for (const col of tableCols) {
-          const colResourceId = `column:${table.table_name}.${col.column_name}`;
-          const colAttrs = JSON.stringify({
-            data_source_id: ds.source_id,
-            data_type: col.data_type,
-          });
-
-          const colResult = await authzPool.query(`
-            INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name, attributes)
-            VALUES ($1, 'column', $2, $3, $4)
-            ON CONFLICT (resource_id) DO UPDATE SET
-              attributes = authz_resource.attributes || $4::jsonb,
-              updated_at = now()
-            RETURNING (xmax = 0) AS is_new
-          `, [colResourceId, resourceId, `${table.table_name}.${col.column_name}`, colAttrs]);
-
-          if (colResult.rows[0].is_new) {
-            created.push(colResourceId);
-          }
-        }
+        }));
+        tblAutoNames.push(autoName);
       }
 
-      // Discover functions and procedures
-      const functionsResult = await dsPool.query(`
-        SELECT p.proname AS function_name, n.nspname AS schema_name,
-               pg_get_function_arguments(p.oid) AS arguments,
-               pg_get_function_result(p.oid) AS return_type,
-               CASE p.provolatile WHEN 'i' THEN 'IMMUTABLE' WHEN 's' THEN 'STABLE' ELSE 'VOLATILE' END AS volatility
-        FROM pg_proc p
-        JOIN pg_namespace n ON n.oid = p.pronamespace
-        WHERE n.nspname = ANY($1)
-          AND p.prokind IN ('f', 'p')
-          AND p.proname NOT LIKE 'pg_%'
-        ORDER BY n.nspname, p.proname
-      `, [ds.schemas]);
+      // Column arrays — build parent_id mapping from table resource IDs
+      const tableResourceMap = new Map<string, string>(); // "schema.table" → resource_id
+      for (let i = 0; i < tables.length; i++) {
+        tableResourceMap.set(`${tables[i].table_schema}.${tables[i].table_name}`, tblIds[i]);
+      }
 
+      const colIds: string[] = [], colParents: string[] = [], colDisplays: string[] = [];
+      const colAttrs: string[] = [];
+      for (const col of columns) {
+        const parentId = tableResourceMap.get(`${col.table_schema}.${col.table_name}`);
+        if (!parentId) continue; // column belongs to a table outside our schemas
+        colIds.push(`column:${col.table_name}.${col.column_name}`);
+        colParents.push(parentId);
+        colDisplays.push(`${col.table_name}.${col.column_name}`);
+        colAttrs.push(JSON.stringify({ data_source_id: ds.source_id, data_type: col.data_type }));
+      }
+
+      // Function arrays
+      const fnIds: string[] = [], fnDisplays: string[] = [], fnAttrs: string[] = [];
       for (const fn of functionsResult.rows) {
-        const fnResourceId = `function:${fn.schema_name}.${fn.function_name}`;
-        const fnAttrs = JSON.stringify({
+        fnIds.push(`function:${fn.schema_name}.${fn.function_name}`);
+        fnDisplays.push(`${fn.schema_name}.${fn.function_name}(${fn.arguments})`);
+        fnAttrs.push(JSON.stringify({
           data_source_id: ds.source_id,
           arguments: fn.arguments,
           return_type: fn.return_type,
           volatility: fn.volatility,
-        });
-
-        const fnResult = await authzPool.query(`
-          INSERT INTO authz_resource (resource_id, resource_type, display_name, attributes)
-          VALUES ($1, 'function', $2, $3)
-          ON CONFLICT (resource_id) DO UPDATE SET
-            attributes = authz_resource.attributes || $3::jsonb,
-            updated_at = now()
-          RETURNING (xmax = 0) AS is_new
-        `, [fnResourceId, `${fn.schema_name}.${fn.function_name}(${fn.arguments})`, fnAttrs]);
-
-        if (fnResult.rows[0].is_new) {
-          created.push(fnResourceId);
-        }
+        }));
       }
 
-      // Update last_synced_at
-      await authzPool.query(
-        'UPDATE authz_data_source SET last_synced_at = now() WHERE source_id = $1',
-        [ds.source_id]
-      );
+      // ── Phase 3: Batch upsert inside transaction ──
+      const client = await authzPool.connect();
+      let created: string[] = [];
+      try {
+        await client.query('BEGIN');
+
+        // Batch upsert tables/views (smart display_name: only overwrite auto-generated names)
+        if (tblIds.length > 0) {
+          const tblResult = await client.query(`
+            WITH input AS (
+              SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::jsonb[], $5::text[])
+                AS t(r_id, r_type, d_name, attrs, auto_name)
+            )
+            INSERT INTO authz_resource (resource_id, resource_type, display_name, attributes)
+            SELECT r_id, r_type, d_name, attrs FROM input
+            ON CONFLICT (resource_id) DO UPDATE SET
+              attributes = authz_resource.attributes || EXCLUDED.attributes,
+              display_name = CASE
+                WHEN authz_resource.display_name IS NULL THEN EXCLUDED.display_name
+                WHEN authz_resource.display_name = (SELECT i.auto_name FROM input i WHERE i.r_id = authz_resource.resource_id)
+                  THEN EXCLUDED.display_name
+                ELSE authz_resource.display_name
+              END,
+              updated_at = now()
+            RETURNING resource_id, (xmax = 0) AS is_new
+          `, [tblIds, tblTypes, tblDisplays, tblAttrs, tblAutoNames]);
+          created.push(...tblResult.rows.filter((r: any) => r.is_new).map((r: any) => r.resource_id));
+        }
+
+        // Batch upsert columns
+        if (colIds.length > 0) {
+          const colResult = await client.query(`
+            INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name, attributes)
+            SELECT unnest($1::text[]), 'column', unnest($2::text[]), unnest($3::text[]), unnest($4::jsonb[])
+            ON CONFLICT (resource_id) DO UPDATE SET
+              attributes = authz_resource.attributes || EXCLUDED.attributes,
+              updated_at = now()
+            RETURNING resource_id, (xmax = 0) AS is_new
+          `, [colIds, colParents, colDisplays, colAttrs]);
+          created.push(...colResult.rows.filter((r: any) => r.is_new).map((r: any) => r.resource_id));
+        }
+
+        // Batch upsert functions
+        if (fnIds.length > 0) {
+          const fnResult = await client.query(`
+            INSERT INTO authz_resource (resource_id, resource_type, display_name, attributes)
+            SELECT unnest($1::text[]), 'function', unnest($2::text[]), unnest($3::jsonb[])
+            ON CONFLICT (resource_id) DO UPDATE SET
+              attributes = authz_resource.attributes || EXCLUDED.attributes,
+              updated_at = now()
+            RETURNING resource_id, (xmax = 0) AS is_new
+          `, [fnIds, fnDisplays, fnAttrs]);
+          created.push(...fnResult.rows.filter((r: any) => r.is_new).map((r: any) => r.resource_id));
+        }
+
+        // Update last_synced_at inside the same transaction
+        await client.query(
+          'UPDATE authz_data_source SET last_synced_at = now() WHERE source_id = $1',
+          [ds.source_id]
+        );
+
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
 
       const viewCount = tables.filter((t: any) => t.table_type === 'VIEW').length;
       const tableCount = tables.length - viewCount;
+      const totalResources = tblIds.length + colIds.length + fnIds.length;
       audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_discover', resource_id: ds.source_id, decision: 'allow', context: { tables_found: tableCount, views_found: viewCount, functions_found: functionsResult.rows.length, resources_created: created.length } });
       logAdminAction(authzPool, { userId: getUserId(req), action: 'DISCOVER_DATASOURCE', resourceType: 'data_source', resourceId: ds.source_id, details: { tables_found: tableCount, views_found: viewCount, functions_found: functionsResult.rows.length, resources_created: created.length }, ip: getClientIp(req) });
 
@@ -543,14 +570,14 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
         functions_found: functionsResult.rows.length,
         columns_found: columns.length,
         resources_created: created.length,
-        resources_updated: updated.length,
+        resources_updated: totalResources - created.length,
         created,
       });
     } finally {
       await dsPool.end();
     }
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -581,7 +608,7 @@ datasourceRouter.get('/:id/schemas', async (req, res) => {
       await dsPool.end();
     }
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -682,7 +709,7 @@ datasourceRouter.get('/:id/lifecycle', async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -743,6 +770,6 @@ datasourceRouter.get('/:id/tables', async (req, res) => {
       await dsPool.end();
     }
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });

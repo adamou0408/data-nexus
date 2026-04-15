@@ -5,7 +5,7 @@ import { pool, getDataSourcePool } from '../db';
 import { audit } from '../audit';
 import { syncExternalGrants, syncRemoteCredential, detectRemoteDrift } from '../lib/remote-sync';
 import { logAdminAction } from '../lib/admin-audit';
-import { getUserId, getClientIp } from '../lib/request-helpers';
+import { getUserId, getClientIp, handleApiError } from '../lib/request-helpers';
 
 export const poolRouter = Router();
 
@@ -21,7 +21,7 @@ poolRouter.get('/uncredentialed-roles', async (_req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -37,7 +37,7 @@ poolRouter.get('/profiles', async (_req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -53,7 +53,7 @@ poolRouter.get('/profiles/:id', async (req, res) => {
     }
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -85,7 +85,7 @@ poolRouter.post('/profiles', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'CREATE_PROFILE', resourceType: 'pool_profile', resourceId: profile_id, details: { pg_role, connection_mode }, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -129,7 +129,7 @@ poolRouter.put('/profiles/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'UPDATE_PROFILE', resourceType: 'pool_profile', resourceId: req.params.id, ip: getClientIp(req) });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -147,7 +147,7 @@ poolRouter.delete('/profiles/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'DELETE_PROFILE', resourceType: 'pool_profile', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ deleted: req.params.id });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -165,7 +165,7 @@ poolRouter.get('/profiles/:id/assignments', async (req, res) => {
     `, [req.params.id]);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -182,7 +182,7 @@ poolRouter.post('/assignments', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'CREATE_ASSIGNMENT', resourceType: 'pool_assignment', resourceId: profile_id, details: { subject_id, granted_by }, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -200,7 +200,7 @@ poolRouter.delete('/assignments/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'DEACTIVATE_ASSIGNMENT', resourceType: 'pool_assignment', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ deleted: req.params.id });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -218,7 +218,7 @@ poolRouter.post('/assignments/:id/reactivate', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'REACTIVATE_ASSIGNMENT', resourceType: 'pool_assignment', resourceId: req.params.id, ip: getClientIp(req) });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -234,7 +234,7 @@ poolRouter.get('/credentials', async (_req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -252,7 +252,7 @@ poolRouter.post('/credentials', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'CREATE_CREDENTIAL', resourceType: 'credential', resourceId: pg_role, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -271,7 +271,7 @@ poolRouter.delete('/credentials/:pg_role', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'DEACTIVATE_CREDENTIAL', resourceType: 'credential', resourceId: pg_role, ip: getClientIp(req) });
     res.json({ deactivated: pg_role });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -290,7 +290,7 @@ poolRouter.post('/credentials/:pg_role/reactivate', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'REACTIVATE_CREDENTIAL', resourceType: 'credential', resourceId: pg_role, ip: getClientIp(req) });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -320,7 +320,7 @@ poolRouter.post('/credentials/:pg_role/rotate', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'ROTATE_CREDENTIAL', resourceType: 'credential', resourceId: pg_role, details: { remote_sync_count: remoteSync.length }, ip: getClientIp(req) });
     res.json({ ...result.rows[0], remote_sync: remoteSync });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -334,7 +334,7 @@ poolRouter.post('/sync/grants', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'SYNC_GRANTS', resourceType: 'system', resourceId: 'db_grants', details: { actions_count: result.rows.length }, ip: getClientIp(req) });
     res.json({ actions: result.rows });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -372,7 +372,7 @@ poolRouter.post('/sync/pgbouncer', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'SYNC_PGBOUNCER', resourceType: 'system', resourceId: data_source_id || 'default', details: { db_host, db_port, db_name }, ip: getClientIp(req) });
     res.json({ config: result.rows[0].config });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -451,7 +451,7 @@ stats_users = nexus_admin
       reload: reloadResult,
     });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -465,7 +465,7 @@ poolRouter.post('/sync/external-grants', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'SYNC_EXTERNAL_GRANTS', resourceType: 'system', resourceId: data_source_id || 'all', details: { actions_count: actions.length }, ip: getClientIp(req) });
     res.json({ actions });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -480,7 +480,7 @@ poolRouter.post('/sync/external-grants/drift', async (req, res) => {
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'detect_drift', resource_id: `datasource:${data_source_id}`, decision: 'allow', context: { drift_items: report.items.length } });
     res.json(report);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -535,6 +535,6 @@ poolRouter.get('/metabase-connections', async (_req, res) => {
       connections,
     });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });

@@ -13,6 +13,7 @@ import { datasourceRouter } from './routes/datasource';
 import { configExecRouter } from './routes/config-exec';
 import { requireRole, requireAuth } from './middleware/authz';
 import { optionalJWT, buildJWTConfig } from './middleware/jwt';
+import { verifyCryptoKey } from './lib/crypto';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001');
@@ -50,5 +51,6 @@ app.use('/api/pool', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), poolRouter);
 app.use('/api/datasources', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), datasourceRouter);
 
 app.listen(PORT, () => {
+  verifyCryptoKey();
   console.log(`authz-api listening on http://localhost:${PORT}`);
 });
