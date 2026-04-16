@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool, getDataSourcePool, resolveDataSource } from '../db';
 import { buildMaskedSelect } from '../lib/masked-query';
+import { handleApiError } from '../lib/request-helpers';
 
 export const rlsRouter = Router();
 
@@ -84,7 +85,7 @@ rlsRouter.post('/simulate', async (req, res) => {
       rewritten_sql: result.rewrittenSql,
     });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -101,6 +102,6 @@ rlsRouter.get('/data', async (req, res) => {
     const result = await dataPool.query(`SELECT * FROM ${table} ORDER BY ${tableConfig.orderBy}`);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });

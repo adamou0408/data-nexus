@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { pool } from '../db';
+import { handleApiError } from '../lib/request-helpers';
 
 export const filterRouter = Router();
 
@@ -12,6 +13,6 @@ filterRouter.post('/', async (req, res) => {
     );
     res.json({ filter_clause: result.rows[0].filter_clause });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });

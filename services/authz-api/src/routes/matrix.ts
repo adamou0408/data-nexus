@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { pool } from '../db';
+import { handleApiError } from '../lib/request-helpers';
 
 export const matrixRouter = Router();
 
@@ -32,6 +33,6 @@ matrixRouter.get('/', async (req, res) => {
       actions: actions.rows,
     });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });

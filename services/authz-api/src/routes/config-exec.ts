@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { pool, getDataSourcePool, resolveDataSource } from '../db';
 import { buildMaskedSelect, ColumnDef } from '../lib/masked-query';
+import { handleApiError } from '../lib/request-helpers';
 
 export const configExecRouter = Router();
 
@@ -24,7 +25,7 @@ configExecRouter.post('/root', async (req: Request, res: Response) => {
 
     res.json(payload);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -142,7 +143,7 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 

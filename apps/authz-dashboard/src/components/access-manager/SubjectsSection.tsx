@@ -6,6 +6,7 @@ import { useToast } from '../Toast';
 import { SortableHeader } from '../SortableHeader';
 import { autoId, uniqueId } from '../../utils/slugify';
 import { Plus, Pencil, Trash2, X, Check, ChevronDown, ChevronRight, Search, Copy } from 'lucide-react';
+import { DangerConfirmModal, ConfirmState } from '../shared/DangerConfirmModal';
 
 export function SubjectsSection({ data, onReload }: { data: Record<string, unknown>[]; onReload: () => void }) {
   const [showForm, setShowForm] = useState(false);
@@ -19,6 +20,7 @@ export function SubjectsSection({ data, onReload }: { data: Record<string, unkno
   const { query, setQuery, filtered } = useSearch(data, ['subject_id', 'display_name', 'subject_type']);
   const { sorted, sortKey, sortDir, toggleSort } = useSort(filtered, 'display_name');
   const toast = useToast();
+  const [dangerConfirm, setDangerConfirm] = useState<ConfirmState>(null);
   const existingIds = useMemo(() => data.map(d => String(d.subject_id)), [data]);
   const suggestedId = uniqueId(autoId.subject(form.display_name, form.subject_type), existingIds);
 
@@ -59,13 +61,19 @@ export function SubjectsSection({ data, onReload }: { data: Record<string, unkno
     setEditId(null); setShowForm(true);
   };
 
-  const remove = async (id: string) => {
-    if (!confirm(`Deactivate subject ${id}?`)) return;
-    try {
-      await api.subjectDelete(id);
-      toast.success(`Subject "${id}" deactivated`);
-      onReload();
-    } catch (e) { toast.error(String(e)); }
+  const remove = (id: string) => {
+    setDangerConfirm({
+      title: 'Deactivate Subject',
+      message: `This will deactivate subject "${id}".`,
+      impact: 'The subject will lose all role assignments and resource access.',
+      onConfirm: async () => {
+        try {
+          await api.subjectDelete(id);
+          toast.success(`Subject "${id}" deactivated`);
+          onReload();
+        } catch (e) { toast.error(String(e)); }
+      },
+    });
   };
 
   const addRole = async (subjectId: string) => {
@@ -265,6 +273,7 @@ export function SubjectsSection({ data, onReload }: { data: Record<string, unkno
           </tbody>
         </table>
       </div>
+      <DangerConfirmModal state={dangerConfirm} onClose={() => setDangerConfirm(null)} />
     </div>
   );
 }

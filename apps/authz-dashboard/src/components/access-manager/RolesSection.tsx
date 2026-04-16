@@ -6,6 +6,7 @@ import { useToast } from '../Toast';
 import { SortableHeader } from '../SortableHeader';
 import { autoId, uniqueId } from '../../utils/slugify';
 import { Plus, Pencil, Trash2, X, Check, ChevronDown, ChevronRight, Search, Copy } from 'lucide-react';
+import { DangerConfirmModal, ConfirmState } from '../shared/DangerConfirmModal';
 
 function RoleClearanceEditor({ role, onSaved }: { role: Record<string, unknown>; onSaved: () => void }) {
   const [clearance, setClearance] = useState(String(role.security_clearance || 'PUBLIC'));
@@ -65,6 +66,7 @@ export function RolesSection({ data, onReload }: { data: Record<string, unknown>
   const { query, setQuery, filtered } = useSearch(data, ['role_id', 'display_name', 'description']);
   const { sorted, sortKey, sortDir, toggleSort } = useSort(filtered, 'role_id');
   const toast = useToast();
+  const [dangerConfirm, setDangerConfirm] = useState<ConfirmState>(null);
   const existingIds = useMemo(() => data.map(d => String(d.role_id)), [data]);
   const suggestedId = uniqueId(autoId.role(form.display_name), existingIds);
 
@@ -225,8 +227,12 @@ export function RolesSection({ data, onReload }: { data: Record<string, unknown>
                       <button onClick={() => { setForm({ role_id: rid, display_name: String(r.display_name), description: String(r.description || ''), is_system: !!r.is_system }); setEditId(rid); setShowForm(true); }}
                         className="btn-secondary btn-sm p-1" title="Edit"><Pencil size={12} /></button>
                       <button onClick={() => clone(r)} className="btn-secondary btn-sm p-1" title="Clone with permissions"><Copy size={12} /></button>
-                      <button onClick={async () => { if (confirm(`Deactivate role ${rid}?`)) { try { await api.roleDelete(rid); toast.success(`Role "${rid}" deactivated`); onReload(); } catch (e) { toast.error(String(e)); } }}}
-                        className="btn-secondary btn-sm p-1 text-red-500"><Trash2 size={12} /></button>
+                      <button onClick={() => setDangerConfirm({
+                        title: 'Deactivate Role',
+                        message: `This will deactivate role "${rid}".`,
+                        impact: 'All users assigned this role will lose its permissions.',
+                        onConfirm: async () => { try { await api.roleDelete(rid); toast.success(`Role "${rid}" deactivated`); onReload(); } catch (e) { toast.error(String(e)); } },
+                      })} className="btn-secondary btn-sm p-1 text-red-500"><Trash2 size={12} /></button>
                     </div>
                   </td>
                 </tr>
@@ -280,6 +286,7 @@ export function RolesSection({ data, onReload }: { data: Record<string, unknown>
           </tbody>
         </table>
       </div>
+      <DangerConfirmModal state={dangerConfirm} onClose={() => setDangerConfirm(null)} />
     </div>
   );
 }

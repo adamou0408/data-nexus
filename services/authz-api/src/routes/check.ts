@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../db';
 import { audit } from '../audit';
+import { handleApiError } from '../lib/request-helpers';
 
 export const checkRouter = Router();
 
@@ -21,7 +22,7 @@ checkRouter.post('/', async (req, res) => {
     });
     res.json({ allowed });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -41,6 +42,6 @@ checkRouter.post('/batch', async (req, res) => {
     );
     res.json(results);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });

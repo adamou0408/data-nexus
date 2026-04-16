@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../db';
 import { logAdminAction } from '../lib/admin-audit';
-import { getUserId, getClientIp } from '../lib/request-helpers';
+import { getUserId, getClientIp, handleApiError } from '../lib/request-helpers';
 
 export const browseAdminRouter = Router();
 
@@ -20,7 +20,7 @@ browseAdminRouter.post('/subjects', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'CREATE_SUBJECT', resourceType: 'subject', resourceId: subject_id, details: { subject_type, display_name }, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -38,7 +38,7 @@ browseAdminRouter.put('/subjects/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'UPDATE_SUBJECT', resourceType: 'subject', resourceId: req.params.id, details: { display_name, is_active }, ip: getClientIp(req) });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -48,7 +48,7 @@ browseAdminRouter.delete('/subjects/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'DELETE_SUBJECT', resourceType: 'subject', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -63,7 +63,7 @@ browseAdminRouter.post('/subjects/:id/groups', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'ADD_GROUP_MEMBER', resourceType: 'subject', resourceId: req.params.id, details: { group_id }, ip: getClientIp(req) });
     res.status(201).json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -73,7 +73,7 @@ browseAdminRouter.delete('/subjects/:id/groups/:groupId', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'REMOVE_GROUP_MEMBER', resourceType: 'subject', resourceId: req.params.id, details: { group_id: req.params.groupId }, ip: getClientIp(req) });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -91,7 +91,7 @@ browseAdminRouter.post('/subjects/:id/roles', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'ASSIGN_ROLE', resourceType: 'subject', resourceId: req.params.id, details: { role_id, valid_from, valid_until }, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -104,7 +104,7 @@ browseAdminRouter.delete('/subjects/:id/roles/:roleId', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'REVOKE_ROLE', resourceType: 'subject', resourceId: req.params.id, details: { role_id: req.params.roleId }, ip: getClientIp(req) });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -122,7 +122,7 @@ browseAdminRouter.post('/roles', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'CREATE_ROLE', resourceType: 'role', resourceId: role_id, details: { display_name, is_system }, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -139,7 +139,7 @@ browseAdminRouter.put('/roles/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'UPDATE_ROLE', resourceType: 'role', resourceId: req.params.id, details: { display_name, description, is_active }, ip: getClientIp(req) });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -149,7 +149,7 @@ browseAdminRouter.delete('/roles/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'DELETE_ROLE', resourceType: 'role', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -167,7 +167,7 @@ browseAdminRouter.post('/roles/:id/permissions', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'SET_PERMISSION', resourceType: 'role', resourceId: req.params.id, details: { action_id, resource_id, effect: effect || 'allow' }, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -177,7 +177,7 @@ browseAdminRouter.delete('/roles/:id/permissions/:permId', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'REVOKE_PERMISSION', resourceType: 'role', resourceId: req.params.id, details: { permission_id: req.params.permId }, ip: getClientIp(req) });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -203,7 +203,7 @@ browseAdminRouter.put('/resources/bulk-parent', async (req, res) => {
     res.json({ updated });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   } finally {
     client.release();
   }
@@ -223,7 +223,7 @@ browseAdminRouter.post('/resources', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'CREATE_RESOURCE', resourceType: 'resource', resourceId: resource_id, details: { resource_type, display_name }, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -241,7 +241,7 @@ browseAdminRouter.put('/resources/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'UPDATE_RESOURCE', resourceType: 'resource', resourceId: req.params.id, details: { display_name, is_active }, ip: getClientIp(req) });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -251,7 +251,7 @@ browseAdminRouter.delete('/resources/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'DELETE_RESOURCE', resourceType: 'resource', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -279,7 +279,7 @@ browseAdminRouter.post('/policies', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'CREATE_POLICY', resourceType: 'policy', resourceId: String(result.rows[0].policy_id), details: { policy_name, granularity, effect }, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -312,7 +312,7 @@ browseAdminRouter.put('/policies/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'UPDATE_POLICY', resourceType: 'policy', resourceId: req.params.id, details: { status, priority, effect }, ip: getClientIp(req) });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -322,7 +322,7 @@ browseAdminRouter.delete('/policies/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'DELETE_POLICY', resourceType: 'policy', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -340,7 +340,7 @@ browseAdminRouter.post('/actions', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'CREATE_ACTION', resourceType: 'action', resourceId: action_id, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -358,7 +358,7 @@ browseAdminRouter.put('/actions/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'UPDATE_ACTION', resourceType: 'action', resourceId: req.params.id, ip: getClientIp(req) });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -368,7 +368,7 @@ browseAdminRouter.delete('/actions/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'DELETE_ACTION', resourceType: 'action', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -387,7 +387,7 @@ browseAdminRouter.post('/policies/:id/assignments', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'CREATE_POLICY_ASSIGNMENT', resourceType: 'policy_assignment', resourceId: String(result.rows[0].id), details: { policy_id: req.params.id, assignment_type, assignment_value, is_exception }, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -401,7 +401,7 @@ browseAdminRouter.delete('/policy-assignments/:id', async (req, res) => {
     logAdminAction(pool, { userId: getUserId(req), action: 'DELETE_POLICY_ASSIGNMENT', resourceType: 'policy_assignment', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -439,7 +439,7 @@ browseAdminRouter.put('/resources/:id/classify', async (req, res) => {
     });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -461,6 +461,6 @@ browseAdminRouter.put('/roles/:id/clearance', async (req, res) => {
     });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });

@@ -364,6 +364,9 @@ export type PoolAssignment = {
   subject_name: string;
   granted_by: string;
   is_active: boolean;
+  valid_from?: string;
+  valid_until?: string;
+  created_at?: string;
 };
 
 export type PoolCredential = {

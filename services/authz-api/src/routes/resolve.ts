@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../db';
 import { audit } from '../audit';
-import { isAdminUser } from '../lib/request-helpers';
+import { isAdminUser, handleApiError } from '../lib/request-helpers';
 
 export const resolveRouter = Router();
 
@@ -62,7 +62,7 @@ resolveRouter.post('/', async (req, res) => {
     // Non-admin or no _detailed flag: sanitize
     res.json(sanitizeForClient(fullConfig));
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -81,6 +81,6 @@ resolveRouter.post('/web-acl', async (req, res) => {
     });
     res.json(result.rows[0].config);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });

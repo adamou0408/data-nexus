@@ -28,7 +28,7 @@ export async function getDataSourcePool(sourceId: string): Promise<Pool> {
   if (existing) return existing;
 
   const result = await authzPool.query(
-    'SELECT * FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE',
+    'SELECT host, port, database_name, connector_user, connector_password FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE',
     [sourceId]
   );
   if (result.rows.length === 0) {
@@ -52,7 +52,7 @@ export async function getDataSourcePool(sourceId: string): Promise<Pool> {
 // Single client connection for DDL operations (caller must call client.end())
 export async function getDataSourceClient(sourceId: string): Promise<Client> {
   const result = await authzPool.query(
-    'SELECT * FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE',
+    'SELECT host, port, database_name, connector_user, connector_password FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE',
     [sourceId]
   );
   if (result.rows.length === 0) {

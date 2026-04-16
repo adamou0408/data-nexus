@@ -6,6 +6,7 @@ import { useToast } from '../Toast';
 import { SortableHeader } from '../SortableHeader';
 import { autoId, uniqueId } from '../../utils/slugify';
 import { Plus, Pencil, Trash2, X, Check, ChevronDown, ChevronRight, Search, Copy } from 'lucide-react';
+import { DangerConfirmModal, ConfirmState } from '../shared/DangerConfirmModal';
 
 export function PoliciesSection({ data, onReload }: { data: Record<string, unknown>[]; onReload: () => void }) {
   const [showForm, setShowForm] = useState(false);
@@ -21,6 +22,7 @@ export function PoliciesSection({ data, onReload }: { data: Record<string, unkno
   const { query, setQuery, filtered } = useSearch(data, ['policy_name', 'description', 'granularity', 'effect', 'status']);
   const { sorted, sortKey, sortDir, toggleSort } = useSort(filtered, 'policy_name');
   const toast = useToast();
+  const [dangerConfirm, setDangerConfirm] = useState<ConfirmState>(null);
   const existingIds = useMemo(() => data.map(d => String(d.policy_name)), [data]);
   const suggestedId = uniqueId(autoId.policy(form.description), existingIds);
 
@@ -225,8 +227,12 @@ export function PoliciesSection({ data, onReload }: { data: Record<string, unkno
                         setEditId(pid); setShowForm(true);
                       }} className="btn-secondary btn-sm p-1" title="Edit"><Pencil size={12} /></button>
                       <button onClick={() => clone(p)} className="btn-secondary btn-sm p-1" title="Clone"><Copy size={12} /></button>
-                      <button onClick={async () => { if (confirm(`Deactivate policy?`)) { try { await api.policyDelete(pid); toast.success('Policy deactivated'); onReload(); } catch (e) { toast.error(String(e)); } }}}
-                        className="btn-secondary btn-sm p-1 text-red-500"><Trash2 size={12} /></button>
+                      <button onClick={() => setDangerConfirm({
+                        title: 'Deactivate Policy',
+                        message: `This will deactivate policy "${p.policy_name}".`,
+                        impact: 'This policy will stop being evaluated during authorization checks.',
+                        onConfirm: async () => { try { await api.policyDelete(pid); toast.success('Policy deactivated'); onReload(); } catch (e) { toast.error(String(e)); } },
+                      })} className="btn-secondary btn-sm p-1 text-red-500"><Trash2 size={12} /></button>
                     </div>
                   </td>
                 </tr>
@@ -271,6 +277,7 @@ export function PoliciesSection({ data, onReload }: { data: Record<string, unkno
           </tbody>
         </table>
       </div>
+      <DangerConfirmModal state={dangerConfirm} onClose={() => setDangerConfirm(null)} />
     </div>
   );
 }

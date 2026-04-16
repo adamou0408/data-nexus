@@ -6,6 +6,7 @@ import { useToast } from '../Toast';
 import { SortableHeader } from '../SortableHeader';
 import { autoId, uniqueId } from '../../utils/slugify';
 import { Plus, Pencil, Trash2, X, Check, Search, Copy } from 'lucide-react';
+import { DangerConfirmModal, ConfirmState } from '../shared/DangerConfirmModal';
 
 export function ActionsSection({ data, onReload }: { data: Record<string, unknown>[]; onReload: () => void }) {
   const [showForm, setShowForm] = useState(false);
@@ -14,6 +15,7 @@ export function ActionsSection({ data, onReload }: { data: Record<string, unknow
   const { query, setQuery, filtered } = useSearch(data, ['action_id', 'display_name', 'description']);
   const { sorted, sortKey, sortDir, toggleSort } = useSort(filtered, 'action_id');
   const toast = useToast();
+  const [dangerConfirm, setDangerConfirm] = useState<ConfirmState>(null);
   const existingIds = useMemo(() => data.map(d => String(d.action_id)), [data]);
   const suggestedId = uniqueId(autoId.action(form.display_name), existingIds);
   const pathColor: Record<string, string> = { A: 'badge-blue', B: 'badge-green', C: 'badge-purple' };
@@ -128,8 +130,12 @@ export function ActionsSection({ data, onReload }: { data: Record<string, unknow
                       setEditId(String(a.action_id)); setShowForm(true);
                     }} className="btn-secondary btn-sm p-1" title="Edit"><Pencil size={12} /></button>
                     <button onClick={() => clone(a)} className="btn-secondary btn-sm p-1" title="Clone"><Copy size={12} /></button>
-                    <button onClick={async () => { if (confirm(`Deactivate action ${a.action_id}?`)) { try { await api.actionDelete(String(a.action_id)); toast.success(`Action "${a.action_id}" deactivated`); onReload(); } catch (e) { toast.error(String(e)); } }}}
-                      className="btn-secondary btn-sm p-1 text-red-500"><Trash2 size={12} /></button>
+                    <button onClick={() => setDangerConfirm({
+                      title: 'Deactivate Action',
+                      message: `This will deactivate action "${a.action_id}".`,
+                      impact: 'Permissions using this action will no longer be evaluable.',
+                      onConfirm: async () => { try { await api.actionDelete(String(a.action_id)); toast.success(`Action "${a.action_id}" deactivated`); onReload(); } catch (e) { toast.error(String(e)); } },
+                    })} className="btn-secondary btn-sm p-1 text-red-500"><Trash2 size={12} /></button>
                   </div>
                 </td>
               </tr>
@@ -137,6 +143,7 @@ export function ActionsSection({ data, onReload }: { data: Record<string, unknow
           </tbody>
         </table>
       </div>
+      <DangerConfirmModal state={dangerConfirm} onClose={() => setDangerConfirm(null)} />
     </div>
   );
 }

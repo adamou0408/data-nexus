@@ -6,6 +6,7 @@ import { useToast } from '../Toast';
 import { SortableHeader } from '../SortableHeader';
 import { autoId, uniqueId } from '../../utils/slugify';
 import { Plus, Pencil, Trash2, X, Check, Search, Copy } from 'lucide-react';
+import { DangerConfirmModal, ConfirmState } from '../shared/DangerConfirmModal';
 
 export function ResourcesSection({ data, onReload }: { data: Record<string, unknown>[]; onReload: () => void }) {
   const [showForm, setShowForm] = useState(false);
@@ -14,6 +15,7 @@ export function ResourcesSection({ data, onReload }: { data: Record<string, unkn
   const { query, setQuery, filtered } = useSearch(data, ['resource_id', 'display_name', 'resource_type', 'parent_id']);
   const { sorted, sortKey, sortDir, toggleSort } = useSort(filtered, 'resource_id');
   const toast = useToast();
+  const [dangerConfirm, setDangerConfirm] = useState<ConfirmState>(null);
   const existingIds = useMemo(() => data.map(d => String(d.resource_id)), [data]);
   const suggestedId = uniqueId(autoId.resource(form.display_name, form.resource_type), existingIds);
   const typeColor: Record<string, string> = {
@@ -150,8 +152,12 @@ export function ResourcesSection({ data, onReload }: { data: Record<string, unkn
                       setEditId(String(r.resource_id)); setShowForm(true);
                     }} className="btn-secondary btn-sm p-1" title="Edit"><Pencil size={12} /></button>
                     <button onClick={() => clone(r)} className="btn-secondary btn-sm p-1" title="Clone"><Copy size={12} /></button>
-                    <button onClick={async () => { if (confirm(`Deactivate resource ${r.resource_id}?`)) { try { await api.resourceDelete(String(r.resource_id)); toast.success(`Resource deactivated`); onReload(); } catch (e) { toast.error(String(e)); } }}}
-                      className="btn-secondary btn-sm p-1 text-red-500"><Trash2 size={12} /></button>
+                    <button onClick={() => setDangerConfirm({
+                      title: 'Deactivate Resource',
+                      message: `This will deactivate resource "${r.resource_id}".`,
+                      impact: 'Policies referencing this resource will no longer match.',
+                      onConfirm: async () => { try { await api.resourceDelete(String(r.resource_id)); toast.success('Resource deactivated'); onReload(); } catch (e) { toast.error(String(e)); } },
+                    })} className="btn-secondary btn-sm p-1 text-red-500"><Trash2 size={12} /></button>
                   </div>
                 </td>
               </tr>
@@ -159,6 +165,7 @@ export function ResourcesSection({ data, onReload }: { data: Record<string, unkn
           </tbody>
         </table>
       </div>
+      <DangerConfirmModal state={dangerConfirm} onClose={() => setDangerConfirm(null)} />
     </div>
   );
 }

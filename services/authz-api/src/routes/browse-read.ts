@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { pool } from '../db';
+import { handleApiError } from '../lib/request-helpers';
 
 export const browseReadRouter = Router();
 
@@ -14,7 +15,7 @@ browseReadRouter.get('/subjects', async (_req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -29,37 +30,42 @@ browseReadRouter.get('/roles', async (_req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
 browseReadRouter.get('/resources', async (req, res) => {
   try {
     const typeFilter = req.query.type as string | undefined;
+    const cols = 'resource_id, resource_type, parent_id, display_name, attributes, is_active, created_at, updated_at';
     const result = typeFilter
-      ? await pool.query('SELECT * FROM authz_resource WHERE is_active = TRUE AND resource_type = $1 ORDER BY resource_id', [typeFilter])
-      : await pool.query('SELECT * FROM authz_resource WHERE is_active = TRUE ORDER BY resource_id');
+      ? await pool.query(`SELECT ${cols} FROM authz_resource WHERE is_active = TRUE AND resource_type = $1 ORDER BY resource_id`, [typeFilter])
+      : await pool.query(`SELECT ${cols} FROM authz_resource WHERE is_active = TRUE ORDER BY resource_id`);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
 browseReadRouter.get('/policies', async (_req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM authz_policy ORDER BY policy_id');
+    const result = await pool.query(`SELECT policy_id, policy_name, description, granularity, priority, effect, status,
+       applicable_paths, subject_condition, resource_condition, action_condition,
+       environment_condition, rls_expression, column_mask_rules,
+       created_by, created_at, updated_at
+       FROM authz_policy ORDER BY policy_id`);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
 browseReadRouter.get('/actions', async (_req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM authz_action WHERE is_active = TRUE ORDER BY action_id');
+    const result = await pool.query('SELECT action_id, display_name, description, applicable_paths, is_active FROM authz_action WHERE is_active = TRUE ORDER BY action_id');
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -94,7 +100,7 @@ browseReadRouter.get('/subjects/profiles', async (_req, res) => {
 
     res.json(profiles);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -141,7 +147,7 @@ browseReadRouter.get('/batch-checks', async (_req, res) => {
 
     res.json(checks);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -291,7 +297,7 @@ browseReadRouter.post('/data-explorer', async (req, res) => {
       mask_functions: maskFunctions,
     });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -328,7 +334,7 @@ browseReadRouter.get('/tables', async (req, res) => {
 
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -353,7 +359,7 @@ browseReadRouter.get('/tables/:table', async (req, res) => {
     ).catch(() => ({ rows: [] }));
     res.json({ table: tableName, columns: cols.rows, sample_data: sample.rows });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -376,7 +382,7 @@ browseReadRouter.get('/functions', async (_req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -465,7 +471,7 @@ browseReadRouter.get('/action-items', async (req, res) => {
 
     res.json(items);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -482,7 +488,7 @@ browseReadRouter.get('/roles/:id/permissions', async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -501,7 +507,7 @@ browseReadRouter.get('/resources/unmapped', async (req, res) => {
     `, [dsId]);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -522,7 +528,7 @@ browseReadRouter.get('/resources/mapped', async (req, res) => {
     `, [dsId]);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -540,7 +546,7 @@ browseReadRouter.get('/resources/functions', async (req, res) => {
     `, [dsId]);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -571,7 +577,7 @@ browseReadRouter.get('/audit-logs', async (req, res) => {
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -582,7 +588,7 @@ browseReadRouter.get('/classifications', async (_req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -602,7 +608,7 @@ browseReadRouter.get('/resources/:tableId/columns-classified', async (req, res) 
     `, [req.params.tableId]);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -634,7 +640,7 @@ browseReadRouter.get('/admin-audit', async (req, res) => {
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -656,7 +662,7 @@ browseReadRouter.get('/role-pool-map', async (_req, res) => {
     }
     res.json(map);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -669,7 +675,7 @@ browseReadRouter.get('/policies/:id/assignments', async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });
 
@@ -678,6 +684,6 @@ browseReadRouter.get('/clearance-mappings', async (_req, res) => {
     const result = await pool.query('SELECT * FROM authz_clearance_mapping ORDER BY min_job_level');
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    handleApiError(res, err);
   }
 });

@@ -9,6 +9,12 @@ import { getUserId, getClientIp, handleApiError } from '../lib/request-helpers';
 
 export const poolRouter = Router();
 
+// Module-level pgbouncer config (read once at startup, stable at runtime)
+const pgbouncerHost = process.env.PGBOUNCER_HOST || 'localhost';
+const pgbouncerPort = parseInt(process.env.PGBOUNCER_PORT || '6432');
+const pgbouncerConfigPath = process.env.PGBOUNCER_CONFIG_PATH
+  || path.resolve(__dirname, '../../../../deploy/docker-compose/pgbouncer/pgbouncer.ini');
+
 // List roles that don't have credentials yet (for SSOT dropdown)
 poolRouter.get('/uncredentialed-roles', async (_req, res) => {
   try {
@@ -381,10 +387,6 @@ poolRouter.post('/sync/pgbouncer', async (req, res) => {
 // 2. Write to pgbouncer.ini on the Docker volume
 // 3. Send RELOAD via pgbouncer admin console
 poolRouter.post('/sync/pgbouncer/apply', async (req, res) => {
-  const pgbouncerHost = process.env.PGBOUNCER_HOST || 'localhost';
-  const pgbouncerPort = parseInt(process.env.PGBOUNCER_PORT || '6432');
-  const configPath = process.env.PGBOUNCER_CONFIG_PATH
-    || path.resolve(__dirname, '../../../../deploy/docker-compose/pgbouncer/pgbouncer.ini');
 
   try {
     // Step 1: Generate [databases] section from SSOT
@@ -396,7 +398,7 @@ poolRouter.post('/sync/pgbouncer/apply', async (req, res) => {
 
     // Step 2: Read existing config to preserve [pgbouncer] static settings
     let existingConfig = '';
-    try { existingConfig = fs.readFileSync(configPath, 'utf-8'); } catch { /* first write */ }
+    try { existingConfig = fs.readFileSync(pgbouncerConfigPath, 'utf-8'); } catch { /* first write */ }
 
     // Extract the [pgbouncer] section from existing config (keep static settings)
     const pgbouncerMatch = existingConfig.match(/\[pgbouncer\][\s\S]*/);
@@ -420,7 +422,7 @@ stats_users = nexus_admin
     const finalConfig = dbSection + '\n\n' + pgbouncerSection;
 
     // Step 3: Write merged config file
-    fs.writeFileSync(configPath, finalConfig, 'utf-8');
+    fs.writeFileSync(pgbouncerConfigPath, finalConfig, 'utf-8');
 
     // Step 3: Reload pgbouncer
     // Use docker exec to send SIGHUP (admin console requires special auth setup)
@@ -441,13 +443,13 @@ stats_users = nexus_admin
       action_id: 'apply_pgbouncer',
       resource_id: 'system:pgbouncer',
       decision: 'allow',
-      context: { configPath, reloadResult },
+      context: { pgbouncerConfigPath, reloadResult },
     });
-    logAdminAction(pool, { userId: getUserId(req), action: 'APPLY_PGBOUNCER', resourceType: 'system', resourceId: 'pgbouncer', details: { configPath, reloadResult }, ip: getClientIp(req) });
+    logAdminAction(pool, { userId: getUserId(req), action: 'APPLY_PGBOUNCER', resourceType: 'system', resourceId: 'pgbouncer', details: { pgbouncerConfigPath, reloadResult }, ip: getClientIp(req) });
 
     res.json({
       applied: true,
-      config_path: configPath,
+      config_path: pgbouncerConfigPath,
       reload: reloadResult,
     });
   } catch (err) {
