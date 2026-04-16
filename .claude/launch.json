@@ -5,7 +5,7 @@
       "name": "authz-dashboard",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "port": 5173,
+      "port": 5200,
       "cwd": "apps/authz-dashboard"
     }
   ]
