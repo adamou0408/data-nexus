@@ -6,8 +6,8 @@
 
 ```bash
 make up          # Start PostgreSQL + Redis + PgBouncer
-make dev-api     # Start API server (http://localhost:3001)
-make dev-ui      # Start Dashboard UI (http://localhost:5173)
+make dev-api     # Start API server (http://localhost:13001)
+make dev-ui      # Start Dashboard UI (http://localhost:13173)
 
 # Or all at once:
 make dev
@@ -15,7 +15,7 @@ make dev
 
 ### 2. Open the Dashboard
 
-Go to **http://localhost:5173**
+Go to **http://localhost:13173**
 
 ### 3. Select a User
 
@@ -135,11 +135,11 @@ All paths are controlled by the same SSOT (Single Source of Truth):
 
 | Service | Port | URL |
 |---------|------|-----|
-| Dashboard UI | 5173 | http://localhost:5173 |
-| AuthZ API | 3001 | http://localhost:3001 |
-| PostgreSQL | 5432 | `psql -h localhost -U nexus_admin -d nexus_authz` |
-| PgBouncer | 6432 | Connection pooler for Path C |
-| Redis | 6379 | Cache layer |
+| Dashboard UI | 13173 | http://localhost:13173 |
+| AuthZ API | 13001 | http://localhost:13001 |
+| PostgreSQL | 15432 | `psql -h localhost -p 15432 -U nexus_admin -d nexus_authz` |
+| PgBouncer | 16432 | Connection pooler for Path C |
+| Redis | 16379 | Cache layer |
 | phpLDAPadmin | 8090 | http://localhost:8090 (requires `make up-ldap`) |
 | Metabase BI | 3100 | http://localhost:3100 (requires `make metabase-up`) |
 

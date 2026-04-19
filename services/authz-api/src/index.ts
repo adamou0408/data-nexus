@@ -10,13 +10,19 @@ import { browseReadRouter } from './routes/browse-read';
 import { browseAdminRouter } from './routes/browse-admin';
 import { poolRouter } from './routes/pool';
 import { datasourceRouter } from './routes/datasource';
+import { oracleExecRouter } from './routes/oracle-exec';
 import { configExecRouter } from './routes/config-exec';
+import { configSnapshotRouter } from './routes/config-snapshot';
+import { configBulkRouter } from './routes/config-bulk';
+import { modulesRouter } from './routes/modules';
+import { uiRouter } from './routes/ui';
 import { requireRole, requireAuth } from './middleware/authz';
 import { optionalJWT, buildJWTConfig } from './middleware/jwt';
 import { verifyCryptoKey } from './lib/crypto';
+import { startResourceEventListener } from './lib/resource-events';
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '3001');
+const PORT = parseInt(process.env.PORT || '13001');
 
 app.use(cors());
 app.use(express.json());
@@ -49,8 +55,19 @@ app.use('/api/config-exec', requireAuth, configExecRouter);
 // Admin APIs (require ADMIN or AUTHZ_ADMIN role via X-User-Id header)
 app.use('/api/pool', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), poolRouter);
 app.use('/api/datasources', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), datasourceRouter);
+// Modules: read open to all authenticated users (per-resource authz_check inside),
+// write operations (DELETE) protected by requireRole inside the router
+app.use('/api/modules', requireAuth, modulesRouter);
+// UI metadata (descriptors) — any authenticated user can fetch
+app.use('/api/ui', requireAuth, uiRouter);
+app.use('/api/oracle-exec', requireAuth, oracleExecRouter);
+
+// Config snapshot & bulk import (admin-only)
+app.use('/api/config/snapshot', requireRole('ADMIN', 'AUTHZ_ADMIN'), configSnapshotRouter);
+app.use('/api/config/bulk', requireRole('ADMIN', 'AUTHZ_ADMIN'), configBulkRouter);
 
 app.listen(PORT, () => {
   verifyCryptoKey();
+  startResourceEventListener();
   console.log(`authz-api listening on http://localhost:${PORT}`);
 });

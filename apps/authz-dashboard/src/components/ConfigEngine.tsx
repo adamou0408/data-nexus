@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback, ReactNode, useMemo } from 'react';
+import { useState, useEffect, useCallback, ReactNode, useMemo, ComponentType } from 'react';
 import { useAuthz } from '../AuthzContext';
 import { api } from '../api';
 import {
   Home, ChevronRight, ArrowLeft, Loader2, AlertTriangle,
   Package, ShoppingCart, ShieldCheck, FlaskConical, Undo2,
-  DollarSign, ClipboardCheck, Layers, Database,
+  DollarSign, ClipboardCheck, Layers, Database, Boxes,
 } from 'lucide-react';
+import { ModulesTab } from './modules/ModulesTab';
 
 // ============================================================
 // Types — all derived from API response, never hardcoded
@@ -86,6 +87,20 @@ const ICON_MAP: Record<string, ReactNode> = {
   'clipboard-check': <ClipboardCheck size={24} />,
   'layers':          <Layers size={24} />,
   'database':        <Database size={24} />,
+  'boxes':           <Boxes size={24} />,
+};
+
+// ============================================================
+// tree_detail handler registry — L4 Config-SM dispatch
+// Maps page_id (from authz_ui_page) to the React component that
+// renders the tree+detail experience for that page.
+// ============================================================
+export type TreeDetailHandlerProps = {
+  config: PageConfig;
+};
+
+const TREE_DETAIL_HANDLERS: Record<string, ComponentType<TreeDetailHandlerProps>> = {
+  'modules_home': ModulesTab,
 };
 
 // ============================================================
@@ -474,31 +489,44 @@ function NavigationBar({
 // ConfigDrilldownEngine — main component
 // ============================================================
 
-export function ConfigEngine() {
+export function ConfigEngine({ initialPageId }: { initialPageId?: string } = {}) {
   const { user } = useAuthz();
   const [stack, setStack] = useState<StackEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load root page on mount or user change
+  // Load the initial page (root card grid, or a specific page if initialPageId given)
   const loadRoot = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     setError(null);
     try {
-      const result = await api.configExecRoot();
-      setStack([{
-        pageId: 'root',
-        params: {},
-        config: result.config as unknown as PageConfig,
-        data: [],
-      }]);
+      if (initialPageId) {
+        // Direct page load — modules_home and other entry points
+        const result = await api.configExecPage(initialPageId);
+        setStack([{
+          pageId: initialPageId,
+          params: {},
+          config: result.config as unknown as PageConfig,
+          data: result.data || [],
+          meta: result.meta as unknown as PageMeta,
+        }]);
+      } else {
+        // Root card grid — default Data Explorer behavior
+        const result = await api.configExecRoot();
+        setStack([{
+          pageId: 'root',
+          params: {},
+          config: result.config as unknown as PageConfig,
+          data: [],
+        }]);
+      }
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, initialPageId]);
 
   useEffect(() => { loadRoot(); }, [loadRoot]);
 
@@ -573,15 +601,20 @@ export function ConfigEngine() {
 
   if (!current) return null;
 
+  // tree_detail handlers render their own header + layout — ConfigEngine just routes
+  const isTreeDetail = current.config.layout === 'tree_detail';
+
   return (
     <div>
-      {/* Page header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">{current.config.title}</h1>
-        {current.config.subtitle && (
-          <p className="text-sm text-slate-500 mt-1">{current.config.subtitle}</p>
-        )}
-      </div>
+      {/* Page header — suppressed for tree_detail (handler owns the header) */}
+      {!isTreeDetail && (
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-slate-900">{current.config.title}</h1>
+          {current.config.subtitle && (
+            <p className="text-sm text-slate-500 mt-1">{current.config.subtitle}</p>
+          )}
+        </div>
+      )}
 
       {/* Navigation */}
       <NavigationBar stack={stack} onBack={goBack} onHome={goHome} onBreadcrumb={goTo} />
@@ -623,6 +656,22 @@ export function ConfigEngine() {
             : undefined}
         />
       )}
+
+      {/* tree_detail layout → dispatch to registered handler (L4 Config-SM) */}
+      {isTreeDetail && (() => {
+        const Handler = TREE_DETAIL_HANDLERS[current.pageId];
+        if (!Handler) {
+          return (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 flex items-start gap-2">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <div>
+                No tree_detail handler registered for page_id: <code className="font-mono">{current.pageId}</code>
+              </div>
+            </div>
+          );
+        }
+        return <Handler config={current.config} />;
+      })()}
 
       {/* Drill-down params display (when navigated with params) */}
       {Object.keys(current.params).length > 0 && (

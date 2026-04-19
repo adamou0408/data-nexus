@@ -1,24 +1,31 @@
-import { useState, useMemo } from 'react';
-import { api } from '../../api';
+import { useState, useEffect, useMemo } from 'react';
+import { api, UIDescriptor } from '../../api';
 import { useSearch } from '../../hooks/useSearch';
 import { useSort } from '../../hooks/useSort';
 import { useToast } from '../Toast';
-import { SortableHeader } from '../SortableHeader';
 import { autoId, uniqueId } from '../../utils/slugify';
 import { Plus, Pencil, Trash2, X, Check, Search, Copy } from 'lucide-react';
 import { DangerConfirmModal, ConfirmState } from '../shared/DangerConfirmModal';
+import { MetadataGrid } from '../shared/MetadataGrid';
 
 export function ActionsSection({ data, onReload }: { data: Record<string, unknown>[]; onReload: () => void }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ action_id: '', display_name: '', description: '', applicable_paths: 'A,B,C' });
   const [editId, setEditId] = useState<string | null>(null);
+  const [descriptor, setDescriptor] = useState<UIDescriptor | null>(null);
   const { query, setQuery, filtered } = useSearch(data, ['action_id', 'display_name', 'description']);
   const { sorted, sortKey, sortDir, toggleSort } = useSort(filtered, 'action_id');
   const toast = useToast();
   const [dangerConfirm, setDangerConfirm] = useState<ConfirmState>(null);
   const existingIds = useMemo(() => data.map(d => String(d.action_id)), [data]);
   const suggestedId = uniqueId(autoId.action(form.display_name), existingIds);
-  const pathColor: Record<string, string> = { A: 'badge-blue', B: 'badge-green', C: 'badge-purple' };
+
+  // Fetch UI descriptor once on mount (L1: column/render metadata from DB)
+  useEffect(() => {
+    api.uiDescriptors('actions_home')
+      .then(descs => setDescriptor(descs.find(d => d.section_key === 'grid') || null))
+      .catch(err => console.warn('[ActionsSection] Failed to load descriptor:', err));
+  }, []);
 
   const save = async () => {
     try {
@@ -41,6 +48,30 @@ export function ActionsSection({ data, onReload }: { data: Record<string, unknow
     });
     setEditId(null); setShowForm(true);
   };
+
+  const startEdit = (a: Record<string, unknown>) => {
+    setForm({
+      action_id: String(a.action_id),
+      display_name: String(a.display_name),
+      description: String(a.description || ''),
+      applicable_paths: (a.applicable_paths as string[])?.join(',') || 'A,B,C',
+    });
+    setEditId(String(a.action_id));
+    setShowForm(true);
+  };
+
+  const confirmDelete = (a: Record<string, unknown>) => setDangerConfirm({
+    title: 'Deactivate Action',
+    message: `This will deactivate action "${a.action_id}".`,
+    impact: 'Permissions using this action will no longer be evaluable.',
+    onConfirm: async () => {
+      try {
+        await api.actionDelete(String(a.action_id));
+        toast.success(`Action "${a.action_id}" deactivated`);
+        onReload();
+      } catch (e) { toast.error(String(e)); }
+    },
+  });
 
   return (
     <div>
@@ -99,49 +130,35 @@ export function ActionsSection({ data, onReload }: { data: Record<string, unknow
         </div>
       )}
 
+      {/* L1 Metadata-Driven grid — columns + render_hints from authz_ui_descriptor */}
       <div className="table-container max-h-[60vh]">
-        <table className="table">
-          <thead><tr>
-            <SortableHeader label="Action ID" sortKey="action_id" currentSortKey={sortKey} sortDir={sortDir} onToggle={toggleSort} />
-            <SortableHeader label="Display Name" sortKey="display_name" currentSortKey={sortKey} sortDir={sortDir} onToggle={toggleSort} />
-            <th>Description</th>
-            <th>Paths</th>
-            <SortableHeader label="Active" sortKey="is_active" currentSortKey={sortKey} sortDir={sortDir} onToggle={toggleSort} />
-            <th>Actions</th>
-          </tr></thead>
-          <tbody>
-            {sorted.map((a) => (
-              <tr key={String(a.action_id)}>
-                <td className="font-mono text-xs font-bold text-slate-900">{String(a.action_id)}</td>
-                <td className="font-medium">{String(a.display_name)}</td>
-                <td className="text-xs text-slate-500">{a.description ? String(a.description) : '-'}</td>
-                <td>
-                  <div className="flex gap-1">
-                    {(a.applicable_paths as string[] || []).map((p: string) => (
-                      <span key={p} className={`badge text-[10px] ${pathColor[p] || 'badge-slate'}`}>Path {p}</span>
-                    ))}
-                  </div>
-                </td>
-                <td>{a.is_active ? <span className="badge badge-green text-[10px]">YES</span> : <span className="badge badge-red text-[10px]">NO</span>}</td>
-                <td>
-                  <div className="flex gap-1">
-                    <button onClick={() => {
-                      setForm({ action_id: String(a.action_id), display_name: String(a.display_name), description: String(a.description || ''), applicable_paths: (a.applicable_paths as string[])?.join(',') || 'A,B,C' });
-                      setEditId(String(a.action_id)); setShowForm(true);
-                    }} className="btn-secondary btn-sm p-1" title="Edit"><Pencil size={12} /></button>
-                    <button onClick={() => clone(a)} className="btn-secondary btn-sm p-1" title="Clone"><Copy size={12} /></button>
-                    <button onClick={() => setDangerConfirm({
-                      title: 'Deactivate Action',
-                      message: `This will deactivate action "${a.action_id}".`,
-                      impact: 'Permissions using this action will no longer be evaluable.',
-                      onConfirm: async () => { try { await api.actionDelete(String(a.action_id)); toast.success(`Action "${a.action_id}" deactivated`); onReload(); } catch (e) { toast.error(String(e)); } },
-                    })} className="btn-secondary btn-sm p-1 text-red-500"><Trash2 size={12} /></button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {descriptor ? (
+          <MetadataGrid
+            descriptor={descriptor}
+            data={sorted}
+            rowKey="action_id"
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSort={toggleSort}
+            rowActions={{
+              render: (a) => (
+                <div className="flex gap-1">
+                  <button onClick={() => startEdit(a)} className="btn-secondary btn-sm p-1" title="Edit">
+                    <Pencil size={12} />
+                  </button>
+                  <button onClick={() => clone(a)} className="btn-secondary btn-sm p-1" title="Clone">
+                    <Copy size={12} />
+                  </button>
+                  <button onClick={() => confirmDelete(a)} className="btn-secondary btn-sm p-1 text-red-500" title="Deactivate">
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ),
+            }}
+          />
+        ) : (
+          <div className="p-4 text-center text-slate-400 text-sm">Loading descriptor...</div>
+        )}
       </div>
       <DangerConfirmModal state={dangerConfirm} onClose={() => setDangerConfirm(null)} />
     </div>

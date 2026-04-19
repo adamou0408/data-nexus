@@ -14,6 +14,7 @@ import { TablesTab } from './components/TablesTab';
 import { FunctionsTab } from './components/FunctionsTab';
 import { ConfigEngine } from './components/ConfigEngine';
 import { MetabaseTab } from './components/MetabaseTab';
+import { ConfigToolsTab } from './components/ConfigToolsTab';
 
 // Map sidebar access-* TabIds to Access Manager sections
 const accessTabMap: Record<string, Section> = {
@@ -32,6 +33,7 @@ function AppInner() {
     const adminTabs: TabId[] = [
       'pool', 'audit', 'check', 'rls', 'functions', 'raw-tables',
       'access-subjects', 'access-roles', 'access-resources', 'access-policies', 'access-actions',
+      'config-tools',
     ];
     if (adminTabs.includes(tab) && !isAdmin) {
       setTab('overview');
@@ -52,6 +54,7 @@ function AppInner() {
       {tab === 'functions' && <FunctionsTab />}
       {tab === 'rls' && <RlsTab />}
       {tab === 'pool' && <PoolTab />}
+      {tab === 'modules' && <ConfigEngine initialPageId="modules_home" />}
       {accessSection && (
         <BrowserTab
           initialSection={accessSection}
@@ -62,6 +65,7 @@ function AppInner() {
         />
       )}
       {tab === 'audit' && <AuditTab />}
+      {tab === 'config-tools' && <ConfigToolsTab />}
     </Layout>
   );
 }

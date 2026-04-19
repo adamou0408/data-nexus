@@ -237,7 +237,8 @@ export const api = {
     request<{ purged: string; columns_deleted: number; tables_deleted: number; profiles_deleted: number }>(
       `/datasources/${encodeURIComponent(id)}/purge`, { method: 'DELETE' }),
   datasourceTest: (id: string) =>
-    request<{ status: string; version?: string; error?: string }>(`/datasources/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+    request<{ status: string; version?: string; error?: string; pg_replica?: string; oracle?: string; details?: Record<string, any> }>(
+      `/datasources/${encodeURIComponent(id)}/test`, { method: 'POST' }),
   datasourceDiscover: (id: string) =>
     request<{ source_id: string; tables_found: number; views_found: number; functions_found: number; columns_found: number; resources_created: number; created: string[] }>(
       `/datasources/${encodeURIComponent(id)}/discover`, { method: 'POST' }),
@@ -267,12 +268,23 @@ export const api = {
     request<{ resource_id: string; display_name: string; attributes: Record<string, unknown> }[]>(
       `/browse/resources/functions?data_source_id=${encodeURIComponent(dataSourceId)}`),
 
+  // Oracle function call proxy
+  oracleExec: (data_source_id: string, function_name: string, params?: Record<string, any>) =>
+    request<{ status: string; function_name: string; result: any }>('/oracle-exec', {
+      method: 'POST', body: JSON.stringify({ data_source_id, function_name, params }),
+    }),
+
   poolUncredentialedRoles: () =>
     request<{ pg_role: string; profile_id: string; connection_mode: string; data_source_id: string | null }[]>('/pool/uncredentialed-roles'),
 
   poolSyncGrants: () => request<{ actions: { action: string; detail: string }[] }>('/pool/sync/grants', { method: 'POST' }),
   poolSyncPgbouncer: () => request<{ config: string }>('/pool/sync/pgbouncer', { method: 'POST' }),
   poolSyncPgbouncerApply: () => request<{ applied: boolean; config_path: string; reload: string }>('/pool/sync/pgbouncer/apply', { method: 'POST' }),
+
+  poolPreviewModules: (modules: string[], data_source_id: string) =>
+    request<{ modules: string[]; data_source_id: string; tables: string[]; count: number }>('/pool/profiles/preview-modules', {
+      method: 'POST', body: JSON.stringify({ modules, data_source_id }),
+    }),
 
   poolSyncExternalGrants: (data_source_id?: string) =>
     request<{ actions: SyncAction[] }>('/pool/sync/external-grants', {
@@ -312,6 +324,30 @@ export const api = {
       `/pool/credentials/${encodeURIComponent(pg_role)}/rotate`,
       { method: 'POST', body: JSON.stringify({ new_password }) }
     ),
+
+  // Module Management
+  moduleTree: () =>
+    request<ModuleTreeNode[]>('/modules/tree'),
+  moduleDetails: (id: string) =>
+    request<ModuleDetails>(`/modules/${encodeURIComponent(id)}/details`),
+  moduleDelete: (id: string, cascade: boolean) =>
+    request<{ deleted: string; cascade: boolean; children_reassigned: number; new_parent: string | null }>(
+      `/modules/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ cascade }) }),
+  moduleDescriptors: () =>
+    request<UIDescriptor[]>('/modules/descriptors'),
+
+  // Generic UI descriptors — any page_id registered in authz_ui_descriptor
+  uiDescriptors: (pageId: string) =>
+    request<UIDescriptor[]>(`/ui/descriptors/${encodeURIComponent(pageId)}`),
+
+  // Config snapshot & bulk import
+  configSnapshot: (sections?: string[]) =>
+    request<ConfigSnapshot>(`/config/snapshot${sections ? `?sections=${sections.join(',')}` : ''}`),
+
+  configBulkApply: (payload: { dry_run?: boolean; [section: string]: any }) =>
+    request<BulkApplyResult>('/config/bulk', {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
 };
 
 export type UserProfile = {
@@ -337,6 +373,8 @@ export type DataSource = {
   last_synced_at: string | null;
   created_at: string;
   updated_at: string;
+  cdc_target_schema?: string | null;
+  oracle_connection?: { host: string; port: number; service_name: string; user: string } | null;
 };
 
 export type PoolProfile = {
@@ -476,4 +514,66 @@ export type LifecycleSummary = {
   phases_done: number;
   phases_total: number;
   next_action: string;
+};
+
+export type ConfigSnapshot = {
+  _meta: { exported_at: string; system: string; format_version: string; description: string };
+  summary: Record<string, any>;
+  actions?: any[];
+  roles?: any[];
+  subjects?: any[];
+  resources?: any[];
+  policies?: any[];
+  data_sources?: any[];
+  pool_profiles?: any[];
+  ui_pages?: any[];
+  clearance_mappings?: any[];
+};
+
+export type BulkSectionResult = {
+  section: string;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+};
+
+export type BulkApplyResult = {
+  dry_run: boolean;
+  status: 'ok' | 'partial';
+  results: BulkSectionResult[];
+  totals: { created: number; updated: number; skipped: number; errors: number };
+};
+
+export type UIDescriptor = {
+  section_key: string;
+  section_label: string;
+  section_icon: string | null;
+  display_order: number;
+  visibility: 'all' | 'admin' | 'write' | 'read';
+  columns: { key: string; label: string; type: string; width?: string; render_hint?: string; sortable?: boolean }[];
+  render_hints: Record<string, unknown>;
+};
+
+export type ModuleTreeNode = {
+  resource_id: string;
+  display_name: string;
+  parent_id: string | null;
+  attributes: Record<string, unknown> | null;
+  is_active: boolean;
+  child_module_count: number;
+  table_count: number;
+  column_count: number;
+  user_actions: string[]; // actions the current user can perform (e.g. ['read','write'])
+};
+
+export type ModuleDetails = {
+  module: { resource_id: string; display_name: string; parent_id: string | null; attributes: Record<string, unknown> | null };
+  children: {
+    modules: { resource_id: string; display_name: string; table_count: number }[];
+    tables: { resource_id: string; display_name: string; resource_type: string; column_count: number; data_source_id: string | null }[];
+  };
+  access: { role_id: string; role_name: string; actions: { action_id: string; effect: string }[] }[];
+  profiles: { profile_id: string; pg_role: string; connection_mode: string; data_source_id: string | null }[];
+  user_permissions: { actions: string[]; is_admin: boolean };
 };

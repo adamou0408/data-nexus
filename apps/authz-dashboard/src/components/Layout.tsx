@@ -6,13 +6,15 @@ import {
   ChevronDown, LogOut, Loader2, User,
   Menu, X, Code2, Layers, BarChart3,
   Users, Zap, ShieldCheck, KeyRound, FolderTree,
+  Settings2, Boxes,
 } from 'lucide-react';
 
 export type TabId =
   | 'overview' | 'resolve' | 'check' | 'matrix'
   | 'tables' | 'raw-tables' | 'rls' | 'metabase' | 'functions'
-  | 'access-resources' | 'access-policies' | 'pool'
-  | 'access-subjects' | 'access-roles' | 'access-actions' | 'audit';
+  | 'access-resources' | 'access-policies' | 'pool' | 'modules'
+  | 'access-subjects' | 'access-roles' | 'access-actions' | 'audit'
+  | 'config-tools';
 
 type NavItem = {
   id: TabId;
@@ -59,6 +61,7 @@ const navGroups: NavGroup[] = [
   {
     label: 'Data Policy',
     items: [
+      { id: 'modules', label: 'Modules', icon: <Boxes size={18} /> },
       { id: 'access-resources', label: 'Resources', icon: <FolderTree size={18} />, adminOnly: true },
       { id: 'access-policies', label: 'Policies', icon: <ShieldCheck size={18} />, adminOnly: true },
       { id: 'pool', label: 'Data Sources & Pools', icon: <Server size={18} />, adminOnly: true },
@@ -71,6 +74,7 @@ const navGroups: NavGroup[] = [
       { id: 'access-roles', label: 'Roles', icon: <KeyRound size={18} />, adminOnly: true },
       { id: 'access-actions', label: 'Actions', icon: <Zap size={18} />, adminOnly: true },
       { id: 'audit', label: 'Audit Log', icon: <FileText size={18} />, adminOnly: true },
+      { id: 'config-tools', label: 'Config Tools', icon: <Settings2 size={18} />, adminOnly: true },
     ],
   },
 ];
