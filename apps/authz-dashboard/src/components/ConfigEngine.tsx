@@ -55,6 +55,9 @@ type PageConfig = {
   components?: CardComponent[];
   icon?: string;
   description?: string;
+  /** L4: optional handler name for layouts that dispatch (e.g. tree_detail).
+   *  Mapped to a React component via TREE_DETAIL_HANDLERS. */
+  handler_name?: string;
 };
 
 type PageMeta = {
@@ -92,15 +95,18 @@ const ICON_MAP: Record<string, ReactNode> = {
 
 // ============================================================
 // tree_detail handler registry — L4 Config-SM dispatch
-// Maps page_id (from authz_ui_page) to the React component that
-// renders the tree+detail experience for that page.
+// Maps handler_name (from authz_ui_page.handler_name) to a React
+// component. Admin assigns handlers to pages via SQL — no code change
+// needed to reuse an existing handler on a new page.
 // ============================================================
 export type TreeDetailHandlerProps = {
   config: PageConfig;
 };
 
 const TREE_DETAIL_HANDLERS: Record<string, ComponentType<TreeDetailHandlerProps>> = {
-  'modules_home': ModulesTab,
+  // Handler names are identifiers, not page_ids. Multiple pages can
+  // share a handler (e.g. different module roots all using modules_home_handler).
+  'modules_home_handler': ModulesTab,
 };
 
 // ============================================================
@@ -657,15 +663,26 @@ export function ConfigEngine({ initialPageId }: { initialPageId?: string } = {})
         />
       )}
 
-      {/* tree_detail layout → dispatch to registered handler (L4 Config-SM) */}
+      {/* tree_detail layout → dispatch via DB-driven handler_name (L4) */}
       {isTreeDetail && (() => {
-        const Handler = TREE_DETAIL_HANDLERS[current.pageId];
+        const handlerName = current.config.handler_name;
+        if (!handlerName) {
+          return (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 flex items-start gap-2">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <div>
+                Page <code className="font-mono">{current.pageId}</code> has layout=tree_detail but no <code className="font-mono">handler_name</code> set in authz_ui_page.
+              </div>
+            </div>
+          );
+        }
+        const Handler = TREE_DETAIL_HANDLERS[handlerName];
         if (!Handler) {
           return (
             <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 flex items-start gap-2">
               <AlertTriangle size={16} className="shrink-0 mt-0.5" />
               <div>
-                No tree_detail handler registered for page_id: <code className="font-mono">{current.pageId}</code>
+                Unknown handler <code className="font-mono">{handlerName}</code> for page <code className="font-mono">{current.pageId}</code>. Registered handlers: {Object.keys(TREE_DETAIL_HANDLERS).join(', ')}.
               </div>
             </div>
           );

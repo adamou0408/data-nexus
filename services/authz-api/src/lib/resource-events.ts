@@ -13,11 +13,18 @@ function scheduleRefresh() {
   if (refreshTimer) clearTimeout(refreshTimer);
   refreshTimer = setTimeout(async () => {
     refreshTimer = null;
-    try {
-      await pool.query('SELECT refresh_module_tree_stats()');
-    } catch (err) {
-      console.warn('[resource-events] Failed to refresh module_tree_stats:', err);
-    }
+    // Refresh all resource-derived read models in parallel
+    await Promise.allSettled([
+      pool.query('SELECT refresh_module_tree_stats()'),
+      pool.query('SELECT refresh_resource_ancestors()'),
+    ]).then(results => {
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+          const name = i === 0 ? 'module_tree_stats' : 'resource_ancestors';
+          console.warn(`[resource-events] Failed to refresh ${name}:`, r.reason);
+        }
+      });
+    });
   }, DEBOUNCE_MS);
 }
 
