@@ -2,7 +2,7 @@
 
 ## Testing Method
 
-Use the web UI at `http://localhost:5173/` combined with browser F12 DevTools:
+Use the web UI at `http://localhost:13173/` combined with browser F12 DevTools:
 
 - **Network tab**: Watch API calls, verify request/response payloads
 - **Console tab**: Check for JavaScript errors
@@ -10,7 +10,7 @@ Use the web UI at `http://localhost:5173/` combined with browser F12 DevTools:
 
 ### How to test each user
 
-1. Open http://localhost:5173/
+1. Open http://localhost:13173
 2. Select a user from the sidebar dropdown
 3. Observe the Overview page — should show role-appropriate content
 4. Navigate through tabs — verify visible/hidden sections
