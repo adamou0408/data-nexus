@@ -4,6 +4,22 @@
 
 The architecture document (v2.4) is the **complete blueprint**. This guide is the **construction sequence** — what to build first, what to defer, and what to hand to other engineers/LLMs.
 
+If the content of this guide disagrees with `docs/phison-data-nexus-architecture-v2.4.md`, trust the architecture doc.
+
+---
+
+## Prerequisites
+
+| Tool | Required version | Install notes |
+|------|------------------|---------------|
+| Docker Desktop | latest | Required for docker-compose |
+| Node.js | 20 LTS or newer | `nvm` / `fnm` recommended |
+| npm | bundled with Node | — |
+| GNU Make | any | macOS/Linux: preinstalled. **Windows** (DX-02): `winget install GnuWin32.Make` or `choco install make`, then restart the terminal so PATH picks it up. Verify with `make --version`. |
+| PostgreSQL client (`psql`) | 16.x client | Optional but handy; bundled with `postgres` server install or `postgresql-client` package |
+
+Every backend command in this guide and in the top-level `Makefile` assumes `make` is on PATH. Running `make help` prints the full command list.
+
 ---
 
 ## Execution Strategy: 4 Milestones
