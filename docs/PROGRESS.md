@@ -172,7 +172,7 @@
 
 ### Remaining — Infrastructure (Milestone 4 core)
 - [~] SEC-06: Production secrets management — code-layer done (06a/b/d/e/f in commit ff7982a, 2026-04-23). Infra-layer remaining: 06c pgbouncer MD5 rotation + Vault/external-secrets wiring. Detail: `backlog-tech-debt.md`.
-- [ ] Redis L1 cache layer + `authz_check_from_cache()` integration (function already exists in V007 line 188-205)
+- [~] Redis L1 cache layer + `authz_check_from_cache()` integration — in-process MVP done 2026-04-23 (FEAT-01: `policy-cache.ts` + `policy-events.ts` LISTEN `authz_policy_changed`, scope `/api/resolve` only). Redis cluster + `/api/check` fast-path remain. Detail: `backlog-tech-debt.md` FEAT-01.
 - [ ] Helm chart + K8s deployment
 - [ ] LDAP sync CronJob (scheduled, not just manual)
 - [ ] Keycloak SSO integration (optional)

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { pool } from '../db';
 import { audit } from '../audit';
 import { isAdminUser, handleApiError } from '../lib/request-helpers';
+import * as policyCache from '../lib/policy-cache';
 
 export const resolveRouter = Router();
 
@@ -39,11 +40,19 @@ function sanitizeForClient(config: any): any {
 resolveRouter.post('/', async (req, res) => {
   const { user_id, groups = [], attributes = {}, _detailed = false } = req.body;
   try {
-    const result = await pool.query(
-      'SELECT authz_resolve($1, $2, $3) AS config',
-      [user_id, groups, JSON.stringify(attributes)]
-    );
-    const fullConfig = result.rows[0].config;
+    // FEAT-01: cache stores raw authz_resolve() output. Sanitization stays
+    // at the API boundary so the same cached entry can serve admin (full)
+    // and non-admin (sanitized) responses.
+    const cacheKey = policyCache.makeKey(user_id, groups, attributes);
+    let fullConfig = policyCache.get(cacheKey) as any;
+    if (fullConfig === undefined) {
+      const result = await pool.query(
+        'SELECT authz_resolve($1, $2, $3) AS config',
+        [user_id, groups, JSON.stringify(attributes)]
+      );
+      fullConfig = result.rows[0].config;
+      policyCache.set(cacheKey, fullConfig);
+    }
 
     audit({
       access_path: 'A', subject_id: `user:${user_id}`,
@@ -61,6 +70,20 @@ resolveRouter.post('/', async (req, res) => {
 
     // Non-admin or no _detailed flag: sanitize
     res.json(sanitizeForClient(fullConfig));
+  } catch (err) {
+    handleApiError(res, err);
+  }
+});
+
+// FEAT-01: cache observability — admin-only counters, no PII
+resolveRouter.get('/_cache-stats', async (req, res) => {
+  const userId = (req.header('X-User-Id') || '').trim();
+  const groups = (req.header('X-User-Groups') || '').split(',').map(g => g.trim()).filter(Boolean);
+  if (!userId) return res.status(401).json({ error: 'X-User-Id required' });
+  try {
+    const admin = await isAdminUser(pool, userId, groups);
+    if (!admin) return res.status(403).json({ error: 'admin only' });
+    res.json(policyCache.getStats());
   } catch (err) {
     handleApiError(res, err);
   }

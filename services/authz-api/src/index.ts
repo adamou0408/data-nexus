@@ -23,6 +23,7 @@ import { requireRole, requireAuth } from './middleware/authz';
 import { optionalJWT, buildJWTConfig } from './middleware/jwt';
 import { verifyCryptoKey } from './lib/crypto';
 import { startResourceEventListener } from './lib/resource-events';
+import { startPolicyEventListener } from './lib/policy-events';
 
 // SEC-06e: refuse to boot in production with missing critical secrets, so a
 // misconfigured pod fails fast at startup instead of running with predictable
@@ -102,5 +103,6 @@ validateProductionEnv();
 app.listen(PORT, () => {
   verifyCryptoKey();
   startResourceEventListener();
+  startPolicyEventListener();
   console.log(`authz-api listening on http://localhost:${PORT}`);
 });

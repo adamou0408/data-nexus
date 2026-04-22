@@ -1,7 +1,7 @@
 # M4 Production-Ready Tracker
 
 - **Owner:** SRE
-- **Status:** partial — SEC-06 code-layer ✅ (2026-04-23); other 4 items STUB
+- **Status:** partial — SEC-06 code-layer ✅ + Redis MVP (in-process) ✅ (both 2026-04-23); Helm / Keycloak / LDAP CronJob STUB
 - **Linked from:** [`docs/plan-v3-phase-1.md`](../../../docs/plan-v3-phase-1.md) §3 Q3 2026, §6.2 Gate G1
 - **Deadline:** 2026-09 (Gate G1 — blocks AI / Smart Analyst 2.0 unlock)
 
@@ -21,7 +21,7 @@ Track the five M4 production-ready work items to go-live by end of Q3 2026. M4 i
 | 2 | **Helm chart** for authz-api / identity-sync / dashboard | SRE | — |
 | 3 | **Keycloak SSO** (replace `X-User-Id` header) | SRE + authz-api | SEC-06 |
 | 4 | **LDAP CronJob** (replace local identity-sync cadence) | SRE + identity-sync | Helm chart |
-| 5 | **Redis cache** for authz_resolve hot paths | authz-api | Helm chart |
+| 5 | **Redis cache** for authz_resolve hot paths — in-process MVP done 2026-04-23 (FEAT-01); Redis backend swap blocked on Helm | authz-api | Helm chart |
 
 ---
 

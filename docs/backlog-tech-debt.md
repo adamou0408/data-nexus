@@ -149,19 +149,24 @@ V019 的實際做法是用 `current_setting('app.product_line', TRUE)`（Path A 
 
 ## 三、功能缺失
 
-### FEAT-01　authz_check_from_cache() 定義缺失
+### FEAT-01　authz cache MVP
 
-**狀態**：已實作（V007 line 188-205，但尚未整合到主流程）　｜　**優先級**：P2
+**狀態**：MVP 已上線 2026-04-23（`/api/resolve` 路徑）　｜　**優先級**：P2 (剩餘工作)
 
-**現狀**
+**已完成**
 
-`CLAUDE.md` 的 migration 表格（V007）和架構文件 §VII Mega-Prompt 均提到 `authz_check_from_cache()` 函式，但整份 migration 中找不到此函式的任何 SQL 定義。目前 V007 實際只包含 `_authz_resolve_roles`、`authz_check`、`authz_filter` 三個函式。
+- `services/authz-api/src/lib/policy-cache.ts`：in-memory TTL Map（60s, 1000 entries, FIFO eviction）。
+- `services/authz-api/src/lib/policy-events.ts`：LISTEN PG channel `authz_policy_changed` (V012 trigger)，debounce 200ms 後 full clear。
+- `services/authz-api/src/routes/resolve.ts`：`POST /api/resolve` cache lookup + populate；`GET /_cache-stats` admin observability endpoint。
+- SQL 函式：`authz_check_from_cache()` 在 V007 line 188-205 已存在，V024 修為 deny-wins 語意。
 
-**目標**
+**剩餘工作（不阻擋 G1，但 SLO 提升路徑）**
 
-實作 `authz_check_from_cache(resolved_config JSONB, action TEXT, resource TEXT) RETURNS BOOLEAN`，邏輯為：直接從已 resolve 的 JSON 中查找 L0_functional，不發出任何 DB 查詢（標記為 `IMMUTABLE`）。此函式是 Phase 22 兩層 cache 架構的核心依賴。
+1. **`/api/check` fast-path**：目前 `/api/check` 仍走 `authz_check()` 遞迴 CTE，**不能** 直接複用 cached `L0_functional` ── V037 `resource_ancestors` matview 證明 inheritance 需要 ancestor expansion，cached L0 是 flat array 沒有展開。要不就：(a) cache 整個 ancestor 展開後的允許集，(b) 把 V037 ancestor 結果一起 cache。任一方向都要 SEC-02（deny cacheable 性）先 nail 死。
+2. **Redis 層**：目前是 process-local Map，多 pod 部署時 cache hit rate 會崩。Helm chart 上線時要把 store 抽象換 Redis backend（同樣 key/TTL，clearAll 改 SCAN+DEL 或 FLUSHDB on namespace）。
+3. **Per-user invalidation**：目前 LISTEN payload 是 `{table, action, timestamp}`，沒有受影響的 subject_id。如果 cache hit rate 夠高、policy 編輯頻繁時 full clear 太貴，再加 payload 帶 subject_id 做精細 invalidation。
 
-**影響範圍**：新增 `database/migrations/V0xx__authz_check_from_cache.sql`，需先解決 TECH-DEBT SEC-02（決定 deny 是否走 cache）
+**參考**：`policy-cache.ts` header comment 寫明為何 `/api/check` 沒被 cache。
 
 ---
 
