@@ -53,32 +53,44 @@ Milestone 4 (Week 9-12): "Production-ready"
 
 ### Step 1.1: Docker Compose for Local Development
 
+The actual `deploy/docker-compose/docker-compose.yml` is the source of truth — open it for the full file. Excerpt below shows what the dev environment exposes (host ports use the 1xxxx scheme to avoid conflicts with locally-installed Postgres/Redis):
+
 ```yaml
 # deploy/docker-compose/docker-compose.yml
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: timescale/timescaledb:latest-pg16   # TimescaleDB on PG 16 (hypertables + compression)
     environment:
       POSTGRES_DB: nexus_authz
       POSTGRES_USER: nexus_admin
       POSTGRES_PASSWORD: nexus_dev_password
     ports:
-      - "5432:5432"
+      - "15432:5432"                           # host:container (DX-03 non-default port)
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ../../database/migrations:/docker-entrypoint-initdb.d:ro
+      - ../../database/migrations:/docker-entrypoint-initdb.d/migrations:ro
+      - ../../database/seed:/docker-entrypoint-initdb.d/seed:ro
+      - ./init-db.sh:/docker-entrypoint-initdb.d/00-init-db.sh:ro
+    # ARCH-01: init-db.sh creates BOTH databases inside the same instance.
+    #   nexus_authz → all authz_* tables + functions (database/migrations/V*.sql)
+    #   nexus_data  → business tables + RLS (database/migrations/data/V*.sql)
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nexus_admin -d nexus_authz"]
       interval: 5s
       timeout: 3s
       retries: 10
 
-  # Redis for L1 cache (Milestone 4, but include now to avoid re-architecture)
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    ports:
+      - "16432:6432"                           # host:container
+    # See pgbouncer/pgbouncer.ini — Path C role pools route to nexus_data.
+
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "16379:6379"                           # host:container
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
