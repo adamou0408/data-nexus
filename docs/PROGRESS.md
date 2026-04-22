@@ -95,7 +95,8 @@
 - [x] ARCH-01: pgbouncer + pg_hba point pool roles at nexus_data — verified
 - [x] ARCH-01: Cleaned up nexus_authz legacy business tables (pre-ARCH-01 init residue)
 - [~] ARCH-01-FU-1: Fixed rls-simulate.ts to use getLocalDataPool() for business-table scan (待 dev api restart 驗證 live)
-- [ ] ARCH-01-FU-2: Audit other information_schema queries (browse-read / config-exec / masked-query / datasource) for authzPool vs dataPool correctness — P1, see backlog
+- [~] ARCH-01-FU-2: Audited browse-read.ts / config-exec.ts / masked-query.ts / datasource.ts info_schema queries — fixed three browse-read endpoints + config-exec fallback to use getLocalDataPool() (2026-04-23, commit d3b31a7). tsc clean. 待 dev api restart 驗證。Bonus: 順手修了 config-bulk.ts 兩處 pre-existing typo。
+- [~] ARCH-01-FU-3: Split V019 — kept cluster-level role + BYPASSRLS only; removed business-table GRANT/RLS/POLICY/VIEW (data/V002 已是 SSOT) (2026-04-23, commit 75cab5b). 待 DBA 簽核 split + 下次 fresh init 驗證。
 
 - [x] W-IT-01: Audit logging for all admin operations (pool + datasource CRUD)
 - [x] W-IT-01: AuditTab access_path filter (All/A/B/C)
