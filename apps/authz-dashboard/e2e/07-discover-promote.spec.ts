@@ -83,4 +83,50 @@ test.describe('Discover → Promote to Module (Phase B)', () => {
     await page.getByRole('button', { name: 'Cancel' }).click();
     await expect(page.getByTestId('promote-modal')).toBeHidden();
   });
+
+  test('attach mode reparents unmapped resource under existing module', async ({ page }) => {
+    await page.goto('/');
+    await loginAs(page);
+    await navigateTo(page, 'Discover');
+    await expect(page.getByTestId('discover-tab')).toBeVisible({ timeout: 10_000 });
+
+    // Find an unmapped row + capture its resource_id
+    await page.getByTestId('unmapped-only').check();
+    const promoteBtn = page.locator('[data-testid^="promote-"]').first();
+    await expect(promoteBtn).toBeVisible({ timeout: 10_000 });
+    const rowEl = promoteBtn.locator('xpath=ancestor::tr');
+    const rowTestId = await rowEl.getAttribute('data-testid');
+    const resourceId = rowTestId!.replace(/^row-/, '');
+
+    // Open modal, switch to attach mode
+    await promoteBtn.click();
+    await expect(page.getByTestId('promote-modal')).toBeVisible();
+    await page.getByTestId('promote-mode-attach').click();
+
+    // Module list should populate
+    const moduleList = page.getByTestId('promote-module-list');
+    await expect(moduleList).toBeVisible();
+
+    // Pick the first available module and capture its display name
+    const firstModuleBtn = moduleList.locator('[data-testid^="promote-module-"]').first();
+    await expect(firstModuleBtn).toBeVisible({ timeout: 10_000 });
+    const moduleName = (await firstModuleBtn.locator('div').first().textContent())?.trim() || '';
+    expect(moduleName.length).toBeGreaterThan(0);
+    await firstModuleBtn.click();
+
+    // Submit
+    await page.getByTestId('promote-confirm').click();
+    await expect(page.getByTestId('promote-modal')).toBeHidden({ timeout: 10_000 });
+
+    // Verify the row now shows the existing module name and Promote is gone
+    await page.getByTestId('unmapped-only').uncheck();
+    const search = page.getByTestId('search');
+    await search.fill(resourceId);
+    await search.press('Enter');
+
+    const attachedRow = page.getByTestId(`row-${resourceId}`);
+    await expect(attachedRow).toBeVisible({ timeout: 10_000 });
+    await expect(attachedRow.getByText(moduleName)).toBeVisible({ timeout: 10_000 });
+    await expect(attachedRow.locator('[data-testid^="promote-"]')).toHaveCount(0);
+  });
 });

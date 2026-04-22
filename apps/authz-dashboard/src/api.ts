@@ -454,8 +454,12 @@ export const api = {
       ds_count: number;
     }>('/discover/stats'),
 
-  discoverPromote: (body: { resource_id: string; module_display_name: string; parent_module_id?: string | null }) =>
+  discoverPromote: (body:
+    | { resource_id: string; module_display_name: string; parent_module_id?: string | null }
+    | { resource_id: string; target_module_id: string }
+  ) =>
     request<{
+      mode: 'create' | 'attach';
       module_id: string;
       display_name: string;
       parent_module_id: string | null;

@@ -129,26 +129,33 @@ discoverRouter.get('/stats', async (_req, res) => {
   }
 });
 
-// ─── Promote: create a Module that wraps an unmapped resource ───
-// Body: { resource_id, module_display_name, parent_module_id? }
-//   - resource_id    : table/view/function currently unmapped (or mapped to non-module)
-//   - module_display_name : user-visible title of new module
-//   - parent_module_id    : optional — nest under existing module
+// ─── Promote: map an unmapped resource to a Module ───
+// Two modes (mutually exclusive):
+//   1. CREATE — body: { resource_id, module_display_name, parent_module_id? }
+//      Creates a new Module (slugified id, collision-suffixed) and
+//      reparents the resource under it. parent_module_id nests the new
+//      module under an existing one.
+//   2. ATTACH — body: { resource_id, target_module_id }
+//      Reparents the resource directly under an existing Module — no new
+//      module created.
 //
-// Effects: creates new module row, reparents the resource to it, refreshes
-// module_tree_stats, writes admin audit entry.
+// Effects (both modes): refreshes module_tree_stats, writes admin audit.
 discoverRouter.post('/promote', async (req, res) => {
   const userId = getUserId(req);
   const resourceId = String(req.body?.resource_id || '').trim();
+  const targetModuleId = req.body?.target_module_id ? String(req.body.target_module_id).trim() : null;
   const displayName = String(req.body?.module_display_name || '').trim();
   const parentModuleId = req.body?.parent_module_id ? String(req.body.parent_module_id).trim() : null;
 
   if (!resourceId) return res.status(400).json({ error: 'resource_id required' });
-  if (!displayName) return res.status(400).json({ error: 'module_display_name required' });
-  if (displayName.length > 200) return res.status(400).json({ error: 'module_display_name too long (max 200)' });
-
-  const slug = slugify(displayName);
-  if (!slug) return res.status(400).json({ error: 'module_display_name produced empty slug' });
+  // Mode discriminator
+  const isAttach = !!targetModuleId;
+  if (!isAttach) {
+    if (!displayName) return res.status(400).json({ error: 'module_display_name required (or pass target_module_id to attach to existing)' });
+    if (displayName.length > 200) return res.status(400).json({ error: 'module_display_name too long (max 200)' });
+    const slug = slugify(displayName);
+    if (!slug) return res.status(400).json({ error: 'module_display_name produced empty slug' });
+  }
 
   const client = await authzPool.connect();
   try {
@@ -189,43 +196,64 @@ discoverRouter.post('/promote', async (req, res) => {
       }
     }
 
-    // Validate parent_module_id if provided
-    if (parentModuleId) {
-      const parent = await client.query(
-        `SELECT resource_type, is_active FROM authz_resource WHERE resource_id = $1`,
-        [parentModuleId],
+    let moduleId: string;
+    let resolvedDisplayName: string;
+
+    if (isAttach) {
+      // ── Attach mode: validate target module, no new module created ──
+      const m = await client.query(
+        `SELECT resource_id, display_name, resource_type, is_active
+           FROM authz_resource WHERE resource_id = $1`,
+        [targetModuleId],
       );
-      if (parent.rows.length === 0 || !parent.rows[0].is_active || parent.rows[0].resource_type !== 'module') {
+      if (m.rows.length === 0 || !m.rows[0].is_active || m.rows[0].resource_type !== 'module') {
         await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'parent_module_id must be an active module' });
+        return res.status(400).json({ error: 'target_module_id must be an active module' });
       }
-    }
+      moduleId = m.rows[0].resource_id;
+      resolvedDisplayName = m.rows[0].display_name;
+    } else {
+      // ── Create mode ──
+      // Validate parent_module_id if provided
+      if (parentModuleId) {
+        const parent = await client.query(
+          `SELECT resource_type, is_active FROM authz_resource WHERE resource_id = $1`,
+          [parentModuleId],
+        );
+        if (parent.rows.length === 0 || !parent.rows[0].is_active || parent.rows[0].resource_type !== 'module') {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'parent_module_id must be an active module' });
+        }
+      }
 
-    // Build a unique module_id with slug + collision suffix
-    const baseId = parentModuleId
-      ? `${parentModuleId}.${slug}`
-      : `module:${slug}`;
-    let moduleId = baseId;
-    for (let i = 0; i < 50; i++) {
-      const exists = await client.query(
-        `SELECT 1 FROM authz_resource WHERE resource_id = $1`,
-        [moduleId],
+      // Build a unique module_id with slug + collision suffix
+      const slug = slugify(displayName);
+      const baseId = parentModuleId
+        ? `${parentModuleId}.${slug}`
+        : `module:${slug}`;
+      moduleId = baseId;
+      for (let i = 0; i < 50; i++) {
+        const exists = await client.query(
+          `SELECT 1 FROM authz_resource WHERE resource_id = $1`,
+          [moduleId],
+        );
+        if (exists.rows.length === 0) break;
+        moduleId = `${baseId}_${i + 2}`;
+      }
+
+      // Insert new module
+      await client.query(
+        `INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name, attributes)
+         VALUES ($1, 'module', $2, $3, $4::jsonb)`,
+        [
+          moduleId,
+          parentModuleId,
+          displayName,
+          JSON.stringify({ promoted_from: resourceId, promoted_by: userId }),
+        ],
       );
-      if (exists.rows.length === 0) break;
-      moduleId = `${baseId}_${i + 2}`;
+      resolvedDisplayName = displayName;
     }
-
-    // Insert new module
-    await client.query(
-      `INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name, attributes)
-       VALUES ($1, 'module', $2, $3, $4::jsonb)`,
-      [
-        moduleId,
-        parentModuleId,
-        displayName,
-        JSON.stringify({ promoted_from: resourceId, promoted_by: userId }),
-      ],
-    );
 
     // Reparent the resource
     await client.query(
@@ -243,15 +271,16 @@ discoverRouter.post('/promote', async (req, res) => {
     }
     await logAdminAction(authzPool, {
       userId,
-      action: 'PROMOTE_TO_MODULE',
+      action: isAttach ? 'ATTACH_TO_MODULE' : 'PROMOTE_TO_MODULE',
       resourceType: 'module',
       resourceId: moduleId,
-      details: { promoted_resource: resourceId, parent_module_id: parentModuleId },
+      details: { promoted_resource: resourceId, mode: isAttach ? 'attach' : 'create', parent_module_id: parentModuleId },
     });
 
     res.json({
+      mode: isAttach ? 'attach' : 'create',
       module_id: moduleId,
-      display_name: displayName,
+      display_name: resolvedDisplayName,
       parent_module_id: parentModuleId,
       promoted_resource_id: resourceId,
     });

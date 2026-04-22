@@ -44,7 +44,12 @@ export function DiscoverTab() {
   const [unmappedOnly, setUnmappedOnly] = useState(false);
   const [q, setQ] = useState('');
   const [promoteRow, setPromoteRow] = useState<DiscoverRow | null>(null);
+  const [promoteMode, setPromoteMode] = useState<'create' | 'attach'>('create');
   const [promoteName, setPromoteName] = useState('');
+  const [promoteTargetModuleId, setPromoteTargetModuleId] = useState('');
+  const [promoteModuleSearch, setPromoteModuleSearch] = useState('');
+  const [modules, setModules] = useState<{ resource_id: string; display_name: string; parent_id: string | null }[]>([]);
+  const [modulesLoading, setModulesLoading] = useState(false);
   const [promoting, setPromoting] = useState(false);
 
   const load = async () => {
@@ -241,9 +246,28 @@ export function DiscoverTab() {
                       {!row.mapped_to_module && (
                         <button
                           data-testid={`promote-${row.resource_id}`}
-                          onClick={() => {
+                          onClick={async () => {
                             setPromoteRow(row);
+                            setPromoteMode('create');
                             setPromoteName(row.display_name);
+                            setPromoteTargetModuleId('');
+                            setPromoteModuleSearch('');
+                            // Lazy-load module list once
+                            if (modules.length === 0 && !modulesLoading) {
+                              setModulesLoading(true);
+                              try {
+                                const tree = await api.moduleTree();
+                                setModules(tree.map(m => ({
+                                  resource_id: m.resource_id,
+                                  display_name: m.display_name,
+                                  parent_id: m.parent_id,
+                                })));
+                              } catch (err) {
+                                console.warn('failed to load modules', err);
+                              } finally {
+                                setModulesLoading(false);
+                              }
+                            }
                           }}
                           className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded"
                           title="Create a Module that wraps this resource"
@@ -291,20 +315,94 @@ export function DiscoverTab() {
               </button>
             </div>
 
-            <label className="block text-xs font-medium text-slate-700 mb-1">Module name</label>
-            <input
-              type="text"
-              data-testid="promote-name"
-              value={promoteName}
-              onChange={e => setPromoteName(e.target.value)}
-              placeholder="e.g. Material Catalog"
-              className="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
-              autoFocus
-              disabled={promoting}
-            />
-            <p className="text-[11px] text-slate-400 mt-1">
-              A new Module is created at the root level. The resource will inherit permissions from this Module.
-            </p>
+            {/* Mode toggle */}
+            <div className="flex gap-1 bg-slate-100 rounded-md p-0.5 mb-3">
+              <button
+                data-testid="promote-mode-create"
+                onClick={() => setPromoteMode('create')}
+                disabled={promoting}
+                className={`flex-1 px-3 py-1 rounded text-xs font-medium transition-colors ${
+                  promoteMode === 'create' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Create new module
+              </button>
+              <button
+                data-testid="promote-mode-attach"
+                onClick={() => setPromoteMode('attach')}
+                disabled={promoting}
+                className={`flex-1 px-3 py-1 rounded text-xs font-medium transition-colors ${
+                  promoteMode === 'attach' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Add to existing
+              </button>
+            </div>
+
+            {promoteMode === 'create' ? (
+              <>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Module name</label>
+                <input
+                  type="text"
+                  data-testid="promote-name"
+                  value={promoteName}
+                  onChange={e => setPromoteName(e.target.value)}
+                  placeholder="e.g. Material Catalog"
+                  className="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                  autoFocus
+                  disabled={promoting}
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  A new Module is created at the root level. The resource inherits permissions from this Module.
+                </p>
+              </>
+            ) : (
+              <>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Existing module</label>
+                <input
+                  type="text"
+                  data-testid="promote-module-search"
+                  value={promoteModuleSearch}
+                  onChange={e => setPromoteModuleSearch(e.target.value)}
+                  placeholder="Filter by name or id…"
+                  className="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none mb-2"
+                  disabled={promoting || modulesLoading}
+                />
+                <div className="border border-slate-200 rounded max-h-48 overflow-y-auto" data-testid="promote-module-list">
+                  {modulesLoading ? (
+                    <div className="px-3 py-4 text-xs text-slate-400 flex items-center gap-2">
+                      <Loader2 size={12} className="animate-spin" /> Loading modules…
+                    </div>
+                  ) : modules.length === 0 ? (
+                    <div className="px-3 py-4 text-xs text-slate-400">No modules available.</div>
+                  ) : (
+                    modules
+                      .filter(m => {
+                        const s = promoteModuleSearch.trim().toLowerCase();
+                        return !s || m.display_name.toLowerCase().includes(s) || m.resource_id.toLowerCase().includes(s);
+                      })
+                      .slice(0, 100)
+                      .map(m => (
+                        <button
+                          key={m.resource_id}
+                          data-testid={`promote-module-${m.resource_id}`}
+                          onClick={() => setPromoteTargetModuleId(m.resource_id)}
+                          disabled={promoting}
+                          className={`w-full text-left px-3 py-1.5 text-xs border-b border-slate-100 last:border-b-0 hover:bg-slate-50 ${
+                            promoteTargetModuleId === m.resource_id ? 'bg-blue-50 text-blue-900' : 'text-slate-700'
+                          }`}
+                        >
+                          <div className="font-medium">{m.display_name}</div>
+                          <div className="text-[10px] text-slate-400 font-mono">{m.resource_id}</div>
+                        </button>
+                      ))
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Resource is reparented directly under the selected Module. No new Module is created.
+                </p>
+              </>
+            )}
 
             <div className="flex justify-end gap-2 mt-4">
               <button
@@ -317,18 +415,28 @@ export function DiscoverTab() {
               <button
                 data-testid="promote-confirm"
                 onClick={async () => {
-                  const name = promoteName.trim();
-                  if (!name) {
-                    toast.error('Module name is required');
-                    return;
-                  }
                   setPromoting(true);
                   try {
-                    const result = await api.discoverPromote({
-                      resource_id: promoteRow.resource_id,
-                      module_display_name: name,
-                    });
-                    toast.success(`Promoted to ${result.module_id}`);
+                    let result;
+                    if (promoteMode === 'create') {
+                      const name = promoteName.trim();
+                      if (!name) { toast.error('Module name is required'); setPromoting(false); return; }
+                      result = await api.discoverPromote({
+                        resource_id: promoteRow.resource_id,
+                        module_display_name: name,
+                      });
+                    } else {
+                      if (!promoteTargetModuleId) { toast.error('Pick a module'); setPromoting(false); return; }
+                      result = await api.discoverPromote({
+                        resource_id: promoteRow.resource_id,
+                        target_module_id: promoteTargetModuleId,
+                      });
+                    }
+                    toast.success(
+                      result.mode === 'attach'
+                        ? `Attached to ${result.display_name}`
+                        : `Promoted to ${result.module_id}`,
+                    );
                     setPromoteRow(null);
                     await load();
                   } catch (err) {

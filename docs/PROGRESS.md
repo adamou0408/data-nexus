@@ -116,6 +116,7 @@
 - [x] data/V006: Continuous aggregates `yield_daily_trend` + `lot_daily_flow`
 - [x] Discover tab (bottom-up catalog): `GET /api/discover` + `/api/discover/stats` (admin-only) — cross-source view of every table/view/function with mapped/unmapped status, type/search/unmapped filters, 6 Playwright E2E tests (plan: `plan-bottom-up-ux-refactor.md`)
 - [x] Discover → Promote to Module (Phase B): `POST /api/discover/promote` + per-row "Promote" button + modal — closes the bottom-up loop (existing data → 1-click permission-controlled Module). Transactional, refreshes module_tree_stats, writes admin audit. 2 Playwright E2E tests.
+- [x] Discover → Promote attach mode (Phase C): same `POST /api/discover/promote` extended with `target_module_id` discriminator — modal toggles between "Create new module" and "Add to existing" (lazy-loads `moduleTree()`, searchable list). Audit action `ATTACH_TO_MODULE`. +1 Playwright E2E (3 total).
 
 ### Remaining — Infrastructure (Milestone 4 core)
 - [ ] SEC-06: Production secrets management (P0 blocker — detail: `backlog-tech-debt.md`)
