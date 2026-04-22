@@ -216,7 +216,7 @@ modulesRouter.get('/:id/details', async (req, res) => {
     if (isAdmin) {
       userActions.push('read', 'write', 'admin');
     } else {
-      const actions = ['read', 'write', 'approve', 'export', 'connect'];
+      const actions = ['read', 'write', 'execute', 'approve', 'export', 'connect'];
       const checks = await Promise.all(actions.map(action =>
         pool.query(
           `SELECT allowed FROM authz_check_batch($1, $2, $3, $4) LIMIT 1`,

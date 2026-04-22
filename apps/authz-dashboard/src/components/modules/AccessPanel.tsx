@@ -8,8 +8,9 @@ type AccessEntry = {
   actions: { action_id: string; effect: string }[];
 };
 
-// Known action columns (ordered)
-const ACTION_COLS = ['read', 'write', 'approve', 'export', 'connect'];
+// Known action columns (ordered). 'execute' belongs here because functions
+// promoted to a module require an `execute` grant for /data-query/functions/exec.
+const ACTION_COLS = ['read', 'write', 'execute', 'approve', 'export', 'connect'];
 
 function EffectCell({ effect }: { effect: string | undefined }) {
   if (!effect) return <Minus size={14} className="text-slate-300 mx-auto" />;
