@@ -8,7 +8,7 @@
 | 版本 | v1.0 |
 | 建立日期 | 2026-04-15 |
 | 文件定位 | **可立即執行的最小可行方案（Thin Slice）**，驗證核心假設後再擴展 |
-| 長期願景 | [`design-data-mining-vision.md`](design-data-mining-vision.md)（完整設計 + 觸發條件） |
+| 長期願景 | [`design-mining-vision.md`](design-mining-vision.md)（完整設計 + 觸發條件） |
 | 前提假設 | 讀者已理解 Config-SM 架構（V022）、三路徑 SSOT、authz_resolve() 權限引擎 |
 
 ---
@@ -54,7 +54,7 @@ Thin Slice（本文件，3-5 天）
 └── Phase 0.5：agg_table 前端聚合（2-3 天）
     驗證：使用者需要動態 GROUP BY 嗎？
 
-長期願景（design-data-mining-vision.md，觸發後再做）
+長期願景（design-mining-vision.md，觸發後再做）
 ├── Template 生命週期、版本控制
 ├── AI 輔助 SQL function 產生
 ├── 自由鏈式探勘
@@ -538,7 +538,7 @@ Q5: 需要分析使用者行為嗎？
 
 ### 8.3 觸發條件速查表
 
-> **完整觸發條件**見 [`design-data-mining-vision.md` 附錄 D](design-data-mining-vision.md#附錄-d功能啟動觸發條件)
+> **完整觸發條件**見 [`design-mining-vision.md` 附錄 D](design-mining-vision.md#附錄-d功能啟動觸發條件)
 
 | 功能 | 觸發信號 | Vision 章節 |
 |------|---------|------------|
@@ -558,7 +558,7 @@ Q5: 需要分析使用者行為嗎？
 
 | 文件 | 關係 |
 |------|------|
-| [`design-data-mining-vision.md`](design-data-mining-vision.md) | 完整長期願景（Template Pool、AI 輔助、探勘鏈、軌跡、快捷流程的完整設計 + 觸發條件） |
+| [`design-mining-vision.md`](design-mining-vision.md) | 完整長期願景（Template Pool、AI 輔助、探勘鏈、軌跡、快捷流程的完整設計 + 觸發條件） |
 | [`config_driven_ui_requirements.md`](config_driven_ui_requirements.md) | Config-SM 原始需求規格（layout、column、filter、aggregation 定義） |
 | [`phison-data-nexus-architecture-v2.4.md`](phison-data-nexus-architecture-v2.4.md) | 三路徑架構全貌 |
 | [`wishlist-features.md`](wishlist-features.md) | 功能許願清單（Data Mining 模組是當前開發焦點之一） |
@@ -566,4 +566,4 @@ Q5: 需要分析使用者行為嗎？
 
 ---
 
-*本文件為可執行計畫。長期願景見 [`design-data-mining-vision.md`](design-data-mining-vision.md)。*
+*本文件為可執行計畫。長期願景見 [`design-mining-vision.md`](design-mining-vision.md)。*

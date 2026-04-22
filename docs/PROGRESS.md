@@ -1,10 +1,53 @@
 # Phison Data Nexus — Progress Tracker
 
-> **This file is the SSOT for project progress and goals.**
-> All sessions should read this first and update it when completing work.
+> **This file is the SSOT for project progress (STATE).**
+> **Plan SSOT (active Phase 1):** `docs/plan-v3-phase-1.md`
+> **Sub-plans index:** `.claude/plans/v3-phase-1/README.md`
+> All sessions should read this file first and update it when completing work.
 > For feature requests detail: `docs/wishlist-features.md`
 > For tech debt detail: `docs/backlog-tech-debt.md`
-> Last updated: 2026-04-17
+> Last updated: 2026-04-22
+
+---
+
+## Phase 1 Active — Weekly Tracker (2026-04-22 → 2027-05)
+
+**Demo target:** Q2 2027 · **Master plan:** `docs/plan-v3-phase-1.md`
+
+### This week (2026-04-22 → 2026-04-28)
+
+- [ ] Send Tier 2 sub-PM A & B JDs to HR (critical path; onboard 2026-08) — Adam
+- [ ] Schedule walk-through of Phase 1 plan with SRE / DBA / LLM team owners — Adam
+- [ ] Review constitution AI chapter draft (`.claude/plans/v3-phase-1/constitution-ai-chapter-draft.md`) and start Article 8 amendment — Adam
+- [ ] Review V044 migration draft (`.claude/plans/v3-phase-1/migration-drafts/V044__authz_resource_business_term.sql`) — Adam + DBA
+- [ ] Kickoff meetings: eval set DBA collection + business PM interviews — Adam
+- [x] **Deploy ARCH-01 to dev** — 2026-04-23 驗證 postgres 容器 nexus_authz + nexus_data 兩 DB 齊備,pgbouncer 路由正確,`make verify` 通過,清掉 legacy 表。一個 app-layer bug fix (rls-simulate.ts) 已就位,其他 FU 進 backlog ARCH-01-FU-2/3。
+- [ ] **Restart authz-api** 套用 rls-simulate.ts ARCH-01-FU-1 fix + 確認 `POST /api/rls/simulate {table:'lot_status'}` 回傳真的業務資料 — Adam (很快,但要 Ctrl+C / `make dev-api`)
+
+### Phase 1 milestone gates
+
+| Gate | Date | Exit criteria | Status |
+|------|------|---------------|--------|
+| **G1** | 2026-09 | M4 prod-ready 上線 (SEC-06 / Helm / Keycloak / LDAP Cron / Redis) | 🟡 planning |
+| **G2** | 2026-12 | Tier 2 admin 表單 alpha 跑過 3-5 個 pilot ≥ 2 週主動使用 | ⏳ blocked on sub-PM B hire |
+| **G3** | 2027-03 | LLM SLO 簽契約達成 (text-to-SQL ≥85%, recall@10 ≥0.90) | ⏳ eval set in collection |
+| **G4** | 2027-04 | Tier 1 自建引擎 render 1 個業務 dashboard 端到端 | ⏳ not started |
+
+### Phase 1 quarterly snapshot
+
+| Track | Q3 2026 | Q4 2026 | Q1 2027 | Q2 2027 |
+|-------|---------|---------|---------|---------|
+| M4 prod-ready | 🟡 kickoff | target 100% (G1 by 09/2026) | — | — |
+| Tier 2 sub-PM hiring | 🟡 JD this week | 🎯 onboarded by 08/2026 | — | — |
+| Tier 2 分析 wizard | — | alpha target | expand | demo-ready |
+| Tier 2 admin 表單 | — | 🚧 alpha (G2 pilots) | Path A migration | done |
+| AI 側欄 | — | — | 🚧 build | polish |
+| Tier 3 Query Tool | — | — | — | 🚧 build |
+| Tier 1 dashboard | — | — | — | 🚧 build (G4) |
+| eval set 200 筆 | 🟡 collecting (100) | 🎯 200 complete | SLO sign-off | quarterly +20 |
+| business_term | 🟡 V044 migration | ≥20 blessed | ≥50 | ≥100 |
+
+> **Legend:** 🟢 done · 🟡 in progress · 🚧 building · 🎯 milestone · ⏳ pending · 🔴 at risk
 
 ---
 
@@ -46,10 +89,13 @@
 - [x] Data Source Registry: CRUD + test + discover API (`/api/datasources`)
 - [x] Data Source Registry: Dynamic pool management in `db.ts`
 - [x] rls-simulate.ts + pool.ts use dynamic data source pools
-- [x] ARCH-01: Business DB separation (nexus_authz + nexus_data in same PG instance)
-- [x] ARCH-01: Migrations split into `migrations/` (authz) and `migrations/data/` (business)
-- [x] ARCH-01: Seed data split into `seed/` (authz) and `seed/data/` (business)
-- [x] ARCH-01: pgbouncer + pg_hba point pool roles at nexus_data
+- [x] ARCH-01: Business DB separation (nexus_authz + nexus_data in same PG instance) — **部署驗證 2026-04-23** (dev postgres 容器兩個 DB 都在,pgbouncer 路由正確)
+- [x] ARCH-01: Migrations split into `migrations/` (authz) and `migrations/data/` (business) — deployed
+- [x] ARCH-01: Seed data split into `seed/` (authz) and `seed/data/` (business) — deployed
+- [x] ARCH-01: pgbouncer + pg_hba point pool roles at nexus_data — verified
+- [x] ARCH-01: Cleaned up nexus_authz legacy business tables (pre-ARCH-01 init residue)
+- [~] ARCH-01-FU-1: Fixed rls-simulate.ts to use getLocalDataPool() for business-table scan (待 dev api restart 驗證 live)
+- [ ] ARCH-01-FU-2: Audit other information_schema queries (browse-read / config-exec / masked-query / datasource) for authzPool vs dataPool correctness — P1, see backlog
 
 - [x] W-IT-01: Audit logging for all admin operations (pool + datasource CRUD)
 - [x] W-IT-01: AuditTab access_path filter (All/A/B/C)
@@ -120,6 +166,8 @@
 - [x] Discover → Reparent (Phase D): `POST /api/discover/reparent` — inverse of /promote. From a mapped row, Move to another Module or Detach back to the unmapped pool (parent_id = NULL). Modal with Move/Detach toggle, current module shown. Audit actions `MOVE_TO_MODULE` / `DETACH_FROM_MODULE`. +2 Playwright E2E in `08-discover-reparent.spec.ts` (33 total).
 - [x] Discover → Bulk operations (Phase E): `POST /api/discover/bulk` — three modes: `create_attach` (one new Module + attach all), `attach` (existing Module), `detach` (clear parents). Frontend: per-row checkbox + select-all + sticky action bar with mapped/unmapped split + Promote N / Attach N / Detach N buttons + bulk modal. Skip-and-report semantics for rows that don't match the mode's precondition (already_mapped, not_mapped, wrong_type). Audit actions `BULK_PROMOTE_TO_MODULE` / `BULK_ATTACH_TO_MODULE` / `BULK_DETACH_FROM_MODULE`. +2 Playwright E2E in `09-discover-bulk.spec.ts` (35 total).
 - [x] Path A clarity: Pool → Organization phase summary now states the consequence ("non-admins can't access via Path A/B until then") + amber banner explaining why action is needed + "Open Discover filtered" deeplink (sessionStorage + CustomEvent navigation, no router needed). Discover gained DS filter dropdown that consumes the deeplink hint.
+- [x] Module access UI: surfaced `execute` action (in addition to read/write/approve/export/connect) — fixes silent gap where `module:analytics`-style execute grants weren't visible in AccessPanel and weren't probed in `/api/modules/:id/details.user_permissions`. Affects `services/authz-api/src/routes/modules.ts:219` + `apps/authz-dashboard/src/components/modules/AccessPanel.tsx:13`.
+- [x] DAG: production seed `dag:material_360_trace` (`database/seed/dag_material_360_trace.sql`) under `module:analytics` — 4 pg_k8 functions (`fn_material_lookup` → `fn_material_substitution_map` / `fn_material_full_trace` / `fn_cxmzr115_shipment_history_by_material_no`), 3 fan-out edges on `material_no`. Re-runnable (ON CONFLICT DO UPDATE). Verified inheritance: `BI_USER` with `execute` on `module:analytics` → all 4 nodes pass `authz_check`.
 
 ### Remaining — Infrastructure (Milestone 4 core)
 - [ ] SEC-06: Production secrets management (P0 blocker — detail: `backlog-tech-debt.md`)
@@ -224,7 +272,7 @@ Phase 2: AI Agent Integration (Smart Analyst 2.0)  ⏳ Blocked on M4
 | `backlog-tech-debt.md` | Known issues + tech debt | Sprint planning |
 | `wishlist-features.md` | User feature requests + current focus | Sprint planning |
 | `design-data-mining-engine.md` | Data Mining module execution plan | When implementing Data Mining |
-| `design-data-mining-vision.md` | Data Mining long-term vision | When trigger conditions met |
+| `design-mining-vision.md` | Data Mining long-term vision | When trigger conditions met |
 | `.claude/agents/README.md` | Agent roles (16 agents) + architecture principles | AI-assisted development |
 | `.claude/plans/` | Oracle CDC implementation plan (D1-D8) | When starting Oracle support |
 | `standards/` | Dev standards, security rules, known risks | Before writing code |

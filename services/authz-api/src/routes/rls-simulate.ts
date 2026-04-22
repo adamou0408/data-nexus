@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { pool, getDataSourcePool, resolveDataSource } from '../db';
+import { pool, getDataSourcePool, resolveDataSource, getLocalDataPool } from '../db';
 import { buildMaskedSelect } from '../lib/masked-query';
 import { handleApiError } from '../lib/request-helpers';
 
@@ -15,8 +15,9 @@ async function loadAllowedTables(): Promise<Record<string, { resourceType: strin
     return ALLOWED_TABLES;
   }
 
-  // Get business tables and views (exclude authz_* internal tables)
-  const tablesResult = await pool.query(`
+  // Business tables/views live in nexus_data (ARCH-01), not nexus_authz.
+  const dataPool = getLocalDataPool();
+  const tablesResult = await dataPool.query(`
     SELECT table_name
     FROM information_schema.tables
     WHERE table_schema = 'public' AND table_type IN ('BASE TABLE', 'VIEW')
@@ -27,7 +28,7 @@ async function loadAllowedTables(): Promise<Record<string, { resourceType: strin
   const newTables: Record<string, { resourceType: string; orderBy: string }> = {};
   for (const row of tablesResult.rows as { table_name: string }[]) {
     const tableName = row.table_name;
-    const pkResult = await pool.query(`
+    const pkResult = await dataPool.query(`
       SELECT a.attname AS column_name
       FROM pg_index i
       JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
@@ -61,7 +62,7 @@ rlsRouter.post('/simulate', async (req, res) => {
 
   try {
     const sourceId = await resolveDataSource(table);
-    const dataPool = sourceId ? await getDataSourcePool(sourceId) : pool;
+    const dataPool = sourceId ? await getDataSourcePool(sourceId) : getLocalDataPool();
 
     const result = await buildMaskedSelect({
       authzPool: pool,
@@ -98,7 +99,7 @@ rlsRouter.get('/data', async (req, res) => {
   }
   try {
     const sourceId = await resolveDataSource(table);
-    const dataPool = sourceId ? await getDataSourcePool(sourceId) : pool;
+    const dataPool = sourceId ? await getDataSourcePool(sourceId) : getLocalDataPool();
     const result = await dataPool.query(`SELECT * FROM ${table} ORDER BY ${tableConfig.orderBy}`);
     res.json(result.rows);
   } catch (err) {

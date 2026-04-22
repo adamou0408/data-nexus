@@ -86,7 +86,7 @@ QA Engineer 可以讀取所有檔案，但主要產出：
 
 ```
 tests/                    ← 主要負責
-docs/testing-guide.md     ← 主要負責
+docs/standards/testing-guide.md     ← 主要負責
 ```
 
 ## Interaction

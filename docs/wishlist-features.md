@@ -534,7 +534,7 @@ CREATE TABLE authz_approval_record (
 | 焦點 | 對應項目 | 說明 | PROGRESS.md 追蹤 |
 |------|---------|------|-----------------|
 | **Admin 連線管理** | Data Source Registry UI 完善 | Admin 可在 Dashboard 設定、測試、管理外部資料庫連線資訊 | M4 Feature |
-| **Data Mining 模組** | Config-SM 商業邏輯頁面 | 以 module 為單位的資料探勘功能，metadata-driven 動態頁面。執行計畫：[`design-data-mining-engine.md`](design-data-mining-engine.md)、長期願景：[`design-data-mining-vision.md`](design-data-mining-vision.md) | M4 Feature |
+| **Data Mining 模組** | Config-SM 商業邏輯頁面 | 以 module 為單位的資料探勘功能，metadata-driven 動態頁面。執行計畫：[`design-data-mining-engine.md`](design-data-mining-engine.md)、長期願景：[`design-mining-vision.md`](design-mining-vision.md) | M4 Feature |
 | **Metabase BI 自助開發** | Metabase 整合強化 | 讓 BI 使用者能在 Metabase 自由建立儀表板和報表，降低進入門檻 | M4 Feature |
 
 ### 已完成項目（原在本文件追蹤，已移至 PROGRESS.md）

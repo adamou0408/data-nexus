@@ -4,6 +4,10 @@
 **npm scope**: `@nexus/*`
 **Helm chart**: `nexus-platform`
 
+> **🔗 Doc map (2026-04-22):** This is the **canonical, foundational architecture spec** for L0-L3 / three paths / SSOT.
+> - **Path A detail (appendix):** [`docs/config_driven_ui_requirements.md`](./config_driven_ui_requirements.md) — Config-SM state graph, descriptors, runtime engine.
+> - **Active Phase 1 plan (2026-05 → 2027-05 demo):** [`docs/plan-v3-phase-1.md`](./plan-v3-phase-1.md) — supersedes the v3 vision sections of this spec where they conflict.
+
 ## Document Purpose
 
 This document serves two purposes:

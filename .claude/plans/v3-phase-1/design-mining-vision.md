@@ -1,7 +1,12 @@
 # Phison Data Nexus — Data Mining Engine 長期願景
 
+> **🚧 GATED — 2026-04-22 移入 v3-phase-1/ 但屬於 Phase 2+ 願景**
+> 觸發條件：Phase 1 Milestone 0 user validation 通過 (預估 2027-Q3 之後)
+> Phase 1 期間請以 [`docs/design-data-mining-engine.md`](../../../docs/design-data-mining-engine.md) (Q3 2026 thin-slice) 為唯一執行依據。
+> 願景 vs 執行的 sequencing 規則: 若 vision 與 engine 衝突, engine 為準。
+
 > **文件定位**：本文件是 Data Mining Engine 的**完整願景參考**，描述最終目標形態。
-> **不是立即實作的規格書。** 實際執行計畫見 [`design-data-mining-engine.md`](design-data-mining-engine.md)。
+> **不是立即實作的規格書。** 實際執行計畫見 [`docs/design-data-mining-engine.md`](../../../docs/design-data-mining-engine.md)。
 >
 > 各章節的啟動時機見本文件底部的[功能啟動觸發條件](#附錄-d功能啟動觸發條件)，
 > 以及主計畫文件的「觀察指標與升級觸發」章節。

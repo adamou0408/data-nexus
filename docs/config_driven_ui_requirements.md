@@ -1,5 +1,10 @@
 # Phison Data Nexus — Config-Driven UI 需求規格書
 
+> **🔗 Positioning (2026-04-22):** This document is the **Path A / Config-SM detail spec — appendix to canonical architecture**.
+> - **Canonical architecture spec:** [`docs/phison-data-nexus-architecture-v2.4.md`](./phison-data-nexus-architecture-v2.4.md) — read first for system-wide concepts (L0-L3, three paths, SSOT).
+> - **This file:** drills into Path A descriptors, Config-SM state graph, page schema, runtime engine. Use when implementing Path A wizards or descriptor changes.
+> - **Phase 1 status:** Path A is being killed by Tier 2 admin form mode (Gate G2, Q4 2026). See `docs/plan-v3-phase-1.md` §1.1.
+
 ## 文件資訊
 
 | 項目 | 說明 |
