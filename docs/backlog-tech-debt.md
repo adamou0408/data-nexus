@@ -41,7 +41,7 @@
 
 - **ARCH-01-FU-1:** `services/authz-api/src/routes/rls-simulate.ts` 原本用 `pool` (authzPool) 掃 information_schema.tables 找業務表,ARCH-01 後業務表都在 nexus_data — 已改為 `getLocalDataPool()`。**狀態**: 已 fix,待 dev 端 restart api 驗證。
 - **ARCH-01-FU-2:** `browse-read.ts`, `config-exec.ts`, `masked-query.ts`, `datasource.ts` 還有多處 `information_schema.tables/columns` 查詢,需要逐一 audit 是該打 authzPool (schema = authz) 還是 dataPool (schema = 業務)。**狀態**: 已 fix (2026-04-23) — `browse-read.ts` data-explorer/tables/tables/:table 三處 endpoint 改為 `getLocalDataPool()`; `config-exec.ts` line 108 fallback 從 `pool` 改為 `getLocalDataPool()`; `masked-query.ts` 由 caller 傳入 dataPool,callers 已修正;`datasource.ts` 已正確 (use dsPool for remote, getLocalDataPool for CDC schema check)。`tsc --noEmit` 通過。Bonus: 順手修了 config-bulk.ts 兩處 pre-existing typo (groupId → fullGroupId, userId → fullUserId)。待 dev 端 restart api 整合驗證。
-- **ARCH-01-FU-3:** `V019__path_c_native_rls.sql` 在 nexus_authz 上建 `v_lot_status_pe`/`v_lot_status_sales` view 並 GRANT 給 pool roles — ARCH-01 後業務資料在 nexus_data,view 同名已在 `data/V002__path_c_rls.sql`。V019 的 view 建立段落應拆離或 deprecated,fresh init 會失敗(lot_status 不在 nexus_authz)。**狀態**: pending DBA review,P1。
+- **ARCH-01-FU-3:** `V019__path_c_native_rls.sql` 在 nexus_authz 上建 `v_lot_status_pe`/`v_lot_status_sales` view 並 GRANT 給 pool roles — ARCH-01 後業務資料在 nexus_data,view 同名已在 `data/V002__path_c_rls.sql`。V019 的 view 建立段落應拆離或 deprecated,fresh init 會失敗(lot_status 不在 nexus_authz)。**狀態**: 已 fix (2026-04-23) — V019 reduced to cluster-level role + BYPASSRLS only (idempotent across both DBs); business-table GRANT/RLS/POLICY/VIEW sections removed (data/V002 是 SSOT)。Codebase grep 確認 `v_lot_status_*` 沒有被 services/ 或 apps/ 引用。待 DBA 簽核 split + 下次 fresh init 驗證。
 
 **現狀**
 
