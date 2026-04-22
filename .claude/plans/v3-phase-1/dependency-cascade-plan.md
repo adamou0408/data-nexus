@@ -1,7 +1,7 @@
 # 依賴清查級聯 Plan
 
 - **Owner:** TBD (backend)
-- **Status:** STUB
+- **Status:** schema-draft-ready (2026-04-23) — SQL in `migration-drafts/V045__resource_cascade_policy.sql`, awaiting DBA review
 - **Linked from:** [`docs/plan-v3-phase-1.md`](../../../docs/plan-v3-phase-1.md) §1.1, §2.6, §3 Q3 2026
 - **Target:** Schema + cleanup jobs Q3 2026 基座
 
@@ -13,28 +13,24 @@
 
 ---
 
-## `resource_cascade_policy` Table Schema (draft)
+## `resource_cascade_policy` Table Schema
 
-```sql
-CREATE TABLE resource_cascade_policy (
-  id                  BIGSERIAL PRIMARY KEY,
-  resource_type       TEXT NOT NULL,      -- 'dashboard', 'saved_query', 'api_route', 'retrieval_index', ...
-  resource_id         TEXT NOT NULL,
-  depends_on_type     TEXT NOT NULL,      -- 'data_source', 'authz_resource', 'module', ...
-  depends_on_id       TEXT NOT NULL,
-  cascade_mode        TEXT NOT NULL,      -- 'stateless_auto' | 'stateful_sandbox_30d'
-  owner_user_id       TEXT,
-  notified_at         TIMESTAMPTZ,
-  sandbox_enter_at    TIMESTAMPTZ,
-  sandbox_expire_at   TIMESTAMPTZ,
-  archived_at         TIMESTAMPTZ,
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX ON resource_cascade_policy (depends_on_type, depends_on_id);
-CREATE INDEX ON resource_cascade_policy (cascade_mode, sandbox_expire_at);
-```
+Companion SQL: **[`migration-drafts/V045__resource_cascade_policy.sql`](./migration-drafts/V045__resource_cascade_policy.sql)** (ready-for-DBA, 2026-04-23).
 
-(Draft — final schema lives in `migration-drafts/`, owned by another agent.)
+Schema summary (full draft in the SQL file):
+
+- PK: `cascade_id BIGSERIAL`
+- Dependent: `(resource_type, resource_id)` — TEXT tuple, no FK (cross-store: authz_resource + BI artifacts)
+- Upstream: `(depends_on_type, depends_on_id)` — TEXT tuple
+- `cascade_mode` — CHECK in (`stateless_auto`, `stateful_sandbox_30d`)
+- `owner_user_id TEXT REFERENCES authz_subject(subject_id)` (TEXT per V044 resolution)
+- Sandbox state: `notified_at` / `sandbox_enter_at` / `sandbox_expire_at` / `archived_at` — all NULL until cascade fires
+- CHECK invariant: `stateless_auto` rows never populate sandbox fields; `stateful_sandbox_30d` rows satisfy `expire > enter`
+- UNIQUE edge: `(resource_type, resource_id, depends_on_type, depends_on_id)` prevents duplicate declarations
+- Indexes: upstream scan, owner-facing "my at-risk", expired-sandbox archiver
+- `updated_at` trigger (project convention)
+
+Audit events flow to the existing `authz_audit_log` pipeline (V005 + V011) with `action_id='cascade_*'` — no new audit table.
 
 ## 無狀態 vs 有狀態 Examples
 
@@ -73,10 +69,17 @@ CREATE INDEX ON resource_cascade_policy (cascade_mode, sandbox_expire_at);
 
 ## Backend Jobs Needed
 
-- `cascade_scan_job` — cron, scans on upstream disable events and populates sandbox flags
-- `cascade_notify_job` — cron (daily), sends owner reminders
-- `cascade_archive_job` — cron (hourly), archives expired sandboxes
-- `cascade_restore_api` — RESTful endpoint for owner-initiated restore (with audit)
+| Job | Cadence | Concurrency | Trigger |
+|-----|---------|-------------|---------|
+| `cascade_scan_job` | event-driven (listens for `authz_resource` / `authz_data_source` is_active=FALSE + authz_module disable events) | 1 (single writer) | pg_notify hook on source-of-truth update |
+| `cascade_notify_job` | daily 09:00 Asia/Taipei | 1 | cron |
+| `cascade_archive_job` | hourly :05 | 1 | cron, idempotent |
+| `cascade_restore_api` | on-demand | HTTP | `POST /cascade/:cascade_id/restore` — authz `cascade:restore` action on dependent resource, emits audit |
+
+Notes:
+- All jobs idempotent; `updated_at` trigger catches redundant writes.
+- Scan job uses `FOR UPDATE SKIP LOCKED` on the edge index so concurrent cascades don't re-flag.
+- Notify + archive jobs are single-instance via advisory lock (`pg_try_advisory_lock`) to survive duplicate cron triggers in HA.
 
 ## Acceptance Criteria (draft)
 
@@ -87,11 +90,10 @@ CREATE INDEX ON resource_cascade_policy (cascade_mode, sandbox_expire_at);
 
 ---
 
-## STUB — to be filled
+## Remaining — to be filled
 
-- Migration SQL draft (coordinate with `migration-drafts/`)
-- Job scheduling detail (worker / cron cadence / concurrency)
 - Notification template copy (zh / en)
-- Extension-request approval workflow
-- UI: owner's "my dependents at risk" dashboard
+- Extension-request approval workflow (who approves, max extension, per-resource-type policy)
+- UI: owner's "my dependents at risk" dashboard (authz-dashboard tab, uses `idx_resource_cascade_policy_owner_active` index)
 - Test matrix (all resource type × cascade mode combinations)
+- Populate initial edges: how are `(resource, depends_on)` tuples seeded? Auto-discovery from Path A descriptors + manual declaration for BI artifacts?

@@ -16,13 +16,19 @@
 --   'under_review'.
 --
 -- V-number:
---   Latest committed migration = V043. A collision already exists
---   at V030 (V030__timescaledb_audit_hypertable.sql +
---   V030__view_function_discovery.sql). This draft uses V044 —
---   one ahead of V043 — because the v3 Phase 1 design decision is
---   freshly locked and no intervening migration is expected, but
---   the next operator MUST verify latest V-number before moving
---   this file into database/migrations/ and bump if needed.
+--   Latest committed migration at draft time = V043. The next
+--   operator MUST re-verify the latest V-number before moving this
+--   file into database/migrations/ and bump if needed. A pre-
+--   existing V030 collision (V030__timescaledb_audit_hypertable
+--   vs V030__view_function_discovery) is tracked separately as
+--   MIG-01 / ARCH-01-FU-3 and is NOT a V044 blocker.
+--
+-- Open questions resolved 2026-04-23 (see companion notes):
+--   1. owner_user_id = TEXT (confirmed, overrides BIGINT brief)
+--   2. V030 collision = out of scope for V044
+--   3. Deprecated rows must clear blessed_at/by — kept strict for
+--      v1; audit history lives in authz_audit_log, not on row.
+--   Awaiting DBA counter-sign before promotion to migrations/.
 -- ============================================================
 
 -- ─── 1. Add semantic-layer columns ───
@@ -34,10 +40,12 @@ ALTER TABLE authz_resource
     ADD COLUMN business_term   TEXT,
     ADD COLUMN definition      TEXT,
     ADD COLUMN formula         TEXT,
-    -- Project convention: subject_id is TEXT, not BIGINT.
-    -- The drafting request asked for BIGINT; using TEXT here to
-    -- match authz_subject(subject_id) everywhere else in the
-    -- codebase (see V002, V020 owner_subject). Flag for reviewer.
+    -- Subject FKs are TEXT throughout (see V002, V004, V018, V020).
+    -- TEXT was confirmed as the right choice on 2026-04-23; the
+    -- earlier "BIGINT" instruction in the drafting brief was an
+    -- error and is overridden here. Do not change without also
+    -- migrating authz_subject_role.subject_id, authz_data_source.
+    -- owner_subject, authz_group_member.user_id, etc.
     ADD COLUMN owner_user_id   TEXT REFERENCES authz_subject(subject_id),
     ADD COLUMN status          TEXT,
     ADD COLUMN blessed_at      TIMESTAMPTZ,
@@ -129,7 +137,7 @@ COMMENT ON COLUMN authz_resource.blessed_by IS
 -- this migration. Instead, either:
 --   (a) introduce a generic authz_resource_version table in a
 --       separate migration mirroring V006, OR
---   (b) rely on the existing authz_audit_event pipeline
+--   (b) rely on the existing authz_audit_log pipeline
 --       (V005 / V011) from the application layer — routes that
 --       mutate these columns should emit an audit_event with
 --       action='semantic_term_*'.

@@ -11,7 +11,7 @@
 
 1. **`owner_user_id` type:** confirmed **TEXT** (not BIGINT). Every subject FK in the codebase (V002 authz_subject_role, V004 authz_db_pool_assignment, V018 authz_group_member, V020 authz_data_source) uses `TEXT REFERENCES authz_subject(subject_id)`. Switching one column to BIGINT would split the identity model. Drafter made the right call.
 2. **V-number collision:** V043 is the current latest (`V043__module_functions_descriptor.sql`). V044 is free. The pre-existing `V030__timescaledb_audit_hypertable.sql` + `V030__view_function_discovery.sql` collision is an independent latent bug (see new backlog item ARCH-01-FU-3 area + needs its own `MIG-01` track). Not a V044 blocker.
-3. **Deprecated rows clearing `blessed_at`/`blessed_by`:** drafter flagged this is probably too strict (loses audit history). **Decision:** keep it strict for v1 (audit lives in `authz_audit_event`, not on the row). Revisit if DBA review surfaces a concrete use case for row-level historical bless metadata.
+3. **Deprecated rows clearing `blessed_at`/`blessed_by`:** drafter flagged this is probably too strict (loses audit history). **Decision:** keep it strict for v1 (audit lives in `authz_audit_log`, not on the row). Revisit if DBA review surfaces a concrete use case for row-level historical bless metadata.
 
 **Approved by:** Adam (pending DBA counter-sign on column types + CHECK semantics).
 
@@ -62,9 +62,9 @@ No generic audit trigger added. The project has two adjacent patterns:
 
 - `V006` — `authz_policy_version` + `trg_policy_versioning` snapshots `OLD` on every update. Clean pattern, but specific to `authz_policy`.
 - `V034` — `trg_resource_change` already exists on `authz_resource` but only does `pg_notify` for cache invalidation, not persistent audit.
-- `V005` / `V011` — `authz_audit_event` + `authz_audit_batch_insert()` — app-layer audit pipeline.
+- `V005` / `V011` — `authz_audit_log` + `authz_audit_batch_insert()` — app-layer audit pipeline.
 
-**Recommendation:** route mutations should emit audit events through the existing `authz_audit_event` pipeline with `action='semantic_term_draft|under_review|blessed|deprecated'`. A DB-level version table (mirroring V006) can come later if app-layer audit proves insufficient. Documented in the SQL header; not implemented in this migration.
+**Recommendation:** route mutations should emit audit events through the existing `authz_audit_log` pipeline with `action='semantic_term_draft|under_review|blessed|deprecated'`. A DB-level version table (mirroring V006) can come later if app-layer audit proves insufficient. Documented in the SQL header; not implemented in this migration.
 
 ## 4. Rollback plan
 
@@ -107,7 +107,7 @@ Losing data on rollback is acceptable during Phase 1 iteration — no production
 
 1. Verify `business_term` is not already used by another blessed row (partial unique index enforces)
 2. Update: `status='blessed'`, `blessed_at=now()`, `blessed_by=<dba subject>`
-3. Emit `authz_audit_event` with `action='semantic_term_blessed'`
+3. Emit `authz_audit_log` with `action='semantic_term_blessed'`
 
 **Deprecation:**
 
@@ -146,6 +146,6 @@ These probably belong in a new `routes/semantic-terms.ts` file so concerns stay 
 ## 7. Schema gaps discovered while drafting
 
 1. **V030 V-number collision** already exists (`V030__timescaledb_audit_hypertable.sql` vs `V030__view_function_discovery.sql`). Flyway-style migrators typically fail on duplicate V-numbers; worth confirming the migrator tolerates this before shipping V044.
-2. **No generic audit trigger on `authz_resource`** — only pg_notify (V034). Any mutation history has to be reconstructed from `authz_audit_event` written by the app layer. If Phase 1 wants "每次變動都記" (plan §2.7) at the DB level, we need a V006-style version table for `authz_resource`.
+2. **No generic audit trigger on `authz_resource`** — only pg_notify (V034). Any mutation history has to be reconstructed from `authz_audit_log` written by the app layer. If Phase 1 wants "每次變動都記" (plan §2.7) at the DB level, we need a V006-style version table for `authz_resource`.
 3. **Subject identity inconsistency risk** — the drafting brief asked for `BIGINT owner_user_id`, but all existing subject references use `TEXT`. There's no current `users` table with integer PK; if one is being introduced in Phase 1 it is not in any committed migration up to V043.
 4. **`formula` column is free-form text** — no validation here. The wizard / AI layer is responsible for parsing and safe-executing. Worth noting this is a trust-boundary concern (AI writing formula → must go through sandbox per plan §2.5).
