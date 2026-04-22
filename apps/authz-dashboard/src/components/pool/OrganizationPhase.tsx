@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, LifecycleResponse } from '../../api';
 import { useToast } from '../Toast';
-import { Plus, Pencil, X, Check, RefreshCw, Play, Search } from 'lucide-react';
+import { Plus, Pencil, X, Check, RefreshCw, Play, Search, AlertTriangle, ExternalLink } from 'lucide-react';
 
 export function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string; lifecycle: LifecycleResponse; onMutate: () => void }) {
   const toast = useToast();
@@ -113,8 +113,38 @@ export function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string;
     return <div className="text-sm text-slate-500">Run Discovery first to populate table resources.</div>;
   }
 
+  const total = org.mapped + org.unmapped;
+  const showHelp = org.status === 'action_needed';
+
+  const openDiscover = () => {
+    sessionStorage.setItem('discover.dsFilter', dsId);
+    window.dispatchEvent(new CustomEvent('navigate-tab', { detail: { tab: 'discover' } }));
+  };
+
   return (
     <div className="space-y-4">
+      {showHelp && (
+        <div className="border border-amber-200 bg-amber-50 rounded-md p-3 flex gap-2.5">
+          <AlertTriangle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
+          <div className="text-xs text-amber-900 space-y-1.5 flex-1">
+            <div className="font-semibold">Why "Action Needed"?</div>
+            <div>
+              <span className="font-bold">{org.unmapped}</span> of <span className="font-bold">{total}</span> tables/views in this data source are not yet under any Module.
+              Without a Module wrapper they have <strong>no permission boundary</strong> — only admins (wildcard) can read them; everyone else gets denied by <code className="bg-amber-100 px-1 rounded">authz_check</code>.
+            </div>
+            <div>
+              <strong>What to do:</strong> assign each unmapped row below to a Module (existing or new). For bulk work across many data sources, the Discover tab has multi-select.
+            </div>
+            <button
+              onClick={openDiscover}
+              className="inline-flex items-center gap-1 text-xs font-medium text-amber-900 hover:text-amber-700 underline mt-1"
+            >
+              <ExternalLink size={11} /> Open Discover filtered to this data source
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex gap-4 text-sm">
         <div><span className="font-bold text-emerald-600">{org.mapped}</span> <span className="text-slate-500">mapped</span></div>
         <div><span className="font-bold text-amber-600">{org.unmapped}</span> <span className="text-slate-500">unmapped</span></div>

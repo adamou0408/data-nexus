@@ -42,6 +42,15 @@ function AppInner() {
     }
   }, [isAdmin, tab]);
 
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ tab: TabId }>).detail;
+      if (detail?.tab) setTab(detail.tab);
+    };
+    window.addEventListener('navigate-tab', handler);
+    return () => window.removeEventListener('navigate-tab', handler);
+  }, []);
+
   const accessSection = accessTabMap[tab];
 
   return (

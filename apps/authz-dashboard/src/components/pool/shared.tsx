@@ -130,10 +130,10 @@ export function phaseSummary(key: string, phases: LifecycleResponse['phases']): 
         : phases.discovery.status === 'not_started' ? 'Run discovery to scan schema' : '';
     case 'organization':
       return phases.organization.status === 'done'
-        ? `All ${phases.organization.mapped} tables & views mapped`
+        ? `All ${phases.organization.mapped} tables & views are under a Module`
         : phases.organization.unmapped > 0
-          ? `${phases.organization.unmapped} unmapped / ${phases.organization.mapped} mapped`
-          : 'No tables or views to map';
+          ? `${phases.organization.unmapped} of ${phases.organization.unmapped + phases.organization.mapped} tables & views still need to be assigned to a Module — non-admins can't access them via Path A/B until then`
+          : 'No tables or views discovered yet';
     case 'profiles':
       return phases.profiles.status === 'done'
         ? `${phases.profiles.count} profile${phases.profiles.count !== 1 ? 's' : ''} configured`
