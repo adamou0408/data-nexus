@@ -5,7 +5,8 @@ import { TablesPanel } from './TablesPanel';
 import { AccessPanel } from './AccessPanel';
 import { MetadataGrid } from '../shared/MetadataGrid';
 import { DangerConfirmModal, ConfirmState } from '../shared/DangerConfirmModal';
-import { Loader2, Trash2, Pencil, FolderPlus, ChevronRight } from 'lucide-react';
+import { Loader2, Trash2, Pencil, FolderPlus, ChevronRight, Code2 } from 'lucide-react';
+import { EmptyState } from '../shared/atoms/EmptyState';
 import { ModuleFormModal } from './ModuleFormModal';
 
 /** Build breadcrumb path from root → current module */
@@ -94,6 +95,7 @@ export function ModuleDetail({
   // Visibility rules: 'all'/'read' → everyone, 'write' → canWrite, 'admin' → isAdmin
   const sectionDataCount: Record<string, number> = {
     tables: children.tables.length,
+    functions: children.functions?.length ?? 0,
     access: access.length,
     profiles: profiles.length,
   };
@@ -198,6 +200,38 @@ export function ModuleDetail({
       {/* Sub-tab content — tables & access use domain components, profiles uses MetadataGrid (L4) */}
       <div className="flex-1 overflow-y-auto p-4">
         {subTab === 'tables' && <TablesPanel tables={children.tables} modules={nodes} moduleId={moduleId} onMutate={() => { load(); onMutate(); }} readOnly={!canWrite} />}
+        {subTab === 'functions' && (
+          (children.functions?.length ?? 0) === 0 ? (
+            <EmptyState icon={<Code2 size={32} />} message="No functions mapped to this module" />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 text-left text-slate-500">
+                    <th className="pb-2 font-medium">Function</th>
+                    <th className="pb-2 font-medium">Schema</th>
+                    <th className="pb-2 font-medium">Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {children.functions.map(f => (
+                    <tr key={f.resource_id} className="border-b border-slate-100">
+                      <td className="py-2 pr-3">
+                        <div className="flex items-center gap-1.5">
+                          <Code2 size={12} className="text-amber-600" />
+                          <span className="font-medium text-slate-800">{f.display_name}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono">{f.resource_id}</div>
+                      </td>
+                      <td className="py-2 pr-3 font-mono text-slate-600">{f.schema || '—'}</td>
+                      <td className="py-2 pr-3 font-mono text-slate-600">{f.data_source_id || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
         {subTab === 'access' && <AccessPanel access={access} />}
         {subTab === 'profiles' && (() => {
           const desc = descriptors.find(d => d.section_key === 'profiles');

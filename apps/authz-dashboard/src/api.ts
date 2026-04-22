@@ -774,6 +774,7 @@ export type ModuleDetails = {
   children: {
     modules: { resource_id: string; display_name: string; table_count: number }[];
     tables: { resource_id: string; display_name: string; resource_type: string; column_count: number; data_source_id: string | null }[];
+    functions: { resource_id: string; display_name: string; data_source_id: string | null; schema: string | null }[];
   };
   access: { role_id: string; role_name: string; actions: { action_id: string; effect: string }[] }[];
   profiles: { profile_id: string; pg_role: string; connection_mode: string; data_source_id: string | null }[];

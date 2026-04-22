@@ -175,6 +175,16 @@ modulesRouter.get('/:id/details', async (req, res) => {
       ORDER BY r.resource_type, r.display_name
     `, [moduleId]);
 
+    // Direct child functions with schema (parsed from resource_id) + data_source_id
+    const childFunctions = await pool.query(`
+      SELECT r.resource_id, r.display_name,
+        r.attributes->>'data_source_id' AS data_source_id,
+        split_part(substring(r.resource_id from 10), '.', 1) AS schema
+      FROM authz_resource r
+      WHERE r.parent_id = $1 AND r.resource_type = 'function' AND r.is_active = TRUE
+      ORDER BY r.display_name
+    `, [moduleId]);
+
     // Access summary: which roles have permissions on this module
     const access = await pool.query(`
       SELECT rp.role_id, ro.display_name AS role_name, rp.action_id, rp.effect
@@ -223,6 +233,7 @@ modulesRouter.get('/:id/details', async (req, res) => {
       children: {
         modules: childModules.rows.map(r => ({ ...r, table_count: Number(r.table_count) })),
         tables: childTables.rows.map(r => ({ ...r, column_count: Number(r.column_count) })),
+        functions: childFunctions.rows,
       },
       access: Object.values(accessByRole),
       profiles: profiles.rows,
