@@ -99,38 +99,20 @@ volumes:
   pgdata:
 ```
 
-### Step 1.2: First Migration — Core Schema
+### Step 1.2: Migrations
 
-Take the SQL from architecture doc Section II and save as migration files.
+Migrations are in two trees, both ordered `V001..V0xx`:
 
-The architecture document contains the full DDL. Split it into ordered migration files:
+| Tree | Database | Purpose |
+|------|----------|---------|
+| `database/migrations/V*.sql` | `nexus_authz` | All `authz_*` tables, functions (`authz_resolve`, `authz_check`, `authz_filter`, `authz_check_from_cache`), policy versioning, audit log, semantic layer (V044). |
+| `database/migrations/data/V*.sql` | `nexus_data` | Business tables (lot_status, sales_order, etc.), Path C RLS policies, CDC schema helpers, TimescaleDB business hypertables. |
 
-```
-database/migrations/
-├── V001__enums.sql                    ← authz_effect, authz_granularity, mask_type, etc.
-├── V002__core_tables.sql              ← authz_subject, authz_resource, authz_action,
-│                                        authz_role, authz_role_permission, authz_subject_role
-├── V003__policy_tables.sql            ← authz_policy, authz_composite_action, authz_mask_function
-├── V004__pool_tables.sql              ← authz_db_pool_profile, authz_db_pool_assignment,
-│                                        authz_pool_credentials
-├── V005__sync_audit_tables.sql        ← authz_sync_log, authz_audit_log (partitioned), indexes
-├── V006__policy_version_table.sql     ← authz_policy_version + auto-version trigger (from §16.7)
-├── V007__core_functions.sql           ← _authz_resolve_roles, authz_check, authz_filter,
-│                                        authz_check_from_cache
-├── V008__path_a_resolve.sql           ← authz_resolve()
-├── V009__path_b_resolve.sql           ← authz_resolve_web_acl()
-├── V010__path_c_sync.sql             ← authz_sync_db_grants(), authz_sync_pgbouncer_config()
-├── V011__audit_batch.sql              ← authz_audit_batch_insert()
-├── V012__cache_notify_triggers.sql    ← authz_notify_change() + triggers on 3 tables
-└── V013__seed_data.sql                ← roles, actions, mask functions, authz_admin self-registration
-```
+`init-db.sh` (mounted into the postgres container as `00-init-db.sh`) creates both DBs and runs each tree against the right one. Adding a new migration: drop a new `V0NN__name.sql` in the appropriate tree — `init-db.sh` picks it up on next fresh start. For an existing cluster, apply manually via `psql` or rebuild the volume.
 
-**Where to get the SQL**: Every line of SQL is already in the architecture document:
-- V001-V005: Section II (§2.1 - §2.5)
-- V006: Section XVI (§16.7 COMP-2)
-- V007-V011: Section III (§3.1 - §3.6)
-- V012: Section XV (§15.3 Cache Invalidation)
-- V013: Section IX (§9.3 Self-Registration) + Section II (§2.2 action INSERT + §2.3 mask_function INSERT)
+The original DDL skeleton (V001-V013) lives in `docs/phison-data-nexus-architecture-v2.4.md` Section II / III / IX / XV / XVI. Subsequent migrations (V014+) layer feature work on top — read the file headers in chronological order to understand the evolution.
+
+> **V030 collision:** two files share the V030 prefix (`V030__timescaledb_audit_hypertable.sql` and `V030__view_function_discovery.sql`). Tracked as MIG-01 / ARCH-01-FU-3, see `docs/backlog-tech-debt.md`.
 
 ### Step 1.3: Seed Data
 
