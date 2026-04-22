@@ -401,3 +401,197 @@ discoverRouter.post('/reparent', async (req, res) => {
     client.release();
   }
 });
+
+// ─── Bulk: attach / detach / create_attach across many resources ───
+// Three modes (Phase E):
+//   1. create_attach — body: { mode, resource_ids, module_display_name, parent_module_id? }
+//       Creates one new Module and attaches all currently-unmapped rows to it.
+//   2. attach        — body: { mode, resource_ids, target_module_id }
+//       Attaches all currently-unmapped rows to an existing active module.
+//   3. detach        — body: { mode, resource_ids }
+//       Clears parent_id on all currently-mapped rows (returns to unmapped pool).
+//
+// Behavior: rows that don't match the mode's precondition (wrong type, not
+// active, already mapped for attach modes, already unmapped for detach) are
+// SKIPPED with a per-row reason — the rest still apply. The whole set runs in
+// one transaction so an unexpected DB error rolls back all changes atomically.
+// One admin audit row is written per operation summarizing affected ids.
+discoverRouter.post('/bulk', async (req, res) => {
+  const userId = getUserId(req);
+  const mode = String(req.body?.mode || '');
+  const rawIds: unknown = req.body?.resource_ids;
+  if (!['create_attach', 'attach', 'detach'].includes(mode)) {
+    return res.status(400).json({ error: 'mode must be create_attach | attach | detach' });
+  }
+  if (!Array.isArray(rawIds) || rawIds.length === 0) {
+    return res.status(400).json({ error: 'resource_ids must be a non-empty array' });
+  }
+  const resourceIds = Array.from(new Set(rawIds.map(id => String(id).trim()).filter(Boolean)));
+  if (resourceIds.length === 0) return res.status(400).json({ error: 'resource_ids is empty after trimming' });
+  if (resourceIds.length > 500) return res.status(400).json({ error: 'resource_ids capped at 500 per request' });
+
+  const targetModuleId = req.body?.target_module_id ? String(req.body.target_module_id).trim() : null;
+  const parentModuleId = req.body?.parent_module_id ? String(req.body.parent_module_id).trim() : null;
+  const displayName = String(req.body?.module_display_name || '').trim();
+
+  if (mode === 'attach' && !targetModuleId) {
+    return res.status(400).json({ error: 'target_module_id required for attach mode' });
+  }
+  if (mode === 'create_attach') {
+    if (!displayName) return res.status(400).json({ error: 'module_display_name required for create_attach mode' });
+    if (displayName.length > 200) return res.status(400).json({ error: 'module_display_name too long (max 200)' });
+    if (!slugify(displayName)) return res.status(400).json({ error: 'module_display_name produced empty slug' });
+  }
+
+  const client = await authzPool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Load all candidate rows in one shot (plus their current parent type).
+    const rowsRes = await client.query(
+      `SELECT ar.resource_id, ar.resource_type, ar.parent_id, ar.is_active,
+              parent.resource_type AS parent_resource_type
+         FROM authz_resource ar
+         LEFT JOIN authz_resource parent ON parent.resource_id = ar.parent_id
+        WHERE ar.resource_id = ANY($1::text[])`,
+      [resourceIds],
+    );
+    const byId = new Map<string, any>(rowsRes.rows.map(r => [r.resource_id, r]));
+
+    // Validate/resolve module target if needed.
+    let moduleId: string | null = null;
+    let resolvedDisplayName: string | null = null;
+    let moduleCreated = false;
+
+    if (mode === 'attach') {
+      const m = await client.query(
+        `SELECT resource_id, display_name, resource_type, is_active
+           FROM authz_resource WHERE resource_id = $1`,
+        [targetModuleId],
+      );
+      if (m.rows.length === 0 || !m.rows[0].is_active || m.rows[0].resource_type !== 'module') {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'target_module_id must be an active module' });
+      }
+      moduleId = m.rows[0].resource_id;
+      resolvedDisplayName = m.rows[0].display_name;
+    } else if (mode === 'create_attach') {
+      if (parentModuleId) {
+        const parent = await client.query(
+          `SELECT resource_type, is_active FROM authz_resource WHERE resource_id = $1`,
+          [parentModuleId],
+        );
+        if (parent.rows.length === 0 || !parent.rows[0].is_active || parent.rows[0].resource_type !== 'module') {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'parent_module_id must be an active module' });
+        }
+      }
+      const slug = slugify(displayName);
+      const baseId = parentModuleId ? `${parentModuleId}.${slug}` : `module:${slug}`;
+      moduleId = baseId;
+      for (let i = 0; i < 50; i++) {
+        const exists = await client.query(`SELECT 1 FROM authz_resource WHERE resource_id = $1`, [moduleId]);
+        if (exists.rows.length === 0) break;
+        moduleId = `${baseId}_${i + 2}`;
+      }
+      // Module is created below, only if there are applicable rows.
+      resolvedDisplayName = displayName;
+    }
+
+    // Classify each requested id against the mode's precondition.
+    const applied: string[] = [];
+    const skipped: { resource_id: string; reason: string }[] = [];
+
+    for (const id of resourceIds) {
+      const row = byId.get(id);
+      if (!row) { skipped.push({ resource_id: id, reason: 'not_found' }); continue; }
+      if (!row.is_active) { skipped.push({ resource_id: id, reason: 'inactive' }); continue; }
+      if (!['table', 'view', 'function'].includes(row.resource_type)) {
+        skipped.push({ resource_id: id, reason: `wrong_type:${row.resource_type}` });
+        continue;
+      }
+      const isMapped = row.parent_resource_type === 'module';
+      if (mode === 'detach') {
+        if (!isMapped) { skipped.push({ resource_id: id, reason: 'not_mapped' }); continue; }
+      } else {
+        if (isMapped) { skipped.push({ resource_id: id, reason: 'already_mapped' }); continue; }
+      }
+      applied.push(id);
+    }
+
+    if (applied.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(200).json({
+        mode, applied_count: 0, skipped_count: skipped.length, applied: [], skipped,
+        module_id: null, module_created: false,
+      });
+    }
+
+    // In create_attach, only create the new module now that we know
+    // there's at least one applicable row — avoids stranding empty modules.
+    if (mode === 'create_attach') {
+      await client.query(
+        `INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name, attributes)
+         VALUES ($1, 'module', $2, $3, $4::jsonb)`,
+        [
+          moduleId,
+          parentModuleId,
+          displayName,
+          JSON.stringify({ promoted_from_bulk: applied, promoted_by: userId }),
+        ],
+      );
+      moduleCreated = true;
+    }
+
+    // Single UPDATE handles all applied rows.
+    const newParent = mode === 'detach' ? null : moduleId;
+    await client.query(
+      `UPDATE authz_resource SET parent_id = $1, updated_at = now() WHERE resource_id = ANY($2::text[])`,
+      [newParent, applied],
+    );
+
+    await client.query('COMMIT');
+
+    // Side effects (post-commit).
+    try {
+      await authzPool.query('SELECT refresh_module_tree_stats()');
+    } catch (e) {
+      console.warn('[discover/bulk] refresh_module_tree_stats failed:', e);
+    }
+    const auditAction = mode === 'create_attach'
+      ? 'BULK_PROMOTE_TO_MODULE'
+      : mode === 'attach'
+        ? 'BULK_ATTACH_TO_MODULE'
+        : 'BULK_DETACH_FROM_MODULE';
+    await logAdminAction(authzPool, {
+      userId,
+      action: auditAction,
+      resourceType: 'module',
+      resourceId: moduleId || 'bulk-detach',
+      details: {
+        mode,
+        applied_count: applied.length,
+        skipped_count: skipped.length,
+        applied,
+        module_created: moduleCreated,
+        parent_module_id: parentModuleId,
+      },
+    });
+
+    res.json({
+      mode,
+      applied_count: applied.length,
+      skipped_count: skipped.length,
+      applied,
+      skipped,
+      module_id: moduleId,
+      module_display_name: resolvedDisplayName,
+      module_created: moduleCreated,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    handleApiError(res, err);
+  } finally {
+    client.release();
+  }
+});

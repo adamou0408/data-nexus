@@ -24,7 +24,7 @@ test.describe('Discover → Reparent (Phase D)', () => {
     const rowEl = moveBtn.locator('xpath=ancestor::tr');
     const rowTestId = await rowEl.getAttribute('data-testid');
     const resourceId = rowTestId!.replace(/^row-/, '');
-    const originalModule = (await rowEl.locator('td').nth(4).textContent())?.trim() || '';
+    const originalModule = (await rowEl.locator('td').nth(5).textContent())?.trim() || '';
     expect(originalModule.length).toBeGreaterThan(0);
 
     // Open modal — defaults to "Move" mode
@@ -76,7 +76,7 @@ test.describe('Discover → Reparent (Phase D)', () => {
     const rowEl = moveBtn.locator('xpath=ancestor::tr');
     const rowTestId = await rowEl.getAttribute('data-testid');
     const resourceId = rowTestId!.replace(/^row-/, '');
-    const originalModule = (await rowEl.locator('td').nth(4).textContent())?.trim() || '';
+    const originalModule = (await rowEl.locator('td').nth(5).textContent())?.trim() || '';
     expect(originalModule.length).toBeGreaterThan(0);
 
     await moveBtn.click();

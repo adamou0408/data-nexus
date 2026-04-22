@@ -476,6 +476,22 @@ export const api = {
       new_display_name: string | null;
     }>('/discover/reparent', { method: 'POST', body: JSON.stringify(body) }),
 
+  discoverBulk: (body:
+    | { mode: 'create_attach'; resource_ids: string[]; module_display_name: string; parent_module_id?: string | null }
+    | { mode: 'attach'; resource_ids: string[]; target_module_id: string }
+    | { mode: 'detach'; resource_ids: string[] }
+  ) =>
+    request<{
+      mode: 'create_attach' | 'attach' | 'detach';
+      applied_count: number;
+      skipped_count: number;
+      applied: string[];
+      skipped: { resource_id: string; reason: string }[];
+      module_id: string | null;
+      module_display_name?: string | null;
+      module_created: boolean;
+    }>('/discover/bulk', { method: 'POST', body: JSON.stringify(body) }),
+
   poolUncredentialedRoles: () =>
     request<{ pg_role: string; profile_id: string; connection_mode: string; data_source_id: string | null }[]>('/pool/uncredentialed-roles'),
 
