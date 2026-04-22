@@ -9,6 +9,7 @@ export function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string;
   const [mappedTables, setMappedTables] = useState<{ resource_id: string; resource_type: string; display_name: string; parent_id: string | null; module_name: string | null; attributes: Record<string, unknown> }[]>([]);
   const [modules, setModules] = useState<{ resource_id: string; display_name: string; parent_id: string | null }[]>([]);
   const [pendingMappings, setPendingMappings] = useState<Record<string, string>>({});
+  const [initialMappings, setInitialMappings] = useState<Record<string, string>>({});
   const [newModuleName, setNewModuleName] = useState('');
   const [newModuleDisplay, setNewModuleDisplay] = useState('');
   const [savingMapping, setSavingMapping] = useState(false);
@@ -27,7 +28,13 @@ export function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string;
       setUnmappedTables(unmapped);
       setMappedTables(mapped);
       setModules(mods);
-      setPendingMappings({});
+      // Initialize both "initial" (source of truth for diff) and "pending" (what dropdown shows)
+      // Unmapped → '' (no parent). Mapped → current parent_id.
+      const init: Record<string, string> = {};
+      for (const t of unmapped) init[t.resource_id] = '';
+      for (const t of mapped) init[t.resource_id] = t.parent_id ?? '';
+      setInitialMappings(init);
+      setPendingMappings(init);
     } catch (err) { toast.error(String(err)); }
     finally { setLoaded(true); }
   }, [dsId]);
@@ -68,12 +75,20 @@ export function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string;
     } catch (err) { toast.error(String(err)); }
   };
 
+  // Entries that differ from initial state are the ones we need to persist.
+  // '' value against a currently-mapped row means "unmap" (parent_id = null).
+  const changedEntries = Object.entries(pendingMappings).filter(
+    ([id, v]) => v !== (initialMappings[id] ?? '')
+  );
+
   const handleSaveMappings = async () => {
-    const entries = Object.entries(pendingMappings).filter(([, v]) => v);
-    if (entries.length === 0) return;
+    if (changedEntries.length === 0) return;
     setSavingMapping(true);
     try {
-      await api.resourcesBulkParent(entries.map(([resource_id, parent_id]) => ({ resource_id, parent_id })));
+      await api.resourcesBulkParent(changedEntries.map(([resource_id, parent_id]) => ({
+        resource_id,
+        parent_id: parent_id || null,
+      })));
       await loadMapping();
       onMutate();
     } catch (err) { toast.error(String(err)); }
@@ -189,12 +204,12 @@ export function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string;
                           </button>
                         </span>
                       )}
-                      <select className="input input-sm text-xs w-44 flex-shrink-0"
-                        value={pendingMappings[t.resource_id] || ''}
+                      <select className="input input-sm text-xs w-72 flex-shrink-0"
+                        value={pendingMappings[t.resource_id] ?? ''}
                         onChange={e => setPendingMappings(prev => ({ ...prev, [t.resource_id]: e.target.value }))}>
                         <option value="">-- no module --</option>
                         {modules.map(m => (
-                          <option key={m.resource_id} value={m.resource_id}>{m.display_name}</option>
+                          <option key={m.resource_id} value={m.resource_id}>{m.display_name} ({m.resource_id})</option>
                         ))}
                       </select>
                     </div>
@@ -204,39 +219,58 @@ export function OrganizationPhase({ dsId, lifecycle, onMutate }: { dsId: string;
             </div>
           ));
           })()}
-          <button onClick={handleSaveMappings}
-            disabled={savingMapping || Object.values(pendingMappings).filter(Boolean).length === 0}
-            className="btn btn-sm bg-purple-600 text-white hover:bg-purple-700 gap-1 mt-2">
-            {savingMapping ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
-            Save Mappings ({Object.values(pendingMappings).filter(Boolean).length} tables)
-          </button>
         </div>
       )}
 
-      {/* Already mapped tables & views */}
+      {/* Already mapped tables & views — with inline re-map dropdown */}
       {mappedTables.length > 0 && (
         <div>
           <div className="text-xs font-semibold text-slate-700 mb-2">Already Mapped</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+          <div className="grid grid-cols-1 gap-1">
             {mappedTables.map(t => {
               const isView = t.resource_type === 'view';
               const tName = stripPrefix(t.resource_id);
               const comment = (t.attributes?.table_comment as string) || '';
               const hasCustomName = t.display_name && t.display_name !== tName && t.display_name !== t.resource_id;
               const desc = hasCustomName ? t.display_name : comment;
+              const originalParent = initialMappings[t.resource_id] ?? '';
+              const pendingParent = pendingMappings[t.resource_id] ?? '';
+              const isDirty = pendingParent !== originalParent;
               return (
-                <div key={t.resource_id} className="text-xs flex items-center gap-1">
+                <div key={t.resource_id} className="flex items-center gap-2 py-0.5">
                   <span className={`text-[10px] px-1 py-0.5 rounded font-semibold leading-none ${isView ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
                     {isView ? 'VIEW' : 'TABLE'}
                   </span>
-                  <span className="font-mono text-slate-600">{tName}</span>
-                  {desc && <span className="text-slate-400 truncate" title={desc}>({desc})</span>}
-                  <span className="text-slate-400">&rarr;</span>
-                  <span className="text-purple-600 font-semibold">{t.module_name || t.parent_id}</span>
+                  <span className="font-mono text-xs text-slate-700 whitespace-nowrap">{tName}</span>
+                  {desc && <span className="text-xs text-slate-400 truncate flex-1 min-w-0" title={desc}>{desc}</span>}
+                  {!desc && <span className="flex-1" />}
+                  {isDirty && <span className="text-[10px] text-amber-600 font-semibold flex-shrink-0">● changed</span>}
+                  <select
+                    className={`input input-sm text-xs w-72 flex-shrink-0 ${isDirty ? 'ring-2 ring-amber-400' : ''}`}
+                    value={pendingParent}
+                    onChange={e => setPendingMappings(prev => ({ ...prev, [t.resource_id]: e.target.value }))}
+                  >
+                    <option value="">-- unmap (no module) --</option>
+                    {modules.map(m => (
+                      <option key={m.resource_id} value={m.resource_id}>{m.display_name} ({m.resource_id})</option>
+                    ))}
+                  </select>
                 </div>
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* Unified Save button — covers both unmapped → map and mapped → re-map/unmap */}
+      {(unmappedTables.length > 0 || mappedTables.length > 0) && (
+        <div className="pt-2 border-t border-slate-200">
+          <button onClick={handleSaveMappings}
+            disabled={savingMapping || changedEntries.length === 0}
+            className="btn btn-sm bg-purple-600 text-white hover:bg-purple-700 gap-1">
+            {savingMapping ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
+            Save Mappings ({changedEntries.length} change{changedEntries.length !== 1 ? 's' : ''})
+          </button>
         </div>
       )}
 

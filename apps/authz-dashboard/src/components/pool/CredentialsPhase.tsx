@@ -2,7 +2,36 @@ import { useState, useEffect, useCallback } from 'react';
 import { api, PoolCredential } from '../../api';
 import { useToast } from '../Toast';
 import { ConfirmState, DangerConfirmModal } from './shared';
-import { Plus, X, RotateCw, Trash2, Undo2, Key } from 'lucide-react';
+import { Plus, X, RotateCw, Trash2, Undo2, Key, AlertTriangle } from 'lucide-react';
+
+function getIntervalDays(interval: string | { days?: number } | null | undefined): number | null {
+  if (!interval) return null;
+  if (typeof interval === 'object') return interval.days ?? null;
+  // Parse PG interval strings like "90 days", "90 00:00:00"
+  const match = String(interval).match(/(\d+)/);
+  if (!match) return null;
+  const val = parseInt(match[1]);
+  if (String(interval).toLowerCase() === 'never' || val === 0) return null;
+  return val;
+}
+
+function getExpiryInfo(lastRotated: string, interval: string | { days?: number } | null): { text: string; daysLeft: number | null; color: string } | null {
+  const days = getIntervalDays(interval);
+  if (days === null) return { text: 'No expiry', daysLeft: null, color: 'text-slate-400' };
+  const rotatedAt = new Date(lastRotated);
+  const expiresAt = new Date(rotatedAt.getTime() + days * 86400000);
+  const daysLeft = Math.ceil((expiresAt.getTime() - Date.now()) / 86400000);
+  if (daysLeft < 0) {
+    return { text: `${Math.abs(daysLeft)}d overdue`, daysLeft, color: 'text-red-600' };
+  }
+  if (daysLeft <= 7) {
+    return { text: `${daysLeft}d left`, daysLeft, color: 'text-red-600' };
+  }
+  if (daysLeft <= 30) {
+    return { text: `${daysLeft}d left`, daysLeft, color: 'text-amber-600' };
+  }
+  return { text: `${daysLeft}d left`, daysLeft, color: 'text-emerald-600' };
+}
 
 function getPasswordStrength(pw: string) {
   if (!pw) return null;
@@ -210,9 +239,11 @@ export function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: (
       {creds.length > 0 && (
         <div className="table-container">
           <table className="table">
-            <thead><tr><th>PG Role</th><th>Status</th><th>Last Rotated</th><th>Rotate Interval</th><th>Actions</th></tr></thead>
+            <thead><tr><th>PG Role</th><th>Status</th><th>Last Rotated</th><th>Interval</th><th>Expires</th><th>Actions</th></tr></thead>
             <tbody>
-              {creds.map(c => (
+              {creds.map(c => {
+                const expiry = c.is_active ? getExpiryInfo(c.last_rotated, c.rotate_interval) : null;
+                return (
                 <tr key={c.pg_role}>
                   <td className="font-mono text-xs font-bold">{c.pg_role}</td>
                   <td><span className={`badge ${c.is_active ? 'badge-green' : 'badge-red'}`}>{c.is_active ? 'Active' : 'Inactive'}</span></td>
@@ -221,6 +252,16 @@ export function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: (
                     {typeof c.rotate_interval === 'object' && c.rotate_interval
                       ? `${(c.rotate_interval as Record<string, number>).days ?? 0} days`
                       : String(c.rotate_interval)}
+                  </td>
+                  <td className="text-xs">
+                    {expiry ? (
+                      <span className={`inline-flex items-center gap-1 font-medium ${expiry.color}`}>
+                        {expiry.daysLeft !== null && expiry.daysLeft <= 7 && <AlertTriangle size={11} />}
+                        {expiry.text}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </td>
                   <td>
                     {!c.is_active ? (
@@ -265,7 +306,8 @@ export function CredentialsPhase({ dsId, onMutate }: { dsId: string; onMutate: (
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

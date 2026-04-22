@@ -83,7 +83,7 @@ export function DataSourceLifecycle({ dsId, onBack }: { dsId: string; onBack: ()
               {p.key === 'organization' && <OrganizationPhase dsId={dsId} lifecycle={lifecycle} onMutate={onMutate} />}
               {p.key === 'profiles'     && <ProfilesPhase dsId={dsId} lifecycle={lifecycle} onMutate={onMutate} />}
               {p.key === 'credentials'  && <CredentialsPhase dsId={dsId} onMutate={onMutate} />}
-              {p.key === 'deployment'   && <DeploymentPhase dsId={dsId} onMutate={onMutate} />}
+              {p.key === 'deployment'   && <DeploymentPhase dsId={dsId} lifecycle={lifecycle} onMutate={onMutate} />}
             </PhaseCard>
           );
         })}

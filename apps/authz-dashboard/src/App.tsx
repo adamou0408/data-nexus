@@ -11,9 +11,11 @@ import { PoolTab } from './components/pool';
 import { BrowserTab, Section } from './components/BrowserTab';
 import { AuditTab } from './components/AuditTab';
 import { TablesTab } from './components/TablesTab';
-import { FunctionsTab } from './components/FunctionsTab';
 import { ConfigEngine } from './components/ConfigEngine';
 import { MetabaseTab } from './components/MetabaseTab';
+import { DataQueryTab } from './components/DataQueryTab';
+import { DagTab } from './components/DagTab';
+import { DiscoverTab } from './components/DiscoverTab';
 import { ConfigToolsTab } from './components/ConfigToolsTab';
 
 // Map sidebar access-* TabIds to Access Manager sections
@@ -31,7 +33,7 @@ function AppInner() {
 
   useEffect(() => {
     const adminTabs: TabId[] = [
-      'pool', 'audit', 'check', 'rls', 'functions', 'raw-tables',
+      'pool', 'audit', 'check', 'rls', 'raw-tables', 'discover',
       'access-subjects', 'access-roles', 'access-resources', 'access-policies', 'access-actions',
       'config-tools',
     ];
@@ -50,11 +52,13 @@ function AppInner() {
       {tab === 'matrix' && <MatrixTab />}
       {tab === 'tables' && <ConfigEngine />}
       {tab === 'metabase' && <MetabaseTab />}
+      {tab === 'data-query' && <DataQueryTab />}
+      {tab === 'flow-composer' && <DagTab />}
       {tab === 'raw-tables' && <TablesTab />}
-      {tab === 'functions' && <FunctionsTab />}
       {tab === 'rls' && <RlsTab />}
       {tab === 'pool' && <PoolTab />}
       {tab === 'modules' && <ConfigEngine initialPageId="modules_home" />}
+      {tab === 'discover' && <DiscoverTab />}
       {accessSection && (
         <BrowserTab
           initialSection={accessSection}

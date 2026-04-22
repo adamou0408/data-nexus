@@ -16,7 +16,7 @@ const config = {
   },
   pg: {
     host: process.env.PG_HOST || 'localhost',
-    port: parseInt(process.env.PG_PORT || '5432'),
+    port: parseInt(process.env.PG_PORT || '15432'),
     database: process.env.PG_DATABASE || 'nexus_authz',
     user: process.env.PG_USER || 'nexus_admin',
     password: process.env.PG_PASSWORD || 'nexus_dev_password',

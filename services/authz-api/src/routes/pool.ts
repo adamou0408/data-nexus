@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { pool, getDataSourcePool } from '../db';
 import { audit } from '../audit';
-import { syncExternalGrants, syncRemoteCredential, detectRemoteDrift } from '../lib/remote-sync';
+import { syncExternalGrants, syncRemoteCredential, detectRemoteDrift, expandModulesToTables } from '../lib/remote-sync';
 import { logAdminAction } from '../lib/admin-audit';
 import { getUserId, getClientIp, handleApiError } from '../lib/request-helpers';
 
@@ -481,6 +481,21 @@ poolRouter.post('/sync/external-grants/drift', async (req, res) => {
     const report = await detectRemoteDrift(data_source_id);
     audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'detect_drift', resource_id: `datasource:${data_source_id}`, decision: 'allow', context: { drift_items: report.items.length } });
     res.json(report);
+  } catch (err) {
+    handleApiError(res, err);
+  }
+});
+
+// --- Module → Table Preview ---
+// Preview which tables a set of modules will resolve to (no side effects)
+poolRouter.post('/profiles/preview-modules', async (req, res) => {
+  const { modules, data_source_id } = req.body;
+  if (!modules || !Array.isArray(modules) || !data_source_id) {
+    return res.status(400).json({ error: 'modules (string[]) and data_source_id are required' });
+  }
+  try {
+    const tables = await expandModulesToTables(modules, data_source_id);
+    res.json({ modules, data_source_id, tables, count: tables.length });
   } catch (err) {
     handleApiError(res, err);
   }

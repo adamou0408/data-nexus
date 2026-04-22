@@ -1,12 +1,12 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: timescale/timescaledb:latest-pg16
     environment:
       POSTGRES_DB: nexus_authz
       POSTGRES_USER: nexus_admin
       POSTGRES_PASSWORD: nexus_dev_password
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ../../database/migrations:/docker-entrypoint-initdb.d/migrations:ro
@@ -27,7 +27,7 @@ services:
     environment:
       DATABASE_URL: postgres://nexus_admin:nexus_dev_password@postgres:5432/nexus_authz
     ports:
-      - "6432:6432"
+      - "16432:6432"
     volumes:
       - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini
       - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt
@@ -43,7 +43,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "16379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

@@ -6,13 +6,13 @@ import {
   ChevronDown, LogOut, Loader2, User,
   Menu, X, Code2, Layers, BarChart3,
   Users, Zap, ShieldCheck, KeyRound, FolderTree,
-  Settings2, Boxes,
+  Settings2, Boxes, Workflow,
 } from 'lucide-react';
 
 export type TabId =
   | 'overview' | 'resolve' | 'check' | 'matrix'
-  | 'tables' | 'raw-tables' | 'rls' | 'metabase' | 'functions'
-  | 'access-resources' | 'access-policies' | 'pool' | 'modules'
+  | 'tables' | 'raw-tables' | 'rls' | 'metabase' | 'data-query' | 'flow-composer'
+  | 'access-resources' | 'access-policies' | 'pool' | 'modules' | 'discover'
   | 'access-subjects' | 'access-roles' | 'access-actions' | 'audit'
   | 'config-tools';
 
@@ -46,6 +46,8 @@ const navGroups: NavGroup[] = [
     label: 'Data',
     items: [
       { id: 'tables', label: 'Data Explorer', icon: <Layers size={18} /> },
+      { id: 'data-query', label: 'Query Tool', icon: <Code2 size={18} /> },
+      { id: 'flow-composer', label: 'Flow Composer', icon: <Workflow size={18} /> },
       { id: 'metabase', label: 'Metabase BI', icon: <BarChart3 size={18} /> },
     ],
   },
@@ -54,7 +56,6 @@ const navGroups: NavGroup[] = [
     items: [
       { id: 'check', label: 'Permission Tester', icon: <Search size={18} />, adminOnly: true },
       { id: 'rls', label: 'RLS Simulator', icon: <Database size={18} />, adminOnly: true },
-      { id: 'functions', label: 'SQL Functions', icon: <Code2 size={18} />, adminOnly: true },
       { id: 'raw-tables', label: 'Raw Tables', icon: <Table2 size={18} />, adminOnly: true },
     ],
   },
@@ -62,6 +63,7 @@ const navGroups: NavGroup[] = [
     label: 'Data Policy',
     items: [
       { id: 'modules', label: 'Modules', icon: <Boxes size={18} /> },
+      { id: 'discover', label: 'Discover', icon: <Search size={18} />, adminOnly: true },
       { id: 'access-resources', label: 'Resources', icon: <FolderTree size={18} />, adminOnly: true },
       { id: 'access-policies', label: 'Policies', icon: <ShieldCheck size={18} />, adminOnly: true },
       { id: 'pool', label: 'Data Sources & Pools', icon: <Server size={18} />, adminOnly: true },

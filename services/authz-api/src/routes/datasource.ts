@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { Pool } from 'pg';
-import { pool as authzPool, evictDataSourcePool } from '../db';
+import oracledb from 'oracledb';
+import { pool as authzPool, evictDataSourcePool, getLocalDataPool, getOracleConnection } from '../db';
 import { audit } from '../audit';
 import { encrypt, decrypt } from '../lib/crypto';
 import { logAdminAction } from '../lib/admin-audit';
 import { getUserId, getClientIp, handleApiError } from '../lib/request-helpers';
+import { extractFunctionMetadata, classifyType } from '../lib/function-metadata';
 
 export const datasourceRouter = Router();
 
@@ -115,7 +117,8 @@ datasourceRouter.get('/:id', async (req, res) => {
               host, port, database_name, schemas,
               connector_user,
               owner_subject, registered_by, is_active,
-              last_synced_at, created_at, updated_at
+              last_synced_at, created_at, updated_at,
+              cdc_target_schema, oracle_connection
        FROM authz_data_source WHERE source_id = $1`,
       [req.params.id]
     );
@@ -136,47 +139,91 @@ datasourceRouter.post('/', async (req, res) => {
     database_name, schemas = ['public'],
     connector_user, connector_password,
     owner_subject, registered_by = 'api',
+    // Oracle-specific fields
+    oracle_host, oracle_port = 1521, oracle_service_name,
+    oracle_user, oracle_password, cdc_target_schema,
   } = req.body;
 
-  // Step 1: Test connection
-  const testPool = new Pool({
-    host, port, database: database_name,
-    user: connector_user,
-    ...(connector_password ? { password: connector_password } : {}),
-    max: 1,
-    connectionTimeoutMillis: 5000,
-  });
+  const isOracle = db_type === 'oracle';
 
-  try {
-    await testPool.query('SELECT 1');
-  } catch (err) {
-    await testPool.end();
-    return res.status(400).json({
-      error: 'Connection test failed',
-      detail: String(err),
-    });
+  // ── Oracle: resolve PG-side connection automatically ──
+  const effectiveHost = isOracle ? (process.env.DB_HOST || 'localhost') : host;
+  const effectivePort = isOracle ? parseInt(process.env.DB_PORT || '5432') : port;
+  const effectiveDbName = isOracle ? (process.env.DATA_DB_NAME || 'nexus_data') : database_name;
+  const effectiveSchemas = isOracle ? [cdc_target_schema] : schemas;
+  const effectiveUser = isOracle ? (process.env.DB_USER || 'nexus_admin') : connector_user;
+  const effectivePassword = isOracle ? (process.env.DB_PASSWORD || 'nexus_dev_password') : connector_password;
+
+  if (isOracle && !cdc_target_schema) {
+    return res.status(400).json({ error: 'cdc_target_schema is required for Oracle data sources' });
   }
-  await testPool.end();
 
-  // Step 2: Save to authz_data_source
+  // Step 1: Connection test
+  if (!isOracle) {
+    // PG/Greenplum: test direct connection
+    const testPool = new Pool({
+      host, port, database: database_name,
+      user: connector_user,
+      ...(connector_password ? { password: connector_password } : {}),
+      max: 1, connectionTimeoutMillis: 5000,
+    });
+    try {
+      await testPool.query('SELECT 1');
+    } catch (err) {
+      await testPool.end();
+      return res.status(400).json({ error: 'Connection test failed', detail: String(err) });
+    }
+    await testPool.end();
+  }
+  // Oracle: connection test is deferred — CDC schema may not exist yet
+
+  // Step 2: Oracle — create CDC target schema in nexus_data
+  if (isOracle) {
+    try {
+      const localPool = getLocalDataPool();
+      await localPool.query('SELECT _nexus_create_cdc_schema($1)', [cdc_target_schema]);
+    } catch (err) {
+      return res.status(500).json({
+        error: 'Failed to create CDC target schema in nexus_data',
+        detail: String(err),
+      });
+    }
+  }
+
+  // Step 3: Build oracle_connection JSONB (encrypted password)
+  const oracleConnection = isOracle ? {
+    host: oracle_host,
+    port: oracle_port,
+    service_name: oracle_service_name,
+    user: oracle_user,
+    password_enc: oracle_password ? encrypt(oracle_password) : null,
+  } : null;
+
+  // Step 4: Save to authz_data_source
   try {
     const result = await authzPool.query(`
       INSERT INTO authz_data_source (
         source_id, display_name, description,
         db_type, host, port, database_name, schemas,
         connector_user, connector_password,
-        owner_subject, registered_by
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-      RETURNING source_id, display_name, host, port, database_name, schemas, created_at
+        owner_subject, registered_by,
+        cdc_target_schema, oracle_connection
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      RETURNING source_id, display_name, db_type, host, port, database_name, schemas, cdc_target_schema, created_at
     `, [
       source_id, display_name, description,
-      db_type, host, port, database_name, schemas,
-      connector_user, connector_password ? encrypt(connector_password) : null, // SEC-04: encrypt before storage
+      db_type, effectiveHost, effectivePort, effectiveDbName, effectiveSchemas,
+      effectiveUser, effectivePassword ? encrypt(effectivePassword) : null,
       owner_subject, registered_by,
+      isOracle ? cdc_target_schema : null,
+      oracleConnection ? JSON.stringify(oracleConnection) : null,
     ]);
 
-    audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_register', resource_id: source_id, decision: 'allow', context: { host, port, database_name } });
-    logAdminAction(authzPool, { userId: getUserId(req), action: 'CREATE_DATASOURCE', resourceType: 'data_source', resourceId: source_id, details: { host, port, database_name }, ip: getClientIp(req) });
+    const context = isOracle
+      ? { oracle_host, oracle_port, oracle_service_name, cdc_target_schema }
+      : { host, port, database_name };
+    audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_register', resource_id: source_id, decision: 'allow', context });
+    logAdminAction(authzPool, { userId: getUserId(req), action: 'CREATE_DATASOURCE', resourceType: 'data_source', resourceId: source_id, details: context, ip: getClientIp(req) });
     res.status(201).json(result.rows[0]);
   } catch (err) {
     handleApiError(res, err);
@@ -333,7 +380,9 @@ datasourceRouter.delete('/:id/purge', async (req, res) => {
 datasourceRouter.post('/:id/test', async (req, res) => {
   try {
     const dsResult = await authzPool.query(
-      'SELECT source_id, host, port, database_name, connector_user, connector_password, schemas FROM authz_data_source WHERE source_id = $1',
+      `SELECT source_id, host, port, database_name, connector_user, connector_password,
+              schemas, db_type, cdc_target_schema, oracle_connection
+       FROM authz_data_source WHERE source_id = $1`,
       [req.params.id]
     );
     if (dsResult.rows.length === 0) {
@@ -341,6 +390,61 @@ datasourceRouter.post('/:id/test', async (req, res) => {
     }
     const ds = dsResult.rows[0];
 
+    // ── Oracle: test PG replica (CDC schema) + Oracle connection ──
+    if (ds.db_type === 'oracle') {
+      const results: Record<string, any> = {
+        pg_replica: 'skipped', oracle: 'skipped', details: {},
+      };
+
+      // Test PG replica — CDC schema exists in nexus_data
+      try {
+        const localPool = getLocalDataPool();
+        const schemaCheck = await localPool.query(
+          `SELECT 1 FROM information_schema.schemata WHERE schema_name = $1`,
+          [ds.cdc_target_schema]
+        );
+        if (schemaCheck.rows.length > 0) {
+          results.pg_replica = 'ok';
+          results.details.cdc_schema = ds.cdc_target_schema;
+          const tableCount = await localPool.query(
+            `SELECT count(*) AS cnt FROM information_schema.tables
+             WHERE table_schema = $1 AND table_type IN ('BASE TABLE', 'VIEW')`,
+            [ds.cdc_target_schema]
+          );
+          results.details.cdc_tables = parseInt(tableCount.rows[0].cnt, 10);
+        } else {
+          results.pg_replica = 'error';
+          results.details.pg_error = `CDC schema '${ds.cdc_target_schema}' not found in nexus_data`;
+        }
+      } catch (err) {
+        results.pg_replica = 'error';
+        results.details.pg_error = String(err);
+      }
+
+      // Test Oracle connection
+      if (ds.oracle_connection) {
+        let conn: oracledb.Connection | null = null;
+        try {
+          conn = await getOracleConnection(ds.source_id);
+          await conn.execute('SELECT 1 FROM DUAL');
+          results.oracle = 'ok';
+          results.details.oracle_host = ds.oracle_connection.host;
+          results.details.oracle_service = ds.oracle_connection.service_name;
+        } catch (err) {
+          results.oracle = 'error';
+          results.details.oracle_error = String(err);
+        } finally {
+          if (conn) await conn.close().catch(() => {});
+        }
+      } else {
+        results.details.oracle_note = 'No Oracle connection configured';
+      }
+
+      const status = results.pg_replica === 'ok' ? 'ok' : 'partial';
+      return res.json({ status, ...results });
+    }
+
+    // ── PG/Greenplum ──
     const testPool = new Pool({
       host: ds.host, port: ds.port, database: ds.database_name,
       user: ds.connector_user, ...(ds.connector_password ? { password: decrypt(ds.connector_password) } : {}),
@@ -370,13 +474,16 @@ datasourceRouter.post('/:id/test', async (req, res) => {
 datasourceRouter.post('/:id/discover', async (req, res) => {
   try {
     const dsResult = await authzPool.query(
-      'SELECT source_id, host, port, database_name, connector_user, connector_password, schemas FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE',
+      `SELECT source_id, host, port, database_name, connector_user, connector_password,
+              schemas, db_type, cdc_target_schema, oracle_connection
+       FROM authz_data_source WHERE source_id = $1 AND is_active = TRUE`,
       [req.params.id]
     );
     if (dsResult.rows.length === 0) {
       return res.status(404).json({ error: 'Data source not found or inactive' });
     }
     const ds = dsResult.rows[0];
+    const schemas = ds.db_type === 'oracle' ? [ds.cdc_target_schema] : ds.schemas;
 
     // Connect to the target data source
     const dsPool = new Pool({
@@ -388,6 +495,21 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
     try {
       await dsPool.query("SET statement_timeout = '90s'");
 
+      // ── Detect if pg_proc.prokind exists (PG 11+ / Greenplum 7+)
+      // PG <=10 and Greenplum <=6 use proisagg + proiswindow instead.
+      const prokindCheck = await dsPool.query(`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'pg_catalog'
+            AND table_name = 'pg_proc'
+            AND column_name = 'prokind'
+        ) AS has_prokind
+      `);
+      const hasProkind = prokindCheck.rows[0]?.has_prokind === true;
+      const functionFilter = hasProkind
+        ? "AND p.prokind IN ('f', 'p')"                   // PG 11+
+        : "AND NOT p.proisagg AND NOT p.proiswindow";      // PG 9.4-10 / Greenplum 5/6
+
       // ── Phase 1: Scan target database ──
       const [tablesResult, columnsResult, commentsResult, functionsResult] = await Promise.all([
         dsPool.query(`
@@ -395,13 +517,13 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
           FROM information_schema.tables
           WHERE table_schema = ANY($1) AND table_type IN ('BASE TABLE', 'VIEW')
           ORDER BY table_schema, table_name
-        `, [ds.schemas]),
+        `, [schemas]),
         dsPool.query(`
           SELECT table_schema, table_name, column_name, data_type, is_nullable
           FROM information_schema.columns
           WHERE table_schema = ANY($1)
           ORDER BY table_schema, table_name, ordinal_position
-        `, [ds.schemas]),
+        `, [schemas]),
         dsPool.query(`
           SELECT c.relname AS table_name, n.nspname AS table_schema,
                  obj_description(c.oid, 'pg_class') AS table_comment
@@ -410,7 +532,7 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
           WHERE n.nspname = ANY($1)
             AND c.relkind IN ('r', 'v', 'p')
             AND obj_description(c.oid, 'pg_class') IS NOT NULL
-        `, [ds.schemas]),
+        `, [schemas]),
         dsPool.query(`
           SELECT p.proname AS function_name, n.nspname AS schema_name,
                  pg_get_function_arguments(p.oid) AS arguments,
@@ -419,10 +541,10 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
           FROM pg_proc p
           JOIN pg_namespace n ON n.oid = p.pronamespace
           WHERE n.nspname = ANY($1)
-            AND p.prokind IN ('f', 'p')
+            ${functionFilter}
             AND p.proname NOT LIKE 'pg_%'
           ORDER BY n.nspname, p.proname
-        `, [ds.schemas]),
+        `, [schemas]),
       ]);
 
       const tables = tablesResult.rows;
@@ -435,7 +557,19 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
 
       // ── Phase 2: Prepare batch arrays ──
 
-      // Tables/views arrays
+      // Build column map keyed by "schema.table" for output-column derivation.
+      const columnsByTable = new Map<string, Array<{ name: string; pgType: string; kind: ReturnType<typeof classifyType> }>>();
+      for (const col of columns) {
+        const key = `${col.table_schema}.${col.table_name}`;
+        if (!columnsByTable.has(key)) columnsByTable.set(key, []);
+        columnsByTable.get(key)!.push({
+          name: col.column_name,
+          pgType: col.data_type,
+          kind: classifyType(col.data_type),
+        });
+      }
+
+      // Tables/views arrays — unified node model (inputs/outputs/side_effects/idempotent)
       const tblIds: string[] = [], tblTypes: string[] = [], tblDisplays: string[] = [];
       const tblAttrs: string[] = [], tblAutoNames: string[] = [];
       for (const table of tables) {
@@ -445,6 +579,7 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
         const tablePrefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
         const tableComment = commentMap.get(`${table.table_schema}.${table.table_name}`) || null;
         const autoName = `${table.table_schema}.${table.table_name}`;
+        const outputs = columnsByTable.get(autoName) || [];
 
         tblIds.push(resourceId);
         tblTypes.push(isView ? 'view' : 'table');
@@ -454,6 +589,12 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
           table_schema: table.table_schema,
           ...(tablePrefix ? { table_prefix: tablePrefix } : {}),
           ...(tableComment ? { table_comment: tableComment } : {}),
+          // Unified node model (DAG-ready)
+          node_kind: isView ? 'view' : 'table',
+          inputs: [],
+          outputs,
+          side_effects: false,
+          idempotent: true,
         }));
         tblAutoNames.push(autoName);
       }
@@ -478,14 +619,91 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
       // Function arrays
       const fnIds: string[] = [], fnDisplays: string[] = [], fnAttrs: string[] = [];
       for (const fn of functionsResult.rows) {
+        const meta = extractFunctionMetadata({
+          name: fn.function_name,
+          arguments: fn.arguments,
+          return_type: fn.return_type,
+          volatility: fn.volatility,
+        });
         fnIds.push(`function:${fn.schema_name}.${fn.function_name}`);
         fnDisplays.push(`${fn.schema_name}.${fn.function_name}(${fn.arguments})`);
         fnAttrs.push(JSON.stringify({
           data_source_id: ds.source_id,
-          arguments: fn.arguments,
-          return_type: fn.return_type,
-          volatility: fn.volatility,
+          arguments: meta.arguments,
+          return_type: meta.return_type,
+          volatility: meta.volatility,
+          parsed_args: meta.parsed_args,
+          return_shape: meta.return_shape,
+          subtype: meta.subtype,
+          idempotent: meta.idempotent,
+          side_effects: meta.side_effects,
         }));
+      }
+
+      // ── Oracle: scan Oracle-side callable functions ──
+      if (ds.db_type === 'oracle' && ds.oracle_connection) {
+        let oraConn: oracledb.Connection | null = null;
+        try {
+          oraConn = await getOracleConnection(ds.source_id);
+          const oracleSchema = ds.oracle_connection.user;
+
+          // Get callable functions/procedures owned by the Oracle user
+          const fnListResult = await oraConn.execute(
+            `SELECT OBJECT_NAME, OWNER, OBJECT_TYPE
+             FROM ALL_PROCEDURES
+             WHERE OWNER = UPPER(:schema)
+               AND OBJECT_TYPE IN ('FUNCTION', 'PROCEDURE')
+               AND PROCEDURE_NAME IS NULL
+             ORDER BY OBJECT_NAME`,
+            { schema: oracleSchema },
+            { outFormat: oracledb.OUT_FORMAT_OBJECT }
+          );
+
+          // Get arguments for all functions in the schema
+          const argsResult = await oraConn.execute(
+            `SELECT OBJECT_NAME, ARGUMENT_NAME, DATA_TYPE, POSITION, IN_OUT
+             FROM ALL_ARGUMENTS
+             WHERE OWNER = UPPER(:schema)
+             ORDER BY OBJECT_NAME, POSITION`,
+            { schema: oracleSchema },
+            { outFormat: oracledb.OUT_FORMAT_OBJECT }
+          );
+
+          // Build argument map: function_name → "arg1 TYPE, ..."
+          const argMap = new Map<string, string[]>();
+          const returnMap = new Map<string, string>();
+          for (const arg of (argsResult.rows || []) as any[]) {
+            if (arg.POSITION === 0) {
+              returnMap.set(arg.OBJECT_NAME, arg.DATA_TYPE);
+            } else {
+              if (!argMap.has(arg.OBJECT_NAME)) argMap.set(arg.OBJECT_NAME, []);
+              const dir = arg.IN_OUT !== 'IN' ? ` ${arg.IN_OUT}` : '';
+              argMap.get(arg.OBJECT_NAME)!.push(
+                `${arg.ARGUMENT_NAME || `p${arg.POSITION}`} ${arg.DATA_TYPE}${dir}`
+              );
+            }
+          }
+
+          // Merge into function arrays
+          for (const fn of (fnListResult.rows || []) as any[]) {
+            const args = argMap.get(fn.OBJECT_NAME)?.join(', ') || '';
+            const retType = returnMap.get(fn.OBJECT_NAME) || fn.OBJECT_TYPE;
+            fnIds.push(`function:${ds.cdc_target_schema}.${fn.OBJECT_NAME.toLowerCase()}`);
+            fnDisplays.push(`${fn.OWNER}.${fn.OBJECT_NAME}(${args})`);
+            fnAttrs.push(JSON.stringify({
+              data_source_id: ds.source_id,
+              oracle: true,
+              arguments: args,
+              return_type: retType,
+              object_type: fn.OBJECT_TYPE,
+            }));
+          }
+        } catch (oraErr) {
+          // Non-fatal: Oracle function scan failure shouldn't block table/column discovery
+          console.warn(`Oracle function discovery failed for ${ds.source_id}:`, oraErr);
+        } finally {
+          if (oraConn) await oraConn.close().catch(() => {});
+        }
       }
 
       // ── Phase 3: Batch upsert inside transaction ──
@@ -560,14 +778,14 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
       const viewCount = tables.filter((t: any) => t.table_type === 'VIEW').length;
       const tableCount = tables.length - viewCount;
       const totalResources = tblIds.length + colIds.length + fnIds.length;
-      audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_discover', resource_id: ds.source_id, decision: 'allow', context: { tables_found: tableCount, views_found: viewCount, functions_found: functionsResult.rows.length, resources_created: created.length } });
-      logAdminAction(authzPool, { userId: getUserId(req), action: 'DISCOVER_DATASOURCE', resourceType: 'data_source', resourceId: ds.source_id, details: { tables_found: tableCount, views_found: viewCount, functions_found: functionsResult.rows.length, resources_created: created.length }, ip: getClientIp(req) });
+      audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_discover', resource_id: ds.source_id, decision: 'allow', context: { tables_found: tableCount, views_found: viewCount, functions_found: fnIds.length, resources_created: created.length } });
+      logAdminAction(authzPool, { userId: getUserId(req), action: 'DISCOVER_DATASOURCE', resourceType: 'data_source', resourceId: ds.source_id, details: { tables_found: tableCount, views_found: viewCount, functions_found: fnIds.length, resources_created: created.length }, ip: getClientIp(req) });
 
       res.json({
         source_id: ds.source_id,
         tables_found: tableCount,
         views_found: viewCount,
-        functions_found: functionsResult.rows.length,
+        functions_found: fnIds.length,
         columns_found: columns.length,
         resources_created: created.length,
         resources_updated: totalResources - created.length,
@@ -598,10 +816,17 @@ datasourceRouter.get('/:id/schemas', async (req, res) => {
       max: 1, connectionTimeoutMillis: 10000,
     });
     try {
+      // Exclude system schemas. Greenplum creates one pg_temp_N / pg_toast_temp_N
+      // per backend PID per segment, which can explode to 100k+ entries on a busy
+      // cluster — enough to freeze the UI if rendered as chips. Pattern filter + a
+      // hard cap prevents future surprises from a runaway data source.
       const result = await dsPool.query(`
         SELECT schema_name FROM information_schema.schemata
-        WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast', 'gp_toolkit')
+        WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'gp_toolkit')
+          AND schema_name NOT LIKE 'pg_temp_%'
+          AND schema_name NOT LIKE 'pg_toast%'
         ORDER BY schema_name
+        LIMIT 500
       `);
       res.json(result.rows.map((r: any) => r.schema_name));
     } finally {

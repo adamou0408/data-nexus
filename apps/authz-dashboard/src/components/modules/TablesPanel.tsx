@@ -102,13 +102,13 @@ export function TablesPanel({
                 {!readOnly && (
                   <td className="py-2">
                     <select
-                      className="input text-[11px] py-1 px-2 max-w-[160px]"
+                      className="input text-[11px] py-1 px-2 min-w-[280px]"
                       value={reassignments[t.resource_id] || moduleId}
                       onChange={e => handleReassign(t.resource_id, e.target.value)}
                     >
                       {modules.map(m => (
                         <option key={m.resource_id} value={m.resource_id}>
-                          {m.display_name}
+                          {m.display_name} ({m.resource_id})
                         </option>
                       ))}
                     </select>

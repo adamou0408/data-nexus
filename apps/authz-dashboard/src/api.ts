@@ -9,6 +9,17 @@ export function setApiUser(userId: string, groups: string[]) {
   _currentGroups = groups;
 }
 
+/** Strip leading -- and /* ... *\/ comments so server-side CREATE FUNCTION regex matches. */
+function stripLeadingSqlComments(sql: string): string {
+  let out = sql;
+  while (true) {
+    const t = out.replace(/^\s+/, '');
+    if (t.startsWith('--')) { const nl = t.indexOf('\n'); out = nl === -1 ? '' : t.slice(nl + 1); continue; }
+    if (t.startsWith('/*')) { const end = t.indexOf('*/'); out = end === -1 ? '' : t.slice(end + 2); continue; }
+    return t;
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -273,6 +284,175 @@ export const api = {
     request<{ status: string; function_name: string; result: any }>('/oracle-exec', {
       method: 'POST', body: JSON.stringify({ data_source_id, function_name, params }),
     }),
+
+  // Generic PG/Greenplum data-query (Path B — whitelisted via authz_resource)
+  dataQueryFunctions: (data_source_id: string) =>
+    request<{
+      resource_id: string;
+      schema: string;
+      function_name: string;
+      display_name: string;
+      arguments: string;
+      parsed_args: { name: string; pgType: string; hasDefault: boolean; semantic_type?: string; kind?: string }[];
+      return_type: string;
+      return_shape?: any;
+      volatility: string;
+      subtype?: 'query' | 'calculation' | 'action' | 'report';
+      idempotent?: boolean;
+      side_effects?: boolean;
+    }[]>(`/data-query/functions?data_source_id=${encodeURIComponent(data_source_id)}`),
+
+  dataQueryCompatible: (data_source_id: string, available_semantic_types: string[]) =>
+    request<{
+      compatible: Array<{
+        resource_id: string; display_name: string; subtype: string;
+        required_inputs: { name: string; semantic_type?: string }[];
+        optional_inputs: { name: string; semantic_type?: string }[];
+        outputs: { name: string; semantic_type?: string }[];
+        covered_inputs: string[]; missing_inputs: string[];
+      }>;
+      partial: any[];
+      total_scanned: number;
+    }>('/data-query/functions/compatible', {
+      method: 'POST',
+      body: JSON.stringify({ data_source_id, available_semantic_types }),
+    }),
+
+  dataQueryExec: (data_source_id: string, resource_id: string, params: Record<string, unknown>) =>
+    request<{
+      status: string;
+      resource_id: string;
+      columns: { name: string; dataTypeID: number }[];
+      rows: Record<string, unknown>[];
+      row_count: number;
+      truncated: boolean;
+      max_rows: number;
+      elapsed_ms: number;
+    }>('/data-query/functions/exec', {
+      method: 'POST',
+      body: JSON.stringify({ data_source_id, resource_id, params }),
+    }),
+
+  dataQueryTables: (data_source_id: string) =>
+    request<{
+      resource_id: string;
+      resource_type: 'table' | 'view';
+      table_schema: string;
+      table_name: string;
+      display_name: string;
+      table_comment: string | null;
+      outputs: { name: string; pgType: string; kind?: string }[];
+      output_count: number;
+    }[]>(`/data-query/tables?data_source_id=${encodeURIComponent(data_source_id)}`),
+
+  dataQueryValidate: (data_source_id: string, sql: string) =>
+    request<{
+      status: string;
+      schema: string;
+      function_name: string;
+      arguments: string;
+      return_type: string;
+      volatility: string;
+      parsed_args: { name: string; pgType: string; hasDefault: boolean; kind?: string }[];
+      return_shape: any;
+      subtype: string;
+    }>('/data-query/functions/validate', {
+      method: 'POST',
+      body: JSON.stringify({ data_source_id, sql: stripLeadingSqlComments(sql) }),
+    }),
+
+  dataQueryDeploy: (data_source_id: string, sql: string) =>
+    request<{
+      status: string;
+      resource_id: string;
+      schema: string;
+      function_name: string;
+      display_name: string;
+      arguments: string;
+      return_type: string;
+      volatility: string;
+      subtype: string;
+      parsed_args: { name: string; pgType: string; hasDefault: boolean; kind?: string }[];
+      return_shape: any;
+    }>('/data-query/functions/deploy', {
+      method: 'POST',
+      body: JSON.stringify({ data_source_id, sql: stripLeadingSqlComments(sql) }),
+    }),
+
+  // ── DAG (Flow Composer) ──
+  dagList: (data_source_id?: string) =>
+    request<{ resource_id: string; display_name: string; data_source_id: string; node_count: number; edge_count: number; updated_at: string; created_at: string }[]>(
+      data_source_id ? `/dag?data_source_id=${encodeURIComponent(data_source_id)}` : '/dag'
+    ),
+
+  dagGet: (resource_id: string) =>
+    request<{
+      resource_id: string; display_name: string; data_source_id: string;
+      description?: string; nodes: any[]; edges: any[]; version: number;
+    }>(`/dag/${encodeURIComponent(resource_id)}`),
+
+  dagSave: (payload: {
+    resource_id?: string; display_name: string; data_source_id: string;
+    description?: string; nodes: any[]; edges: any[];
+  }) =>
+    request<{ status: string; resource_id: string; display_name: string; nodes: any[]; edges: any[] }>(
+      '/dag/save', { method: 'POST', body: JSON.stringify(payload) }
+    ),
+
+  dagDelete: (resource_id: string) =>
+    request<{ status: string; resource_id: string }>(
+      `/dag/${encodeURIComponent(resource_id)}`, { method: 'DELETE' }
+    ),
+
+  dagValidate: (doc: { nodes: any[]; edges: any[] }) =>
+    request<{ ok: boolean; issues: Array<{ severity: 'error' | 'warn'; code: string; message: string; node_id?: string; edge_id?: string }> }>(
+      '/dag/validate', { method: 'POST', body: JSON.stringify(doc) }
+    ),
+
+  dagExecuteNode: (payload: {
+    data_source_id: string;
+    node: any;
+    upstream: Record<string, { columns: any[]; row0?: Record<string, unknown> }>;
+    edges: any[];
+  }) =>
+    request<{
+      status: string; node_id: string; resource_id: string;
+      columns: Array<{ name: string; dataTypeID: number; semantic_type?: string }>;
+      rows: Record<string, unknown>[]; row_count: number; truncated: boolean;
+      elapsed_ms: number; lineage: Array<{ input: string; source: string }>;
+    }>('/dag/execute-node', { method: 'POST', body: JSON.stringify(payload) }),
+
+  discover: (params: { type?: 'table' | 'view' | 'function' | 'all'; unmapped_only?: boolean; q?: string; data_source_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.type && params.type !== 'all') qs.set('type', params.type);
+    if (params.unmapped_only) qs.set('unmapped_only', 'true');
+    if (params.q) qs.set('q', params.q);
+    if (params.data_source_id) qs.set('data_source_id', params.data_source_id);
+    const query = qs.toString();
+    return request<{
+      total: number;
+      truncated: boolean;
+      rows: Array<{
+        resource_id: string;
+        resource_type: 'table' | 'view' | 'function';
+        display_name: string;
+        data_source_id: string | null;
+        ds_display_name: string | null;
+        ds_db_type: string | null;
+        schema: string | null;
+        mapped_to_module: { resource_id: string; display_name: string } | null;
+        created_at: string;
+      }>;
+    }>(`/discover${query ? '?' + query : ''}`);
+  },
+
+  discoverStats: () =>
+    request<{
+      table: { total: number; mapped: number; unmapped: number };
+      view: { total: number; mapped: number; unmapped: number };
+      function: { total: number; mapped: number; unmapped: number };
+      ds_count: number;
+    }>('/discover/stats'),
 
   poolUncredentialedRoles: () =>
     request<{ pg_role: string; profile_id: string; connection_mode: string; data_source_id: string | null }[]>('/pool/uncredentialed-roles'),

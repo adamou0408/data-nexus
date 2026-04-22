@@ -1,4 +1,4 @@
-import { authzPool, getDataSourceClient } from '../db';
+import { authzPool, getDataSourceClient, getLocalDataClient } from '../db';
 import { audit } from '../audit';
 
 // ── Types ──
@@ -66,11 +66,11 @@ export async function syncExternalGrants(sourceId?: string, requestUserId = 'sys
 
   // 1. Get all active profiles linked to external data sources
   const profileQuery = sourceId
-    ? `SELECT dp.*, ds.source_id AS ds_id
+    ? `SELECT dp.*, ds.source_id AS ds_id, ds.db_type AS db_type
        FROM authz_db_pool_profile dp
        JOIN authz_data_source ds ON dp.data_source_id = ds.source_id
        WHERE dp.is_active AND ds.is_active AND ds.source_id = $1`
-    : `SELECT dp.*, ds.source_id AS ds_id
+    : `SELECT dp.*, ds.source_id AS ds_id, ds.db_type AS db_type
        FROM authz_db_pool_profile dp
        JOIN authz_data_source ds ON dp.data_source_id = ds.source_id
        WHERE dp.is_active AND ds.is_active`;
@@ -95,8 +95,10 @@ export async function syncExternalGrants(sourceId?: string, requestUserId = 'sys
   // 3. Process each data source
   for (const [dsId, dsProfiles] of grouped) {
     let client;
+    const isOracle = dsProfiles[0].db_type === 'oracle';
     try {
-      client = await getDataSourceClient(dsId);
+      // Oracle sources: grants run on local nexus_data (CDC schema), not on Oracle
+      client = isOracle ? await getLocalDataClient() : await getDataSourceClient(dsId);
     } catch (err) {
       // Connection failed — mark all profiles for this DS as failed
       for (const p of dsProfiles) {
@@ -295,7 +297,7 @@ export async function syncRemoteCredential(pgRole: string, passwordHash: string,
 
   // Find all data sources linked to profiles using this pg_role
   const dsResult = await authzPool.query(`
-    SELECT DISTINCT ds.source_id
+    SELECT DISTINCT ds.source_id, ds.db_type
     FROM authz_db_pool_profile dp
     JOIN authz_data_source ds ON dp.data_source_id = ds.source_id
     WHERE dp.pg_role = $1 AND dp.is_active AND ds.is_active AND dp.data_source_id IS NOT NULL
@@ -304,7 +306,8 @@ export async function syncRemoteCredential(pgRole: string, passwordHash: string,
   for (const row of dsResult.rows) {
     let client;
     try {
-      client = await getDataSourceClient(row.source_id);
+      // Oracle sources: credential sync on local nexus_data, not Oracle
+      client = row.db_type === 'oracle' ? await getLocalDataClient() : await getDataSourceClient(row.source_id);
       const role = quoteIdent(pgRole);
       await client.query(`ALTER ROLE ${role} WITH PASSWORD '${passwordHash.replace(/'/g, "''")}'`);
       actions.push({ action: 'CREDENTIAL_SYNC', detail: `Password updated for ${pgRole} on ${row.source_id}`, data_source_id: row.source_id, profile_id: pgRole, status: 'ok' });
@@ -325,7 +328,10 @@ export async function syncRemoteCredential(pgRole: string, passwordHash: string,
 
 export async function detectRemoteDrift(sourceId: string): Promise<DriftReport> {
   const items: DriftItem[] = [];
-  const client = await getDataSourceClient(sourceId);
+  // Oracle sources: drift detection runs on local nexus_data (CDC schema)
+  const dsInfo = await authzPool.query('SELECT db_type FROM authz_data_source WHERE source_id = $1', [sourceId]);
+  const isOracle = dsInfo.rows[0]?.db_type === 'oracle';
+  const client = isOracle ? await getLocalDataClient() : await getDataSourceClient(sourceId);
 
   try {
     // Get profiles for this data source

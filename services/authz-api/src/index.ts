@@ -11,6 +11,9 @@ import { browseAdminRouter } from './routes/browse-admin';
 import { poolRouter } from './routes/pool';
 import { datasourceRouter } from './routes/datasource';
 import { oracleExecRouter } from './routes/oracle-exec';
+import { dataQueryRouter } from './routes/data-query';
+import { dagRouter } from './routes/dag';
+import { discoverRouter } from './routes/discover';
 import { configExecRouter } from './routes/config-exec';
 import { configSnapshotRouter } from './routes/config-snapshot';
 import { configBulkRouter } from './routes/config-bulk';
@@ -61,6 +64,9 @@ app.use('/api/modules', requireAuth, modulesRouter);
 // UI metadata (descriptors) — any authenticated user can fetch
 app.use('/api/ui', requireAuth, uiRouter);
 app.use('/api/oracle-exec', requireAuth, oracleExecRouter);
+app.use('/api/data-query', requireAuth, dataQueryRouter);
+app.use('/api/dag', requireAuth, dagRouter);
+app.use('/api/discover', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), discoverRouter);
 
 // Config snapshot & bulk import (admin-only)
 app.use('/api/config/snapshot', requireRole('ADMIN', 'AUTHZ_ADMIN'), configSnapshotRouter);

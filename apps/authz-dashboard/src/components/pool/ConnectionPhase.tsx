@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api, DataSource, LifecycleResponse } from '../../api';
 import { useToast } from '../Toast';
 import { ConfirmState, DangerConfirmModal } from './shared';
@@ -6,11 +6,20 @@ import { RefreshCw, Zap, Pencil, Trash2, Undo2 } from 'lucide-react';
 
 export function ConnectionPhase({ dsId, lifecycle, onMutate, onPurged }: { dsId: string; lifecycle: LifecycleResponse; onMutate: () => void; onPurged: () => void }) {
   const toast = useToast();
-  const [testResult, setTestResult] = useState<{ status: string; version?: string; error?: string } | null>(null);
+  const [testResult, setTestResult] = useState<{ status: string; version?: string; error?: string; pg_replica?: string; oracle?: string; details?: Record<string, any> } | null>(null);
   const [testing, setTesting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ display_name: '', host: '', port: '', database_name: '', schemas: '', connector_user: '', connector_password: '' });
   const [dangerConfirm, setDangerConfirm] = useState<ConfirmState>(null);
+  const [dsDetail, setDsDetail] = useState<DataSource | null>(null);
+
+  const isOracle = lifecycle.db_type === 'oracle';
+
+  useEffect(() => {
+    if (isOracle) {
+      api.datasource(dsId).then(setDsDetail).catch(() => {});
+    }
+  }, [dsId, isOracle]);
 
   const handleTest = async () => {
     setTesting(true);
@@ -90,17 +99,40 @@ export function ConnectionPhase({ dsId, lifecycle, onMutate, onPurged }: { dsId:
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-        <div><span className="text-xs text-slate-500 block">Host</span><span className="font-mono">{lifecycle.host}</span></div>
-        <div><span className="text-xs text-slate-500 block">Port</span><span className="font-mono">{lifecycle.port}</span></div>
-        <div><span className="text-xs text-slate-500 block">Database</span><span className="font-mono">{lifecycle.database_name}</span></div>
-        <div><span className="text-xs text-slate-500 block">Type</span><span>{lifecycle.db_type}</span></div>
+        {lifecycle.db_type === 'oracle' ? (<>
+          <div><span className="text-xs text-slate-500 block">Type</span><span className="font-medium text-amber-700">Oracle CDC</span></div>
+          <div><span className="text-xs text-slate-500 block">PG Replica</span><span className="font-mono">{lifecycle.database_name}</span></div>
+          <div><span className="text-xs text-slate-500 block">CDC Schema</span><span className="font-mono">{dsDetail?.cdc_target_schema || '—'}</span></div>
+          <div><span className="text-xs text-slate-500 block">Oracle Host</span><span className="font-mono">{dsDetail?.oracle_connection?.host || '—'}:{dsDetail?.oracle_connection?.port || ''}</span></div>
+        </>) : (<>
+          <div><span className="text-xs text-slate-500 block">Host</span><span className="font-mono">{lifecycle.host}</span></div>
+          <div><span className="text-xs text-slate-500 block">Port</span><span className="font-mono">{lifecycle.port}</span></div>
+          <div><span className="text-xs text-slate-500 block">Database</span><span className="font-mono">{lifecycle.database_name}</span></div>
+          <div><span className="text-xs text-slate-500 block">Type</span><span>{lifecycle.db_type}</span></div>
+        </>)}
       </div>
 
-      {testResult && (
+      {testResult && (isOracle ? (
+        <div className="rounded-lg border border-slate-200 overflow-hidden text-sm">
+          <div className={`px-4 py-2 flex items-center gap-2 ${testResult.pg_replica === 'ok' ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}>
+            <span className={`w-2 h-2 rounded-full ${testResult.pg_replica === 'ok' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+            PG Replica {testResult.pg_replica === 'ok'
+              ? `— schema "${testResult.details?.cdc_schema}" (${testResult.details?.cdc_tables ?? 0} tables)`
+              : `— ${testResult.details?.pg_error || 'Failed'}`}
+          </div>
+          <div className={`px-4 py-2 flex items-center gap-2 border-t ${testResult.oracle === 'ok' ? 'bg-emerald-50 text-emerald-800' : testResult.oracle === 'error' ? 'bg-amber-50 text-amber-800' : 'bg-slate-50 text-slate-500'}`}>
+            <span className={`w-2 h-2 rounded-full ${testResult.oracle === 'ok' ? 'bg-emerald-500' : testResult.oracle === 'error' ? 'bg-amber-500' : 'bg-slate-300'}`} />
+            Oracle {testResult.oracle === 'ok'
+              ? `— ${testResult.details?.oracle_host}/${testResult.details?.oracle_service}`
+              : testResult.oracle === 'error' ? `— ${testResult.details?.oracle_error?.split('\n')[0] || 'Failed'}`
+              : `— ${testResult.details?.oracle_note || 'Skipped'}`}
+          </div>
+        </div>
+      ) : (
         <div className={`rounded-lg px-4 py-3 text-sm ${testResult.status === 'ok' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-red-50 border border-red-200 text-red-800'}`}>
           {testResult.status === 'ok' ? `Connected — ${testResult.version}` : `Failed — ${testResult.error}`}
         </div>
-      )}
+      ))}
 
       {editing && (
         <div className="bg-slate-50 rounded-lg p-4 space-y-3 border border-slate-200">
@@ -109,6 +141,7 @@ export function ConnectionPhase({ dsId, lifecycle, onMutate, onPurged }: { dsId:
               <label className="label">Display Name</label>
               <input className="input" value={form.display_name} onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))} />
             </div>
+            {!isOracle && (<>
             <div>
               <label className="label">Host</label>
               <input className="input" value={form.host} onChange={e => setForm(f => ({ ...f, host: e.target.value }))} />
@@ -134,6 +167,12 @@ export function ConnectionPhase({ dsId, lifecycle, onMutate, onPurged }: { dsId:
               <input className="input" type="password" placeholder="(unchanged)" value={form.connector_password}
                 onChange={e => setForm(f => ({ ...f, connector_password: e.target.value }))} />
             </div>
+            </>)}
+            {isOracle && (
+            <div className="col-span-2 text-xs text-slate-500">
+              Oracle CDC connection and PG replica settings are auto-managed. Only the display name can be edited here.
+            </div>
+            )}
           </div>
           <div className="flex gap-2">
             <button onClick={handleSave} className="btn btn-sm bg-green-600 text-white hover:bg-green-700">Save Changes</button>

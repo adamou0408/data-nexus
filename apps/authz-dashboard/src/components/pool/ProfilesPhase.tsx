@@ -3,7 +3,7 @@ import { api, PoolProfile, PoolAssignment, DataSource, LifecycleResponse } from 
 import { useToast } from '../Toast';
 import { autoId } from '../../utils/slugify';
 import { ConfirmState, DangerConfirmModal, ChipSelect } from './shared';
-import { Plus, X, Pencil, Trash2, Undo2, RefreshCw, Server, Search, ChevronRight } from 'lucide-react';
+import { Plus, X, Pencil, Trash2, Undo2, RefreshCw, Server, Search, ChevronRight, Eye, Table2 } from 'lucide-react';
 
 /* Profile form helpers (kept from original) */
 type ProfileFormData = {
@@ -95,6 +95,21 @@ function ProfileForm({ initial, isCreate, onSave, onCancel, saving, error, locke
   const toggleModule = (m: string) => {
     const next = selectedModules.includes(m) ? selectedModules.filter(x => x !== m) : [...selectedModules, m];
     set('allowed_modules', next.join(', '));
+    setModulePreview(null); // Reset preview on change
+  };
+
+  const [modulePreview, setModulePreview] = useState<{ tables: string[]; count: number } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  const handlePreviewModules = async () => {
+    const dsId = lockedDsId || form.data_source_id;
+    if (!dsId || selectedModules.length === 0) return;
+    setPreviewLoading(true);
+    try {
+      const result = await api.poolPreviewModules(selectedModules, dsId);
+      setModulePreview({ tables: result.tables, count: result.count });
+    } catch (e) { console.warn('Module preview failed:', e); setModulePreview(null); }
+    finally { setPreviewLoading(false); }
   };
 
   return (
@@ -179,7 +194,7 @@ function ProfileForm({ initial, isCreate, onSave, onCancel, saving, error, locke
             <input value={form.allowed_tables} onChange={e => set('allowed_tables', e.target.value)}
               placeholder="leave empty to use modules or ALL" className="input font-mono text-xs" />
           </div>
-          <div className="sm:col-span-2 lg:col-span-3">
+          <div className="sm:col-span-2 lg:col-span-3 space-y-2">
             <ChipSelect
               label="Allowed Modules (tables auto-resolved at sync time)"
               items={moduleList.map(m => ({ id: m.resource_id, label: `${m.display_name} (${m.resource_id})` }))}
@@ -189,6 +204,31 @@ function ProfileForm({ initial, isCreate, onSave, onCancel, saving, error, locke
                 return <>{mod?.display_name ?? item.id}</>;
               }}
             />
+            {selectedModules.length > 0 && (lockedDsId || form.data_source_id) && (
+              <div className="space-y-1.5">
+                <button type="button" onClick={handlePreviewModules} disabled={previewLoading}
+                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium">
+                  {previewLoading ? <RefreshCw size={11} className="animate-spin" /> : <Eye size={11} />}
+                  {previewLoading ? 'Loading...' : modulePreview ? `Refresh preview (${modulePreview.count} tables)` : 'Preview resolved tables'}
+                </button>
+                {modulePreview && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                      <Table2 size={10} /> Will GRANT {form.connection_mode === 'readonly' ? 'SELECT' : form.connection_mode === 'readwrite' ? 'SELECT+DML' : 'ALL'} on {modulePreview.count} table{modulePreview.count !== 1 ? 's' : ''}
+                    </div>
+                    {modulePreview.count === 0 ? (
+                      <div className="text-xs text-amber-600">No tables found — check module mappings in Organization phase.</div>
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {modulePreview.tables.map(t => (
+                          <span key={t} className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[11px] font-mono text-slate-700">{t}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Description</label>

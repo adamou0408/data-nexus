@@ -82,7 +82,7 @@ export function DataSourceOverview({ onSelect }: { onSelect: (dsId: string) => v
                   {!ds.is_active && <span className="badge badge-red text-[10px]">Inactive</span>}
                 </div>
                 <div className="text-xs text-slate-500 font-mono mt-0.5">
-                  {ds.host}:{ds.port}/{ds.database_name}
+                  {ds.db_type === 'oracle' ? `Oracle CDC \u2192 ${ds.database_name}` : `${ds.host}:${ds.port}/${ds.database_name}`}
                 </div>
               </div>
               <div className="text-right shrink-0 flex items-center gap-4">
@@ -107,7 +107,14 @@ export function DataSourceOverview({ onSelect }: { onSelect: (dsId: string) => v
 
 function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => void; onCancel: () => void }) {
   const toast = useToast();
-  const [form, setForm] = useState({ source_id: '', display_name: '', db_type: 'postgresql', host: '', port: '5432', database_name: '', schemas: 'public', connector_user: '', connector_password: '', owner_subject: '' });
+  const [form, setForm] = useState({
+    source_id: '', display_name: '', db_type: 'postgresql',
+    host: '', port: '5432', database_name: '', schemas: 'public',
+    connector_user: '', connector_password: '', owner_subject: '',
+    // Oracle-specific
+    oracle_host: '', oracle_port: '1521', oracle_service_name: '',
+    oracle_user: '', oracle_password: '', cdc_target_schema: '',
+  });
   const [sourceIdManual, setSourceIdManual] = useState(false);
   const [subjectList, setSubjectList] = useState<{ subject_id: string; display_name: string }[]>([]);
   const [creating, setCreating] = useState(false);
@@ -117,20 +124,34 @@ function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => voi
   }, []);
 
   const suggestSourceId = autoId.dataSource;
+  const isOracle = form.db_type === 'oracle';
 
-  const dbTypePortDefaults: Record<string, string> = { postgresql: '5432', greenplum: '5432' };
+  const dbTypePortDefaults: Record<string, string> = { postgresql: '5432', greenplum: '5432', oracle: '1521' };
 
   const handleCreate = async () => {
     setCreating(true);
     try {
-      await api.datasourceCreate({
+      const payload: any = {
         source_id: form.source_id, display_name: form.display_name,
         db_type: form.db_type,
-        host: form.host, port: parseInt(form.port), database_name: form.database_name,
-        schemas: form.schemas.split(',').map(s => s.trim()),
-        connector_user: form.connector_user, connector_password: form.connector_password || undefined,
         owner_subject: form.owner_subject || undefined,
-      });
+      };
+      if (isOracle) {
+        payload.oracle_host = form.oracle_host;
+        payload.oracle_port = parseInt(form.oracle_port);
+        payload.oracle_service_name = form.oracle_service_name;
+        payload.oracle_user = form.oracle_user;
+        payload.oracle_password = form.oracle_password || undefined;
+        payload.cdc_target_schema = form.cdc_target_schema;
+      } else {
+        payload.host = form.host;
+        payload.port = parseInt(form.port);
+        payload.database_name = form.database_name;
+        payload.schemas = form.schemas.split(',').map((s: string) => s.trim());
+        payload.connector_user = form.connector_user;
+        payload.connector_password = form.connector_password || undefined;
+      }
+      await api.datasourceCreate(payload);
       onCreated(form.source_id);
     } catch (err) { toast.error(String(err)); }
     finally { setCreating(false); }
@@ -166,12 +187,51 @@ function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => voi
             <label className="label">DB Type</label>
             <select className="select" value={form.db_type} onChange={e => {
               const t = e.target.value;
-              setForm(f => ({ ...f, db_type: t, port: dbTypePortDefaults[t] ?? f.port }));
+              setForm(f => ({ ...f, db_type: t, port: dbTypePortDefaults[t] ?? f.port, oracle_port: t === 'oracle' ? '1521' : f.oracle_port }));
             }}>
               <option value="postgresql">PostgreSQL</option>
               <option value="greenplum">Greenplum</option>
+              <option value="oracle">Oracle (CDC to PG)</option>
             </select>
           </div>
+          {isOracle && (
+          <div className="col-span-2 lg:col-span-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+            <strong>Oracle CDC Mode</strong> — Oracle data is replicated to PostgreSQL via CDC (external infrastructure).
+            Fill in the Oracle connection for function calls, and specify the PG schema where CDC writes replica tables.
+            PG-side connection details are auto-configured by the system.
+          </div>
+          )}
+          {isOracle ? (<>
+          {/* Oracle-specific fields */}
+          <div>
+            <label className="label">Oracle Host</label>
+            <input className="input" placeholder="192.168.1.200" value={form.oracle_host} onChange={e => setForm(f => ({ ...f, oracle_host: e.target.value }))} />
+          </div>
+          <div>
+            <label className="label">Oracle Port</label>
+            <input className="input" type="number" value={form.oracle_port} onChange={e => setForm(f => ({ ...f, oracle_port: e.target.value }))} />
+          </div>
+          <div>
+            <label className="label">Service Name</label>
+            <input className="input font-mono" placeholder="ORCL" value={form.oracle_service_name} onChange={e => setForm(f => ({ ...f, oracle_service_name: e.target.value }))} />
+          </div>
+          <div>
+            <label className="label">Oracle User</label>
+            <input className="input font-mono" placeholder="PHISON_ERP" value={form.oracle_user} onChange={e => setForm(f => ({ ...f, oracle_user: e.target.value }))} />
+          </div>
+          <div>
+            <label className="label">Oracle Password</label>
+            <input className="input" type="password" value={form.oracle_password} onChange={e => setForm(f => ({ ...f, oracle_password: e.target.value }))} />
+          </div>
+          <div>
+            <label className="label">CDC Target Schema <span className="text-slate-400 font-normal text-[10px]">(PG schema in nexus_data)</span></label>
+            <input className="input font-mono" placeholder="oracle_erp" value={form.cdc_target_schema} onChange={e => setForm(f => ({ ...f, cdc_target_schema: e.target.value }))} />
+            {!form.cdc_target_schema.trim() && form.oracle_host && (
+              <div className="text-xs text-red-500 mt-0.5">Required — PG schema where CDC writes Oracle tables</div>
+            )}
+          </div>
+          </>) : (<>
+          {/* PG/Greenplum fields */}
           <div>
             <label className="label">Host</label>
             <input className="input" placeholder="192.168.1.100" value={form.host} onChange={e => setForm(f => ({ ...f, host: e.target.value }))} />
@@ -202,6 +262,7 @@ function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => voi
             <label className="label">Connector Password <span className="text-slate-400 font-normal text-[10px]">(optional)</span></label>
             <input className="input" type="password" placeholder="Leave blank for trust/cert auth" value={form.connector_password} onChange={e => setForm(f => ({ ...f, connector_password: e.target.value }))} />
           </div>
+          </>)}
           <div>
             <label className="label">Owner (subject)</label>
             <select className="select" value={form.owner_subject} onChange={e => setForm(f => ({ ...f, owner_subject: e.target.value }))}>
@@ -213,8 +274,10 @@ function OnboardForm({ onCreated, onCancel }: { onCreated: (dsId: string) => voi
           </div>
         </div>
         <div className="flex gap-2">
-          <button onClick={handleCreate} disabled={creating || !form.source_id || !form.host || !form.database_name || !form.connector_user
-              || !form.schemas.trim() || isNaN(parseInt(form.port)) || parseInt(form.port) < 1 || parseInt(form.port) > 65535}
+          <button onClick={handleCreate} disabled={creating || !form.source_id || (isOracle
+              ? (!form.oracle_host || !form.oracle_service_name || !form.oracle_user || !form.cdc_target_schema.trim())
+              : (!form.host || !form.database_name || !form.connector_user || !form.schemas.trim()
+                  || isNaN(parseInt(form.port)) || parseInt(form.port) < 1 || parseInt(form.port) > 65535))}
             className="btn btn-sm bg-green-600 text-white hover:bg-green-700 disabled:opacity-40">
             {creating ? 'Creating...' : 'Register & Test Connection'}
           </button>
