@@ -359,6 +359,83 @@ FROM authz_pool_credentials;
 
 ---
 
+### W-DBA-05　Function ↔ Table 血緣抽取
+
+**目標角色**：DBA / Data Engineer / 未來 Smart Analyst 2.0
+
+**問題描述**
+
+Discovery 已能把外部 DB 的 function 寫進 `authz_resource`（`resource_type='function'`），但**沒有記錄每個 function 實際讀/寫哪些 table**。這造成幾個實際困擾：
+
+1. **授權影響分析缺口**：若把 `table:cxmzr115` 從某個 module 移除，無法自動得知「哪些 function 會因此失效」。目前只能靠人工 grep function 原始碼。
+2. **RBAC 粒度規劃困難**：當 function 被設計為「安全介面層」（把敏感欄位包進 function 內），DBA 想知道「授權了 function 就等於間接暴露哪些底層 table/column」，目前要逐個翻 `pg_get_functiondef`。
+3. **Data Mining / Smart Analyst 的 query 規劃盲點**：未來 AI Agent 要對 Tiptop 做查詢規劃時，需要知道 function 背後實際觸及的 tables 才能決定是否允許呼叫、或如何組合多個 function。沒有血緣資訊就只能瞎試。
+4. **schema 異動衝擊評估**：`cxmzr115.t10` 欄位要改名時，無法快速列出「引用此欄位的所有 function」。
+
+目前三個實例：`fn_cxmzr115_shipment_history_by_material_no` → `cxmzr115`、`get_work_orders_by_part` → `csfzr120`、`search_cimzr067_by_keys` → `cimzr067`，全部 1:1 且都靠人工查證。一旦 function 變成 JOIN 多表或多個 function 共用同表（N:M），人工追蹤就不可行。
+
+**建議做法**
+
+#### 方案 A（短期、快速打底）：`pg_depend` + 正則 parse
+
+- 利用 PostgreSQL / Greenplum 內建的 `pg_depend`、`pg_rewrite`、`pg_get_functiondef(oid)`。
+- 對 `pl/pgsql` 和純 `SQL` function：
+  - 純 `SQL` function → `pg_depend` 會直接登記 `pg_class` 依賴（靜態的），可直接查出 table refs。
+  - `pl/pgsql` function → `pg_depend` 不夠用，需 parse `prosrc` 文本，用正則找 `FROM|JOIN|UPDATE|INSERT INTO|DELETE FROM <schema.table>`。
+- **限制**：無法處理 `EXECUTE '...'` 動態 SQL 組 table 名（如 `search_cimzr067_by_keys` 裡面用 `EXECUTE sql USING kw`，但 table 名是寫死的所以仍可 regex 抓到；若 table 名也是變數就抓不到）。
+- **工作量**：小（~1-2 天），寫一個 discovery 的 sub-step。
+
+#### 方案 B（中期、嚴謹）：libpg_query / pg_query_go AST
+
+- 用 `libpg_query`（C）或其 Go binding `pg_query_go`、或 Node 的 `libpg-query-node` 把 SQL 原文 parse 成 AST。
+- 從 AST 的 `RangeVar` 節點精準列出所有 table 引用，包含：
+  - `FROM`, `JOIN`（SELECT 血緣）
+  - `INSERT/UPDATE/DELETE` target（寫入血緣）
+  - subquery、CTE、巢狀 function 呼叫
+- 處理動態 SQL 時可 fall back 到 regex，或標記該 function 為「部分血緣」（partial lineage）。
+- **工作量**：中（~3-5 天），需要新增 parser 依賴。Greenplum 的方言差異需處理（有 `DISTRIBUTED BY` 等 GP-only 語法）。
+
+#### 資料模型
+
+```sql
+CREATE TABLE authz_function_table_ref (
+  function_resource_id  TEXT NOT NULL REFERENCES authz_resource(resource_id) ON DELETE CASCADE,
+  table_resource_id     TEXT NOT NULL REFERENCES authz_resource(resource_id) ON DELETE CASCADE,
+  ref_type              TEXT NOT NULL CHECK (ref_type IN ('READ','WRITE','DDL')),
+  column_refs           TEXT[],              -- 引用到的具體欄位（可選，需方案 B）
+  confidence            TEXT NOT NULL DEFAULT 'exact',
+                        -- 'exact' (AST) / 'regex' (text match) / 'partial' (有動態 SQL)
+  extracted_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (function_resource_id, table_resource_id, ref_type)
+);
+
+CREATE INDEX idx_func_ref_table ON authz_function_table_ref(table_resource_id);
+```
+
+每次 Discovery 跑完後重新抽取本 DS 範圍內的 function 血緣，整批 upsert。
+
+#### UI 與 API
+
+| 入口 | 功能 |
+|------|------|
+| Function 詳細頁（新增） | 顯示「此 function 會讀/寫這些 table」，可跳到 table 詳細頁 |
+| Table 詳細頁（新增「引用者」區塊） | 顯示「哪些 function 引用此 table」+ READ/WRITE 箭頭 |
+| `GET /api/browse/function-refs?table=table:cxmzr115` | 反查「誰引用了我」，供授權影響分析用 |
+| Organization phase 小提示 | 若把 table 改 parent 會讓某些 function 「跨 module」，UI 給黃色警告 |
+| Deployment 階段 | `allowed_modules` 解析時，可選擇一併展開 function 所讀的底層 table（避免 function 拿到了卻 GRANT 缺漏） |
+
+**預估工作量**：中（方案 A 約 1-2 天，方案 B 約 3-5 天）。建議先上方案 A，累積使用需求後升級方案 B。
+
+**業務影響**：
+
+1. **近期**：授權影響分析自動化，DBA 改 schema 或調整 module 前可量化衝擊範圍。
+2. **中期**：為 Data Mining 模組提供底層血緣，幫助建立「允許呼叫這個 function → 等同授權這些 table」的授權策略。
+3. **長期（Phase 2）**：是 Smart Analyst 2.0 AI Agent 做 query 規劃的必要 metadata — Agent 選擇 function 時需要知道底層成本與資料範圍。
+
+**相依**：需先完成 Function 的 Discovery（已有），以及 Function 的 UI 展示（目前 Organization phase 只顯示 table/view，function 未曝光 → 需順帶補）。
+
+---
+
 ### W-MGR-03　L3 Composite Action — 核簽工作流
 
 **目標角色**：部門主管、IT Admin、一般員工
@@ -450,13 +527,26 @@ CREATE TABLE authz_approval_record (
 
 ### 當前開發焦點（2026-04-14 決定）
 
+> **SSOT**: 所有目標和進度追蹤在 `docs/PROGRESS.md`。本節為 feature 層面的細節說明。
+
 以下三項為目前優先推進的功能方向，其餘項目暫緩：
 
-| 焦點 | 對應項目 | 說明 |
-|------|---------|------|
-| **Admin 連線管理** | Data Source Registry UI 完善 | Admin 可在 Dashboard 設定、測試、管理外部資料庫連線資訊 |
-| **Data Mining 模組** | Config-SM 商業邏輯頁面 | 以 module 為單位的資料探勘功能，metadata-driven 動態頁面。執行計畫：[`design-data-mining-engine.md`](design-data-mining-engine.md)、長期願景：[`design-data-mining-vision.md`](design-data-mining-vision.md) |
-| **Metabase BI 自助開發** | Metabase 整合強化 | 讓 BI 使用者能在 Metabase 自由建立儀表板和報表，降低進入門檻 |
+| 焦點 | 對應項目 | 說明 | PROGRESS.md 追蹤 |
+|------|---------|------|-----------------|
+| **Admin 連線管理** | Data Source Registry UI 完善 | Admin 可在 Dashboard 設定、測試、管理外部資料庫連線資訊 | M4 Feature |
+| **Data Mining 模組** | Config-SM 商業邏輯頁面 | 以 module 為單位的資料探勘功能，metadata-driven 動態頁面。執行計畫：[`design-data-mining-engine.md`](design-data-mining-engine.md)、長期願景：[`design-data-mining-vision.md`](design-data-mining-vision.md) | M4 Feature |
+| **Metabase BI 自助開發** | Metabase 整合強化 | 讓 BI 使用者能在 Metabase 自由建立儀表板和報表，降低進入門檻 | M4 Feature |
+
+### 已完成項目（原在本文件追蹤，已移至 PROGRESS.md）
+
+- ~~W-IT-01 Policy 變更審計紀錄~~ → PROGRESS.md M3 Phase 3
+- ~~W-IT-02 Assignment subject dropdown~~ → PROGRESS.md M3
+- ~~W-IT-03/04 SSOT Drift / Role 到期~~ → PROGRESS.md M3 (action-items API)
+- ~~W-USER-01 「為什麼看不到」說明~~ → PROGRESS.md M3 (WorkbenchTab row stats + tooltip)
+- ~~W-USER-02 My Access Card~~ → PROGRESS.md M3 (OverviewTab My Access Card)
+- ~~W-DBA-01 pgbouncer 一鍵部署~~ → PROGRESS.md M3 (pgbouncer live reload)
+- ~~W-DBA-03 Profile create → credential prompt~~ → PROGRESS.md M3
+- ~~Config Tools (export/import)~~ → PROGRESS.md M4 Done
 
 ### 完整優先排序
 
@@ -473,8 +563,9 @@ CREATE TABLE authz_approval_record (
 | 9 | W-MGR-01 | Permission Summary | 中 | 中 | 減少 IT 查詢負擔，主管自助化 |
 | 10 | W-DBA-01 | pgbouncer 一鍵部署 | 中 | 高 | Path C 最後一公里，現在仍是半手動 |
 | 11 | W-DBA-02 | pgbouncer 連線監控 | 中 | 高 | 生產可視性，從被動變主動 |
-| 12 | W-MGR-02 | 臨時授權申請流程 | 中 | 中 | 建立可稽核的存取申請機制 |
-| 13 | W-MGR-03 | L3 核簽工作流 | 大 | 高 | NPI 閘門、Lot Hold 等核簽流程系統化 |
+| 12 | W-DBA-05 | Function↔Table 血緣抽取 | 中 | 中→高 | 授權影響分析自動化；Data Mining / Smart Analyst 2.0 的必要 metadata |
+| 13 | W-MGR-02 | 臨時授權申請流程 | 中 | 中 | 建立可稽核的存取申請機制 |
+| 14 | W-MGR-03 | L3 核簽工作流 | 大 | 高 | NPI 閘門、Lot Hold 等核簽流程系統化 |
 
 **建議優先執行 1-7**：全部是「小工作量」，合計約 2-3 天工程量，但能解決最常見的使用者痛點和現有的合規缺口。
 

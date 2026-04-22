@@ -1,8 +1,10 @@
 # Phison Data Nexus — Progress Tracker
 
-> **This file is the SSOT for project progress.**
+> **This file is the SSOT for project progress and goals.**
 > All sessions should read this first and update it when completing work.
-> Last updated: 2026-04-14
+> For feature requests detail: `docs/wishlist-features.md`
+> For tech debt detail: `docs/backlog-tech-debt.md`
+> Last updated: 2026-04-17
 
 ---
 
@@ -101,13 +103,59 @@
 ### Done
 - [x] Metabase BI: Docker Compose + Makefile targets (`make metabase-up`)
 - [x] Metabase connects to nexus_data via pgbouncer Path C (SSOT — PG GRANT+RLS enforced)
+- [x] DX-03: Dev port scheme (PG:15432, PgBouncer:16432, Redis:16379, API:13001, Dashboard:13173)
+- [x] Config Tools: Export snapshot API (`GET /api/config/snapshot`) — 9 sections, selective export
+- [x] Config Tools: Bulk import API (`POST /api/config/bulk`) — dry_run, dependency order, transaction-safe
+- [x] Config Tools: ConfigToolsTab UI (export/import panels, dry run preview, result display)
+- [x] Agent roles: 16 agent definitions in `.claude/agents/` (5 technical + 1 PO + 9 domain experts + shared principles)
+- [x] TimescaleDB: Docker image switched to `timescale/timescaledb:latest-pg16`
+- [x] V030: `authz_audit_log` → hypertable (7-day chunks, 30-day compression, 2-year retention)
+- [x] V030: Continuous aggregates `audit_hourly_summary` + `audit_daily_by_subject`
+- [x] data/V006: `lot_status_history` hypertable + trigger on `lot_status`
+- [x] data/V006: `yield_events` hypertable + trigger on `cp_ft_result`
+- [x] data/V006: Continuous aggregates `yield_daily_trend` + `lot_daily_flow`
+- [x] Discover tab (bottom-up catalog): `GET /api/discover` + `/api/discover/stats` (admin-only) — cross-source view of every table/view/function with mapped/unmapped status, type/search/unmapped filters, 6 Playwright E2E tests (plan: `plan-bottom-up-ux-refactor.md`)
 
-### Remaining
+### Remaining — Infrastructure (Milestone 4 core)
+- [ ] SEC-06: Production secrets management (P0 blocker — detail: `backlog-tech-debt.md`)
 - [ ] Redis L1 cache layer + `authz_check_from_cache()`
 - [ ] Helm chart + K8s deployment
-- [ ] Policy Simulator + Impact Analysis
 - [ ] LDAP sync CronJob (scheduled, not just manual)
 - [ ] Keycloak SSO integration (optional)
+
+### Remaining — Feature (current development focus, detail: `wishlist-features.md`)
+- [ ] Data Mining module: Config-SM business logic pages (design: `design-data-mining-engine.md`)
+- [ ] Metabase BI self-service: lower barrier for BI users
+- [ ] Policy Simulator + Impact Analysis
+
+### Planned — Oracle 19c CDC Support
+> Design complete (7 steps, 8 architecture decisions D1-D8). Plan: `.claude/plans/`
+
+- [ ] V032: Migration — `cdc_target_schema`, `oracle_connection` columns on `authz_data_source`
+- [ ] data/V005: CDC schema helper function `_nexus_create_cdc_schema()`
+- [ ] `oracledb` dependency + `getOracleConnection()` / `getLocalDataPool()` in `db.ts`
+- [ ] `datasource.ts`: Oracle-aware registration, test, discovery
+- [ ] `oracle-exec.ts`: Oracle function call proxy route (`POST /api/oracle-exec`)
+- [ ] `remote-sync.ts`: Oracle source grant sync redirected to local PG
+- [ ] Frontend: Oracle data source form fields + discovery display
+
+---
+
+## Project Goals — Roadmap
+
+> SSOT: milestones and goals are tracked here. Other docs reference this file.
+
+```
+Milestone 1: AuthZ Runs Locally                    ✅ Complete
+Milestone 2: First Page Is Permission-Aware        ✅ Complete
+Milestone 3: All Three Paths Enforced              ✅ Complete
+Milestone 4: Production-Ready                      🟡 In Progress
+  ├── Infrastructure: SEC-06, Redis, Helm, LDAP CronJob, Keycloak
+  ├── Feature: Data Mining, Metabase BI, Policy Simulator
+  └── Oracle CDC: 7-step implementation plan ready
+Phase 2: AI Agent Integration (Smart Analyst 2.0)  ⏳ Blocked on M4
+  └── Decision (2026-02-11): Data Nexus goes live first
+```
 
 ---
 
@@ -144,16 +192,21 @@
 | V027 | EdgePolicy fusion schema (policy_assignment, classification, clearance_mapping, role columns) | Done |
 | V028 | Phase 5 seed data (policy assignments, role clearance, column classifications) | Done |
 | V029 | Fix fn_ui_root: remove card_grid layout exclusion | Done |
+| V030 | TimescaleDB audit hypertable (7-day chunks, 30-day compression, 2-year retention) + continuous aggregates | Done |
 | data/V003 | 6 remaining business tables migrated to nexus_data | Done |
 | data/V004 | Path C RLS: remove current_setting(), add identity-only pg_has_role | Done |
+| data/V006 | TimescaleDB business hypertables (lot_status_history, yield_events) + triggers + continuous aggregates | Done |
 
 ## Services
 
 | Service | Path | Port | Status |
 |---------|------|------|--------|
-| authz-api | `services/authz-api` | 3001 | Running |
-| identity-sync | `services/identity-sync` | CLI | New — manual sync via `make ldap-sync` |
-| authz-dashboard | `apps/authz-dashboard` | 5173 | Running |
+| authz-api | `services/authz-api` | 13001 | Running |
+| identity-sync | `services/identity-sync` | CLI | Manual sync via `make ldap-sync` |
+| authz-dashboard | `apps/authz-dashboard` | 13173 | Running |
+| PostgreSQL | `deploy/docker-compose` | 15432 | Docker |
+| PgBouncer | `deploy/docker-compose` | 16432 | Docker |
+| Redis | `deploy/docker-compose` | 16379 | Docker |
 
 ## Key Docs
 
@@ -164,6 +217,9 @@
 | `er-diagram.md` | Database schema diagram | DB changes |
 | `nexus-startup-guide.md` | How to get started | First-time setup |
 | `backlog-tech-debt.md` | Known issues + tech debt | Sprint planning |
-| `wishlist-features.md` | User feature requests | Sprint planning |
-| `plan-business-db-separation.md` | ARCH-01 implementation guide | When starting DB separation |
+| `wishlist-features.md` | User feature requests + current focus | Sprint planning |
+| `design-data-mining-engine.md` | Data Mining module execution plan | When implementing Data Mining |
+| `design-data-mining-vision.md` | Data Mining long-term vision | When trigger conditions met |
+| `.claude/agents/README.md` | Agent roles (16 agents) + architecture principles | AI-assisted development |
+| `.claude/plans/` | Oracle CDC implementation plan (D1-D8) | When starting Oracle support |
 | `standards/` | Dev standards, security rules, known risks | Before writing code |
