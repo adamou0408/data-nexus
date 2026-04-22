@@ -450,7 +450,17 @@ The architecture document (v2.3) is the complete blueprint.
 
 ### SEC-06　Production 前 Secrets 管理改善計畫
 
-**狀態**：待處理　｜　**優先級**：P0（生產前必須完成）
+**狀態**：部分完成 (a/b/d/e/f done 2026-04-23, c pending)　｜　**優先級**：P0（生產前必須完成）
+
+**進度 (2026-04-23):**
+- ✅ **SEC-06a** crypto.ts production guard — `getKey()` throws when `NODE_ENV=production` and `ENCRYPTION_KEY` is missing/invalid.
+- ✅ **SEC-06b** `.env.example` template at repo root (all auth/identity-sync/dashboard vars, marked REQUIRED in production).
+- ⏳ **SEC-06c** PgBouncer userlist MD5 — deferred, needs coordinated password rotation + restart.
+- ✅ **SEC-06d** `.gitignore` now covers `*.pem`, `*.key`, `*.p12`, `*.pfx`, `secrets/`, `.secrets/`.
+- ✅ **SEC-06e** `services/authz-api/src/index.ts` `validateProductionEnv()` runs before `app.listen`; blocks boot in prod without `ENCRYPTION_KEY` + `DB_PASSWORD`, enforces 64-char hex key length.
+- ✅ **SEC-06f** `docs/deployment-checklist.md` — full pre-flight checklist with appendix of every secret source in the codebase.
+
+`tsc --noEmit` clean post-edit. SEC-06c remains P0 for go-live.
 
 **現狀**
 

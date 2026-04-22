@@ -20,6 +20,14 @@ export class DecryptionError extends Error {
 function getKey(): Buffer {
   const keyHex = process.env.ENCRYPTION_KEY;
   if (!keyHex || keyHex.length !== 64) {
+    // SEC-06a: production must never fall back to the deterministic dev key,
+    // or every deployment would share an attacker-guessable encryption key.
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'ENCRYPTION_KEY env var is required in production (64-char hex). ' +
+        'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+      );
+    }
     // Dev fallback — deterministic key for POC (NOT for production)
     return Buffer.from('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'hex');
   }

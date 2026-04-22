@@ -9,7 +9,7 @@ import { rlsRouter } from './routes/rls-simulate';
 import { browseReadRouter } from './routes/browse-read';
 import { browseAdminRouter } from './routes/browse-admin';
 import { poolRouter } from './routes/pool';
-import { datasourceRouter } from './routes/datasource';
+import { datasourceRouter, listDataSourcesLite } from './routes/datasource';
 import { oracleExecRouter } from './routes/oracle-exec';
 import { dataQueryRouter } from './routes/data-query';
 import { dagRouter } from './routes/dag';
@@ -23,6 +23,28 @@ import { requireRole, requireAuth } from './middleware/authz';
 import { optionalJWT, buildJWTConfig } from './middleware/jwt';
 import { verifyCryptoKey } from './lib/crypto';
 import { startResourceEventListener } from './lib/resource-events';
+
+// SEC-06e: refuse to boot in production with missing critical secrets, so a
+// misconfigured pod fails fast at startup instead of running with predictable
+// dev defaults (and silently encrypting data with the dev fallback key).
+function validateProductionEnv(): void {
+  if (process.env.NODE_ENV !== 'production') return;
+  const required: Array<[string, string]> = [
+    ['ENCRYPTION_KEY', 'AES-256 key for connector_password ciphertext (64-char hex)'],
+    ['DB_PASSWORD', 'AuthZ store password (nexus_authz)'],
+  ];
+  const missing = required.filter(([k]) => !process.env[k] || process.env[k] === '');
+  if (missing.length > 0) {
+    const lines = missing.map(([k, why]) => `  - ${k}: ${why}`).join('\n');
+    throw new Error(
+      `[STARTUP] Refusing to boot in production with missing secrets:\n${lines}\n` +
+      'See docs/deployment-checklist.md.'
+    );
+  }
+  if (process.env.ENCRYPTION_KEY && process.env.ENCRYPTION_KEY.length !== 64) {
+    throw new Error('[STARTUP] ENCRYPTION_KEY must be exactly 64 hex chars (256-bit).');
+  }
+}
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '13001');
@@ -57,6 +79,9 @@ app.use('/api/config-exec', requireAuth, configExecRouter);
 
 // Admin APIs (require ADMIN or AUTHZ_ADMIN role via X-User-Id header)
 app.use('/api/pool', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), poolRouter);
+// Datasource lite list — any authenticated user (Flow Composer, Data Query need DS picker).
+// Must be registered BEFORE the admin-gated mount so Express matches it first.
+app.get('/api/datasources/list', requireAuth, listDataSourcesLite);
 app.use('/api/datasources', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), datasourceRouter);
 // Modules: read open to all authenticated users (per-resource authz_check inside),
 // write operations (DELETE) protected by requireRole inside the router
@@ -71,6 +96,8 @@ app.use('/api/discover', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), discoverRou
 // Config snapshot & bulk import (admin-only)
 app.use('/api/config/snapshot', requireRole('ADMIN', 'AUTHZ_ADMIN'), configSnapshotRouter);
 app.use('/api/config/bulk', requireRole('ADMIN', 'AUTHZ_ADMIN'), configBulkRouter);
+
+validateProductionEnv();
 
 app.listen(PORT, () => {
   verifyCryptoKey();

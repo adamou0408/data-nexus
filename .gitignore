@@ -3,6 +3,14 @@
 .env.local
 .env.*.local
 
+# Secrets / credentials (SEC-06d)
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+.secrets/
+
 # Dependencies
 node_modules/
 __pycache__/
