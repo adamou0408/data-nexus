@@ -42,6 +42,8 @@ desktop.ini
 htmlcov/
 .pytest_cache/
 coverage/
+playwright-report/
+test-results/
 
 # Misc
 *.tmp

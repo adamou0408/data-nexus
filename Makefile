@@ -97,7 +97,7 @@ db-pgbouncer-config: ## Generate pgbouncer config from SSOT
 	@$(PSQL) -c "SELECT authz_sync_pgbouncer_config('postgres', 5432, 'nexus_data');"
 
 db-pathc-psql: ## Connect as a Path C role (usage: make db-pathc-psql ROLE=nexus_pe_ro PASS=dev_pe_pass)
-	@PGPASSWORD=$(PASS) psql -h localhost -p 5432 -U $(ROLE) -d nexus_data
+	@PGPASSWORD=$(PASS) psql -h localhost -p 15432 -U $(ROLE) -d nexus_data
 
 db-data-psql: ## Open interactive psql to nexus_data (business DB)
 	$(COMPOSE) exec postgres psql -U nexus_admin -d nexus_data
@@ -126,10 +126,10 @@ q-web-acl: ## Resolve web ACL for admin
 
 dev: up dev-api dev-ui ## Start everything (PG + Redis + API + UI)
 
-dev-api: ## Start authz-api server (port 3001)
+dev-api: ## Start authz-api server (port 13001)
 	cd services/authz-api && npm run dev
 
-dev-ui: ## Start dashboard UI dev server (port 5173)
+dev-ui: ## Start dashboard UI dev server (port 13173)
 	cd apps/authz-dashboard && npm run dev
 
 install: ## Install all npm dependencies
@@ -175,8 +175,8 @@ metabase-down: ## Stop Metabase
 up-all: ## Start everything (PG + Redis + LDAP + Metabase)
 	$(COMPOSE_ALL) up -d
 	@echo "All services starting..."
-	@echo "  Dashboard:    http://localhost:5173"
-	@echo "  API:          http://localhost:3001"
+	@echo "  Dashboard:    http://localhost:13173"
+	@echo "  API:          http://localhost:13001"
 	@echo "  Metabase:     http://localhost:3100"
 	@echo "  phpLDAPadmin: http://localhost:8090"
 
