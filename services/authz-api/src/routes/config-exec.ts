@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { pool, getDataSourcePool, resolveDataSource } from '../db';
+import { pool, getDataSourcePool, resolveDataSource, getLocalDataPool } from '../db';
 import { buildMaskedSelect, ColumnDef } from '../lib/masked-query';
 import { handleApiError } from '../lib/request-helpers';
 
@@ -103,9 +103,10 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
 
     const table = config.data_table;
 
-    // Step 4: Resolve data source pool (SSOT from authz_data_source)
+    // Step 4: Resolve data source pool (SSOT from authz_data_source).
+    // ARCH-01: when no remote source is configured, business tables live in nexus_data.
     const sourceId = await resolveDataSource(table);
-    const dataPool = sourceId ? await getDataSourcePool(sourceId) : pool;
+    const dataPool = sourceId ? await getDataSourcePool(sourceId) : getLocalDataPool();
 
     // Step 5: Build extra WHERE from drill-down params
     const extraWhere = buildExtraWhere(params, table, dataPool);

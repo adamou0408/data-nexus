@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { pool } from '../db';
+import { pool, getLocalDataPool } from '../db';
 import { handleApiError } from '../lib/request-helpers';
 
 export const browseReadRouter = Router();
@@ -171,8 +171,11 @@ browseReadRouter.post('/data-explorer', async (req, res) => {
       }
     }
 
+    // Business tables live in nexus_data (ARCH-01); authz_* in nexus_authz.
+    const dataPool = getLocalDataPool();
+
     // Column schema
-    const schemaResult = await pool.query(`
+    const schemaResult = await dataPool.query(`
       SELECT column_name, data_type, is_nullable, column_default,
              character_maximum_length
       FROM information_schema.columns
@@ -254,12 +257,12 @@ browseReadRouter.post('/data-explorer', async (req, res) => {
       return col.column_name;
     });
 
-    const dataResult = await pool.query(
+    const dataResult = await dataPool.query(
       `SELECT ${selectParts.join(', ')} FROM "${table}" WHERE ${filterClause} ORDER BY 1 LIMIT 20`
     ).catch(() => ({ rows: [], rowCount: 0 }));
 
-    const totalResult = await pool.query(`SELECT count(*)::int AS c FROM "${table}"`).catch(() => ({ rows: [{ c: 0 }] }));
-    const filteredResult = await pool.query(`SELECT count(*)::int AS c FROM "${table}" WHERE ${filterClause}`).catch(() => ({ rows: [{ c: 0 }] }));
+    const totalResult = await dataPool.query(`SELECT count(*)::int AS c FROM "${table}"`).catch(() => ({ rows: [{ c: 0 }] }));
+    const filteredResult = await dataPool.query(`SELECT count(*)::int AS c FROM "${table}" WHERE ${filterClause}`).catch(() => ({ rows: [{ c: 0 }] }));
 
     // Get mask function definitions
     const usedFns = [...new Set(columns.filter(c => c.mask_function).map(c => c.mask_function as string))];
@@ -306,7 +309,9 @@ browseReadRouter.get('/tables', async (req, res) => {
   const groups = req.query.groups ? (req.query.groups as string).split(',') : [];
 
   try {
-    const result = await pool.query(`
+    // ARCH-01: business tables live in nexus_data.
+    const dataPool = getLocalDataPool();
+    const result = await dataPool.query(`
       SELECT table_name, table_type,
         (SELECT count(*) FROM information_schema.columns c
          WHERE c.table_schema = 'public' AND c.table_name = t.table_name) AS column_count
@@ -344,7 +349,9 @@ browseReadRouter.get('/tables/:table', async (req, res) => {
     return res.status(403).json({ error: 'Cannot browse internal authz tables' });
   }
   try {
-    const cols = await pool.query(`
+    // ARCH-01: business tables in nexus_data.
+    const dataPool = getLocalDataPool();
+    const cols = await dataPool.query(`
       SELECT column_name, data_type, is_nullable, column_default,
              character_maximum_length, numeric_precision
       FROM information_schema.columns
@@ -354,7 +361,7 @@ browseReadRouter.get('/tables/:table', async (req, res) => {
     if (cols.rows.length === 0) {
       return res.status(404).json({ error: 'Table not found' });
     }
-    const sample = await pool.query(
+    const sample = await dataPool.query(
       `SELECT * FROM "${tableName}" LIMIT 20`
     ).catch(() => ({ rows: [] }));
     res.json({ table: tableName, columns: cols.rows, sample_data: sample.rows });

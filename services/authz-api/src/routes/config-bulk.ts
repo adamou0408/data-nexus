@@ -276,7 +276,7 @@ async function bulkSubjects(client: any, subjects: any[]): Promise<BulkResult> {
               [fullGroupId, fullSubjectId]
             );
           } catch (err) {
-            result.errors.push(`Group membership ${subj.subject_id}→${groupId}: ${String(err)}`);
+            result.errors.push(`Group membership ${subj.subject_id}→${fullGroupId}: ${String(err)}`);
           }
         }
       }
@@ -292,7 +292,7 @@ async function bulkSubjects(client: any, subjects: any[]): Promise<BulkResult> {
               [fullSubjectId, fullUserId]
             );
           } catch (err) {
-            result.errors.push(`Group member ${subj.subject_id}←${userId}: ${String(err)}`);
+            result.errors.push(`Group member ${subj.subject_id}←${fullUserId}: ${String(err)}`);
           }
         }
       }
