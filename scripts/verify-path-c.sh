@@ -2,13 +2,16 @@
 # ============================================================
 # Path C Verification Script
 # Tests native PG role-based access control via direct connections
+#
+# Targets nexus_data (business tables live there post-ARCH-01).
+# Override DB_NAME if running against a non-default cluster layout.
 # ============================================================
 
 set -e
 
 DB_HOST="${DB_HOST:-localhost}"
 DB_PORT="${DB_PORT:-5432}"
-DB_NAME="${DB_NAME:-nexus_authz}"
+DB_NAME="${DB_NAME:-nexus_data}"
 PGBOUNCER_PORT="${PGBOUNCER_PORT:-6432}"
 
 RED='\033[0;31m'
