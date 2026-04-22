@@ -291,3 +291,113 @@ discoverRouter.post('/promote', async (req, res) => {
     client.release();
   }
 });
+
+// ─── Reparent: detach (target_module_id=null) or move (string) a mapped resource ───
+// Inverse of /promote — only operates on resources currently parented under a module.
+//   - { resource_id, target_module_id: null }   → detach: parent_id = NULL (returns to unmapped pool)
+//   - { resource_id, target_module_id: "..." }  → move: reparent under a different active module
+// Refuses unmapped resources (callers should use /promote attach mode instead).
+discoverRouter.post('/reparent', async (req, res) => {
+  const userId = getUserId(req);
+  const resourceId = String(req.body?.resource_id || '').trim();
+  const rawTarget = req.body?.target_module_id;
+  const targetModuleId = rawTarget === null || rawTarget === undefined || rawTarget === ''
+    ? null
+    : String(rawTarget).trim();
+
+  if (!resourceId) return res.status(400).json({ error: 'resource_id required' });
+
+  const client = await authzPool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const target = await client.query(
+      `SELECT resource_id, resource_type, parent_id, is_active
+         FROM authz_resource WHERE resource_id = $1`,
+      [resourceId],
+    );
+    if (target.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'resource_id not found' });
+    }
+    const t = target.rows[0];
+    if (!t.is_active) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'resource is inactive' });
+    }
+    if (!['table', 'view', 'function'].includes(t.resource_type)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `cannot reparent resource_type=${t.resource_type}` });
+    }
+    if (!t.parent_id) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'resource is not currently mapped to a module — use /promote instead' });
+    }
+    const currentParent = await client.query(
+      `SELECT resource_type, display_name FROM authz_resource WHERE resource_id = $1`,
+      [t.parent_id],
+    );
+    if (currentParent.rows[0]?.resource_type !== 'module') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'resource is not currently under a module — use /promote instead' });
+    }
+    const previousModuleId: string = t.parent_id;
+    const previousDisplayName: string = currentParent.rows[0].display_name;
+
+    let newDisplayName: string | null = null;
+    if (targetModuleId) {
+      if (targetModuleId === previousModuleId) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'target_module_id matches current parent — no-op' });
+      }
+      const m = await client.query(
+        `SELECT resource_id, display_name, resource_type, is_active
+           FROM authz_resource WHERE resource_id = $1`,
+        [targetModuleId],
+      );
+      if (m.rows.length === 0 || !m.rows[0].is_active || m.rows[0].resource_type !== 'module') {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'target_module_id must be an active module' });
+      }
+      newDisplayName = m.rows[0].display_name;
+    }
+
+    await client.query(
+      `UPDATE authz_resource SET parent_id = $1, updated_at = now() WHERE resource_id = $2`,
+      [targetModuleId, resourceId],
+    );
+
+    await client.query('COMMIT');
+
+    try {
+      await authzPool.query('SELECT refresh_module_tree_stats()');
+    } catch (e) {
+      console.warn('[discover/reparent] refresh_module_tree_stats failed:', e);
+    }
+    await logAdminAction(authzPool, {
+      userId,
+      action: targetModuleId ? 'MOVE_TO_MODULE' : 'DETACH_FROM_MODULE',
+      resourceType: 'module',
+      resourceId: targetModuleId || previousModuleId,
+      details: {
+        resource_id: resourceId,
+        previous_module_id: previousModuleId,
+        new_module_id: targetModuleId,
+      },
+    });
+
+    res.json({
+      mode: targetModuleId ? 'move' : 'detach',
+      resource_id: resourceId,
+      previous_module_id: previousModuleId,
+      previous_display_name: previousDisplayName,
+      new_module_id: targetModuleId,
+      new_display_name: newDisplayName,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    handleApiError(res, err);
+  } finally {
+    client.release();
+  }
+});

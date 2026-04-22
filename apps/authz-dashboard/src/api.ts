@@ -466,6 +466,16 @@ export const api = {
       promoted_resource_id: string;
     }>('/discover/promote', { method: 'POST', body: JSON.stringify(body) }),
 
+  discoverReparent: (body: { resource_id: string; target_module_id: string | null }) =>
+    request<{
+      mode: 'detach' | 'move';
+      resource_id: string;
+      previous_module_id: string;
+      previous_display_name: string;
+      new_module_id: string | null;
+      new_display_name: string | null;
+    }>('/discover/reparent', { method: 'POST', body: JSON.stringify(body) }),
+
   poolUncredentialedRoles: () =>
     request<{ pg_role: string; profile_id: string; connection_mode: string; data_source_id: string | null }[]>('/pool/uncredentialed-roles'),
 
