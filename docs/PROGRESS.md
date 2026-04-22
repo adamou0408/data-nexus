@@ -171,8 +171,8 @@
 - [x] DAG: production seed `dag:material_360_trace` (`database/seed/dag_material_360_trace.sql`) under `module:analytics` — 4 pg_k8 functions (`fn_material_lookup` → `fn_material_substitution_map` / `fn_material_full_trace` / `fn_cxmzr115_shipment_history_by_material_no`), 3 fan-out edges on `material_no`. Re-runnable (ON CONFLICT DO UPDATE). Verified inheritance: `BI_USER` with `execute` on `module:analytics` → all 4 nodes pass `authz_check`.
 
 ### Remaining — Infrastructure (Milestone 4 core)
-- [ ] SEC-06: Production secrets management (P0 blocker — detail: `backlog-tech-debt.md`)
-- [ ] Redis L1 cache layer + `authz_check_from_cache()`
+- [~] SEC-06: Production secrets management — code-layer done (06a/b/d/e/f in commit ff7982a, 2026-04-23). Infra-layer remaining: 06c pgbouncer MD5 rotation + Vault/external-secrets wiring. Detail: `backlog-tech-debt.md`.
+- [ ] Redis L1 cache layer + `authz_check_from_cache()` integration (function already exists in V007 line 188-205)
 - [ ] Helm chart + K8s deployment
 - [ ] LDAP sync CronJob (scheduled, not just manual)
 - [ ] Keycloak SSO integration (optional)

@@ -1,7 +1,7 @@
 # M4 Production-Ready Tracker
 
 - **Owner:** SRE
-- **Status:** STUB
+- **Status:** partial — SEC-06 code-layer ✅ (2026-04-23); other 4 items STUB
 - **Linked from:** [`docs/plan-v3-phase-1.md`](../../../docs/plan-v3-phase-1.md) §3 Q3 2026, §6.2 Gate G1
 - **Deadline:** 2026-09 (Gate G1 — blocks AI / Smart Analyst 2.0 unlock)
 
@@ -50,7 +50,27 @@ Track the five M4 production-ready work items to go-live by end of Q3 2026. M4 i
 
 ---
 
-## STUB — to be filled
+## Per-Item Status
+
+### 1. SEC-06 — Production secrets
+
+- **Code-layer status:** ✅ complete 2026-04-23 (commit `ff7982a`).
+  - 06a `crypto.ts` `getKey()` refuses to boot in `NODE_ENV=production` without `ENCRYPTION_KEY`
+  - 06b `.env.example` at repo root
+  - 06d `.gitignore` covers `*.pem`, `*.key`, `*.p12`, `*.pfx`, `secrets/`, `.secrets/`
+  - 06e `authz-api/index.ts` `validateProductionEnv()` before `app.listen`
+  - 06f `docs/deployment-checklist.md`
+- **Infra-layer status:** ⏳ pending SRE
+  - 06c pgbouncer userlist MD5 hash + password rotation (needs maintenance window)
+  - External-secrets or Vault wiring for K8s
+  - Key rotation runbook (encryption-key + DB passwords)
+- **Acceptance criteria:**
+  - staging: pod crash-loops with clear message when `ENCRYPTION_KEY` unset ✅ (code enforces)
+  - staging: `/healthz` 200 after secrets supplied via K8s Secret
+  - prod: all four required env vars sourced from external secret manager (not K8s Secret literal)
+- **Rollback plan:** revert commit `ff7982a` + `docker-compose down` → previous startup still worked with dev fallback. No data migration involved.
+
+### 2–5. Helm / Keycloak / LDAP CronJob / Redis — STUB
 
 - Per-item owner name / backup owner
 - Per-item acceptance criteria (staging check + prod check)
