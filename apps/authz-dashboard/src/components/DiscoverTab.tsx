@@ -5,7 +5,7 @@ import { PageHeader } from './shared/atoms/PageHeader';
 import { EmptyState } from './shared/atoms/EmptyState';
 import { StatCard } from './shared/atoms/StatCard';
 import {
-  Search, Table2, Eye, Code2, Database, CheckCircle2, AlertCircle, Loader2,
+  Search, Table2, Eye, Code2, Database, CheckCircle2, AlertCircle, Loader2, Sparkles, X,
 } from 'lucide-react';
 
 type DiscoverRow = {
@@ -43,6 +43,9 @@ export function DiscoverTab() {
   const [type, setType] = useState<TypeFilter>('all');
   const [unmappedOnly, setUnmappedOnly] = useState(false);
   const [q, setQ] = useState('');
+  const [promoteRow, setPromoteRow] = useState<DiscoverRow | null>(null);
+  const [promoteName, setPromoteName] = useState('');
+  const [promoting, setPromoting] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -192,6 +195,7 @@ export function DiscoverTab() {
                   <th className="px-4 py-2 font-medium">Data Source</th>
                   <th className="px-4 py-2 font-medium">Schema</th>
                   <th className="px-4 py-2 font-medium">Mapped to Module</th>
+                  <th className="px-4 py-2 font-medium text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -233,10 +237,114 @@ export function DiscoverTab() {
                         </span>
                       )}
                     </td>
+                    <td className="px-4 py-2 text-right">
+                      {!row.mapped_to_module && (
+                        <button
+                          data-testid={`promote-${row.resource_id}`}
+                          onClick={() => {
+                            setPromoteRow(row);
+                            setPromoteName(row.display_name);
+                          }}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded"
+                          title="Create a Module that wraps this resource"
+                        >
+                          <Sparkles size={12} />
+                          Promote
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Promote modal */}
+      {promoteRow && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+          onClick={() => !promoting && setPromoteRow(null)}
+          data-testid="promote-modal"
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl max-w-md w-full p-5"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <div className="flex items-center gap-2 text-slate-900 font-semibold">
+                  <Sparkles size={16} className="text-blue-600" />
+                  Promote to Module
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  Wrap <span className="font-mono text-slate-700">{promoteRow.resource_id}</span> in a new permission-controlled Module.
+                </div>
+              </div>
+              <button
+                onClick={() => !promoting && setPromoteRow(null)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+                disabled={promoting}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <label className="block text-xs font-medium text-slate-700 mb-1">Module name</label>
+            <input
+              type="text"
+              data-testid="promote-name"
+              value={promoteName}
+              onChange={e => setPromoteName(e.target.value)}
+              placeholder="e.g. Material Catalog"
+              className="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+              autoFocus
+              disabled={promoting}
+            />
+            <p className="text-[11px] text-slate-400 mt-1">
+              A new Module is created at the root level. The resource will inherit permissions from this Module.
+            </p>
+
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setPromoteRow(null)}
+                className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900"
+                disabled={promoting}
+              >
+                Cancel
+              </button>
+              <button
+                data-testid="promote-confirm"
+                onClick={async () => {
+                  const name = promoteName.trim();
+                  if (!name) {
+                    toast.error('Module name is required');
+                    return;
+                  }
+                  setPromoting(true);
+                  try {
+                    const result = await api.discoverPromote({
+                      resource_id: promoteRow.resource_id,
+                      module_display_name: name,
+                    });
+                    toast.success(`Promoted to ${result.module_id}`);
+                    setPromoteRow(null);
+                    await load();
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : 'Promote failed';
+                    toast.error(msg);
+                  } finally {
+                    setPromoting(false);
+                  }
+                }}
+                className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1"
+                disabled={promoting || !promoteName.trim()}
+              >
+                {promoting ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                {promoting ? 'Promoting…' : 'Create Module'}
+              </button>
+            </div>
           </div>
         </div>
       )}

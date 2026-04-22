@@ -454,6 +454,14 @@ export const api = {
       ds_count: number;
     }>('/discover/stats'),
 
+  discoverPromote: (body: { resource_id: string; module_display_name: string; parent_module_id?: string | null }) =>
+    request<{
+      module_id: string;
+      display_name: string;
+      parent_module_id: string | null;
+      promoted_resource_id: string;
+    }>('/discover/promote', { method: 'POST', body: JSON.stringify(body) }),
+
   poolUncredentialedRoles: () =>
     request<{ pg_role: string; profile_id: string; connection_mode: string; data_source_id: string | null }[]>('/pool/uncredentialed-roles'),
 
