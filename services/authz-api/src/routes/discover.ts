@@ -1,8 +1,9 @@
 import { Router } from 'express';
-import { pool as authzPool } from '../db';
+import { pool as authzPool, getDataSourcePool } from '../db';
 import { getUserId, handleApiError } from '../lib/request-helpers';
 import { logAdminAction } from '../lib/admin-audit';
 import { runDiscoveryRules } from '../lib/discovery-rule-engine';
+import { introspectTable } from '../lib/schema-to-ui';
 
 export const discoverRouter = Router();
 
@@ -730,5 +731,251 @@ discoverRouter.patch('/suggestions/:policy_id', async (req, res) => {
     }
   } catch (err) {
     handleApiError(res, err);
+  }
+});
+
+// ─── Generate App: schema → ui_page + ui_descriptor (BU-08) ───
+//
+// Bottom-up Path A pivot. Caller picks an unmapped table from Discover and
+// hits this endpoint; we introspect the source DB, write a derived
+// authz_ui_page + authz_ui_descriptor, and reparent the resource.
+//
+// Design: docs/design-schema-driven-ui.md §5
+//
+// Body:  { resource_id, source_id, schema, table_name, target_module_id? }
+// Returns: { page_id, descriptor_id, preview_url, module_id }
+//
+// Error contract:
+//   400 — missing/invalid input
+//   404 — resource_id not found (hint: run Discover scan first)
+//   409 — page already generated (rollback story: DELETE row + reparent)
+//   412 — Discover scan precondition not met
+//   502 — source DB introspection failed (network / permissions)
+//
+// POC scope (§8): derived descriptors are read-only. Re-generate is rejected
+// to avoid silently clobbering admin overrides (Phase 4 territory).
+discoverRouter.post('/generate-app', async (req, res) => {
+  const userId = getUserId(req);
+  const resourceId = String(req.body?.resource_id || '').trim();
+  const sourceId = String(req.body?.source_id || '').trim();
+  const schema = String(req.body?.schema || '').trim();
+  const tableName = String(req.body?.table_name || '').trim();
+  const targetModuleId = req.body?.target_module_id
+    ? String(req.body.target_module_id).trim()
+    : null;
+
+  if (!resourceId || !sourceId || !schema || !tableName) {
+    return res.status(400).json({
+      error: 'resource_id, source_id, schema, table_name all required',
+    });
+  }
+  // Identifier hygiene — the strings flow into pg identifiers via the
+  // introspector + into page_id. No SQL interp on raw input, but reject
+  // anything that isn't a normal pg identifier shape so that page_id stays
+  // grep-able and admin-friendly.
+  const identRe = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+  if (!identRe.test(schema) || !identRe.test(tableName)) {
+    return res.status(400).json({
+      error: 'schema and table_name must be valid PG identifiers',
+    });
+  }
+
+  const pageId = `auto:${sourceId}:${schema}.${tableName}`;
+  const descriptorId = `${pageId}:default`;
+  const unmappedModuleId = 'module:_unmapped';
+
+  const client = await authzPool.connect();
+  try {
+    // ── Step 1.5: Precondition — resource must be in catalog ──
+    // Discover scan (datasource.ts:740) creates table/view rows; without
+    // them, L0 authz_check at first page load returns 403.
+    const resCheck = await client.query<{ resource_type: string; display_name: string | null }>(
+      `SELECT resource_type, display_name FROM authz_resource
+        WHERE resource_id = $1 AND is_active = TRUE`,
+      [resourceId],
+    );
+    if (resCheck.rows.length === 0) {
+      return res.status(412).json({
+        error: 'discover_scan_required',
+        detail: `resource_id '${resourceId}' not found in catalog. Run datasource scan first (POST /api/datasources/${sourceId}/discover).`,
+      });
+    }
+    const resType = resCheck.rows[0].resource_type;
+    if (resType !== 'table' && resType !== 'view') {
+      return res.status(400).json({
+        error: `cannot generate app for resource_type='${resType}' (expected table or view)`,
+      });
+    }
+
+    // ── Step 3 (early collision check): page_id must not exist ──
+    const existing = await client.query(
+      `SELECT 1 FROM authz_ui_page WHERE page_id = $1`,
+      [pageId],
+    );
+    if (existing.rowCount && existing.rowCount > 0) {
+      return res.status(409).json({
+        error: 'app_already_generated',
+        existing_page_id: pageId,
+        hint: 'POC: derived descriptors are read-only. To re-generate, DELETE FROM authz_ui_page WHERE page_id = $1 first. Override editor lands in Phase 4.',
+      });
+    }
+
+    // ── Step 2: Introspect source DB (NO transaction yet — read only) ──
+    const dsPool = await getDataSourcePool(sourceId);
+    let descriptor;
+    try {
+      descriptor = await introspectTable(dsPool, sourceId, schema, tableName);
+    } catch (err) {
+      return res.status(502).json({
+        error: 'introspection_failed',
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // ── Step 5: Resolve module assignment ──
+    let resolvedModuleId: string;
+    if (targetModuleId) {
+      const m = await client.query<{ resource_id: string; resource_type: string; is_active: boolean }>(
+        `SELECT resource_id, resource_type, is_active FROM authz_resource WHERE resource_id = $1`,
+        [targetModuleId],
+      );
+      if (m.rows.length === 0 || !m.rows[0].is_active || m.rows[0].resource_type !== 'module') {
+        return res.status(400).json({ error: 'target_module_id must be an active module' });
+      }
+      resolvedModuleId = targetModuleId;
+    } else {
+      // Auto-create module:_unmapped if it doesn't exist (idempotent).
+      // Acts as the default landing zone — admin reparents later via Discover.
+      await client.query(
+        `INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name, attributes)
+         VALUES ($1, 'module', NULL, 'Ungrouped',
+                 '{"system_managed": true, "purpose": "auto_generated_app_landing"}'::jsonb)
+         ON CONFLICT (resource_id) DO NOTHING`,
+        [unmappedModuleId],
+      );
+      resolvedModuleId = unmappedModuleId;
+    }
+
+    await client.query('BEGIN');
+    try {
+      // ── Step 5b: Reparent resource (only if not already mapped) ──
+      const cur = await client.query<{ parent_id: string | null }>(
+        `SELECT parent_id FROM authz_resource WHERE resource_id = $1`,
+        [resourceId],
+      );
+      const currentParent = cur.rows[0]?.parent_id;
+      let reparented = false;
+      if (currentParent !== resolvedModuleId) {
+        // Only reparent if the resource isn't already under a non-module parent
+        // (e.g. function under a table). Tables/views from scan have parent_id
+        // = NULL, so this is the typical path.
+        const existingParent = currentParent
+          ? await client.query<{ resource_type: string }>(
+              `SELECT resource_type FROM authz_resource WHERE resource_id = $1`,
+              [currentParent],
+            )
+          : null;
+        const parentIsModule = existingParent && existingParent.rows[0]?.resource_type === 'module';
+        if (!parentIsModule || !targetModuleId) {
+          // Unmapped → assign. Already in a module + caller passed explicit
+          // target → reassign. Already in a module + no target → leave alone.
+          if (!parentIsModule) {
+            await client.query(
+              `UPDATE authz_resource SET parent_id = $1, updated_at = now() WHERE resource_id = $2`,
+              [resolvedModuleId, resourceId],
+            );
+            reparented = true;
+          }
+        }
+      }
+
+      // ── Step 3: Insert ui_page ──
+      // We populate columns_override with derived labels so the existing
+      // config-exec path (which builds columns from information_schema +
+      // applies override.label/render) picks them up without needing a new
+      // descriptor-aware render path. Hidden columns beyond MAX_COLUMNS are
+      // marked hidden so the table doesn't render 1000-col monsters by default.
+      const title = resCheck.rows[0].display_name || `${schema}.${tableName}`;
+      const columnsOverride: Record<string, { label?: string; render?: string; hidden?: boolean }> = {};
+      for (const col of descriptor.columns) {
+        columnsOverride[col.key] = { label: col.label, render: col.render_hint };
+      }
+      // Note: descriptor.columns is already capped at MAX_COLUMNS. Anything
+      // beyond that is silently hidden by NOT being in columns_override (the
+      // information_schema scan inside buildMaskedSelect will still surface
+      // them with auto-generated labels — Phase 4 will add explicit hidden:true
+      // for the >50 tail).
+      await client.query(
+        `INSERT INTO authz_ui_page (
+            page_id, title, layout, resource_id, data_table,
+            filters_config, columns_override, icon, description, is_active
+          ) VALUES ($1, $2, 'table', $3, $4, $5::jsonb, $6::jsonb, 'table-2', $7, TRUE)`,
+        [
+          pageId,
+          title,
+          resourceId,
+          `${schema}.${tableName}`,
+          JSON.stringify(descriptor.filters_config),
+          JSON.stringify(columnsOverride),
+          `Auto-generated from ${sourceId} schema introspection. Source columns: ${descriptor.derived_from.column_count}${descriptor.derived_from.truncated ? ' (truncated to 50)' : ''}.`,
+        ],
+      );
+
+      // ── Step 4: Insert ui_descriptor (status = derived) ──
+      await client.query(
+        `INSERT INTO authz_ui_descriptor (
+            descriptor_id, page_id, section_key, section_label, section_icon,
+            display_order, visibility, columns, render_hints,
+            status, derived_at, derived_from, is_active
+          ) VALUES ($1, $2, 'default', $3, 'table-2',
+                    1, 'read', $4::jsonb, $5::jsonb,
+                    'derived', now(), $6::jsonb, TRUE)`,
+        [
+          descriptorId,
+          pageId,
+          title,
+          JSON.stringify(descriptor.columns),
+          JSON.stringify(descriptor.render_hints),
+          JSON.stringify(descriptor.derived_from),
+        ],
+      );
+
+      await client.query('COMMIT');
+
+      // ── Step 6: Audit (after commit, on the authz pool — convention) ──
+      logAdminAction(authzPool, {
+        userId,
+        action: 'AUTO_GENERATE_APP',
+        resourceType: 'ui_page',
+        resourceId: pageId,
+        details: {
+          source_id: sourceId,
+          schema,
+          table_name: tableName,
+          target_module_id: resolvedModuleId,
+          column_count: descriptor.derived_from.column_count,
+          truncated: descriptor.derived_from.truncated,
+          reparented,
+        },
+        ip: undefined,
+      });
+
+      return res.status(201).json({
+        page_id: pageId,
+        descriptor_id: descriptorId,
+        module_id: resolvedModuleId,
+        reparented,
+        preview_url: `/path-a/${encodeURIComponent(pageId)}`,
+        column_count: descriptor.derived_from.column_count,
+        truncated: descriptor.derived_from.truncated,
+      });
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    }
+  } catch (err) {
+    handleApiError(res, err);
+  } finally {
+    client.release();
   }
 });

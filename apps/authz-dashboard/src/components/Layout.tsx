@@ -14,7 +14,8 @@ export type TabId =
   | 'tables' | 'raw-tables' | 'metabase' | 'data-query' | 'flow-composer'
   | 'access-resources' | 'access-policies' | 'pool' | 'modules' | 'discover'
   | 'access-subjects' | 'access-roles' | 'access-actions' | 'audit'
-  | 'config-tools';
+  | 'config-tools'
+  | 'auto-page';   // BU-08 schema-driven UI preview slot (no sidebar entry)
 
 type NavItem = {
   id: TabId;

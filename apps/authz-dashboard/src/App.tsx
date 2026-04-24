@@ -38,6 +38,9 @@ function AppInner() {
   const [tab, setTab] = useState<TabId>('overview');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [configToolsOpen, setConfigToolsOpen] = useState(false);
+  // BU-08: auto-generated page preview slot. When set, the 'auto-page' tab
+  // renders ConfigEngine for the auto page_id (auto:<source>:<schema>.<table>).
+  const [autoPagePreview, setAutoPagePreview] = useState<string | null>(null);
   const { isAdmin } = useAuthz();
 
   const navigate = (next: TabId | string) => {
@@ -63,6 +66,19 @@ function AppInner() {
     };
     window.addEventListener('navigate-tab', handler);
     return () => window.removeEventListener('navigate-tab', handler);
+  }, []);
+
+  // BU-08: open-auto-page event from GenerateAppButton → switch to preview tab.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ page_id: string }>).detail;
+      if (detail?.page_id) {
+        setAutoPagePreview(detail.page_id);
+        setTab('auto-page' as TabId);
+      }
+    };
+    window.addEventListener('open-auto-page', handler);
+    return () => window.removeEventListener('open-auto-page', handler);
   }, []);
 
   // Cmd/Ctrl+K palette
@@ -137,6 +153,15 @@ function AppInner() {
       {tab === 'pool' && <PoolTab />}
       {tab === 'modules' && <ConfigEngine initialPageId="modules_home" />}
       {tab === 'discover' && <DiscoverTab />}
+      {tab === 'auto-page' && autoPagePreview && (
+        <ConfigEngine key={autoPagePreview} initialPageId={autoPagePreview} />
+      )}
+      {tab === 'auto-page' && !autoPagePreview && (
+        <div className="p-8 text-center text-slate-500">
+          <p>No auto-generated page selected.</p>
+          <p className="text-sm mt-2">Go to <button onClick={() => setTab('discover' as TabId)} className="text-blue-600 hover:underline">Discover</button> and use Generate App on a table.</p>
+        </div>
+      )}
       {accessSection && (
         <BrowserTab
           initialSection={accessSection}

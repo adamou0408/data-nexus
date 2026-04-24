@@ -468,6 +468,24 @@ export const api = {
       promoted_resource_id: string;
     }>('/discover/promote', { method: 'POST', body: JSON.stringify(body) }),
 
+  // BU-08 schema-driven UI: generate auto page from a table/view
+  discoverGenerateApp: (body: {
+    resource_id: string;
+    source_id: string;
+    schema: string;
+    table_name: string;
+    target_module_id?: string | null;
+  }) =>
+    request<{
+      page_id: string;
+      descriptor_id: string;
+      module_id: string;
+      reparented: boolean;
+      preview_url: string;
+      column_count: number;
+      truncated: boolean;
+    }>('/discover/generate-app', { method: 'POST', body: JSON.stringify(body) }),
+
   discoverReparent: (body: { resource_id: string; target_module_id: string | null }) =>
     request<{
       mode: 'detach' | 'move';

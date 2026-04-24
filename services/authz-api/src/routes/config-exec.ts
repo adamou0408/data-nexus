@@ -44,8 +44,14 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'page_id is required' });
   }
 
-  // Validate page_id format to prevent injection
-  if (!/^[a-z][a-z0-9_]*$/.test(page_id)) {
+  // Validate page_id format. Two accepted shapes:
+  //   1. Hand-seeded: `^[a-z][a-z0-9_]*$` — original convention (e.g. modules_home).
+  //   2. BU-08 auto-generated: `auto:<source_id>:<schema>.<table>` — namespace
+  //      isolated from hand-seeded pages, source_id may contain `-` (slug shape).
+  // Both go through parameterized SQL (`fn_ui_page($1)`); regex is defense-in-depth.
+  const validHandSeeded = /^[a-z][a-z0-9_]*$/.test(page_id);
+  const validAuto = /^auto:[a-zA-Z0-9_-]+:[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*$/.test(page_id);
+  if (!validHandSeeded && !validAuto) {
     return res.status(400).json({ error: 'Invalid page_id format' });
   }
 

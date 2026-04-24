@@ -172,7 +172,7 @@ Schema introspector **每次重跑**都會重新 derive 一份 baseline,然後 m
    - Input: `{ resource_id, source_id, schema, table_name, target_module_id? }`
    - 流程:
      1. `authz_check(user, 'admin', resource:auto_app_generate)` — admin only
-     1.5. **Precondition check** — `SELECT 1 FROM authz_resource WHERE resource_id = 'resource:table:<schema>.<table>' AND resource_type = 'table'`。沒有 → 回 412 Precondition Failed `{error: 'discover_scan_required', detail: 'Run datasource scan on this source first'}`。原因:Discover scan (`datasource.ts:740` batch upsert) 才會建 `authz_resource` table row,沒這個 row,後面 L0 `authz_check` 第一次載入會 403。
+     1.5. **Precondition check** — `SELECT 1 FROM authz_resource WHERE resource_id = '<rtype>:<table_name>' AND resource_type IN ('table', 'view')` (rtype 由 caller 傳入 'table' or 'view',因為 `authz_resource` 區分這兩個)。沒有 → 回 412 Precondition Failed `{error: 'discover_scan_required', detail: 'Run datasource scan on this source first'}`。原因:Discover scan (`datasource.ts:740` batch upsert) 才會建 `authz_resource` table row,沒這個 row,後面 L0 `authz_check` 第一次載入會 403。**Note**: 現行 codebase 的 resource_id 是 `table:<table_name>` (無 schema prefix,見 datasource.ts:595)。POC 沿用此 convention,不在這刀做 resource_id 重構。
      2. Call `introspectTable()`
      3. **Insert** (not upsert) `authz_ui_page`,page_id = `auto:<source_id>:<schema>.<table_name>`。On conflict → 回 409 Conflict `{error: 'app_already_generated', existing_page_id, hint: '改用 admin override editor (Phase 4) 修改既有 page;POC 階段 derived descriptor 是 read-only'}`。理由:silent upsert 會洗掉 admin 在 Phase 4 加的 override,不可逆。POC 鎖死「一張表只能 generate 一次,要重 generate 必須先手動刪」。
      4. Insert `authz_ui_descriptor` (status = 'derived', derived_at = now(), derived_from = `{source_id, schema, table_name, schema_hash}`)

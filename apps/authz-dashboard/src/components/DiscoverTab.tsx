@@ -6,7 +6,7 @@ import { EmptyState } from './shared/atoms/EmptyState';
 import { StatCard } from './shared/atoms/StatCard';
 import {
   Search, Table2, Eye, Code2, Database, CheckCircle2, AlertCircle, Loader2, Sparkles, X, Move, Unlink, Filter,
-  Inbox,
+  Inbox, Wand2,
 } from 'lucide-react';
 import { PendingReviewPanel } from './discover/PendingReviewPanel';
 
@@ -496,40 +496,83 @@ export function DiscoverTab() {
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {!row.mapped_to_module ? (
-                        <button
-                          data-testid={`promote-${row.resource_id}`}
-                          onClick={async () => {
-                            setPromoteRow(row);
-                            setPromoteMode('create');
-                            setPromoteName(row.display_name);
-                            setPromoteTargetModuleId('');
-                            setPromoteModuleSearch('');
-                            await ensureModulesLoaded();
-                          }}
-                          className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded"
-                          title="Create a Module that wraps this resource"
-                        >
-                          <Sparkles size={12} />
-                          Promote
-                        </button>
-                      ) : (
-                        <button
-                          data-testid={`reparent-${row.resource_id}`}
-                          onClick={async () => {
-                            setReparentRow(row);
-                            setReparentMode('move');
-                            setReparentTargetModuleId('');
-                            setReparentModuleSearch('');
-                            await ensureModulesLoaded();
-                          }}
-                          className="inline-flex items-center gap-1 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded"
-                          title="Move to another Module or detach back to unmapped"
-                        >
-                          <Move size={12} />
-                          Move
-                        </button>
-                      )}
+                      <div className="inline-flex items-center gap-1">
+                        {(row.resource_type === 'table' || row.resource_type === 'view') && row.data_source_id && row.schema && (
+                          <button
+                            data-testid={`generate-app-${row.resource_id}`}
+                            onClick={async () => {
+                              if (!row.data_source_id || !row.schema) return;
+                              // Resource_id format is `<table|view>:<table_name>` (datasource.ts:595).
+                              const tableName = row.resource_id.split(':').slice(1).join(':');
+                              if (!tableName) {
+                                toast.error('Cannot derive table name from resource_id');
+                                return;
+                              }
+                              try {
+                                const result = await api.discoverGenerateApp({
+                                  resource_id: row.resource_id,
+                                  source_id: row.data_source_id,
+                                  schema: row.schema,
+                                  table_name: tableName,
+                                });
+                                toast.success(
+                                  `App generated: ${result.column_count} cols${result.truncated ? ' (truncated to 50)' : ''}. Opening preview…`,
+                                );
+                                window.dispatchEvent(new CustomEvent('open-auto-page', { detail: { page_id: result.page_id } }));
+                              } catch (err) {
+                                const msg = err instanceof Error ? err.message : String(err);
+                                if (msg.includes('app_already_generated')) {
+                                  // Already generated — open preview anyway.
+                                  const inferredPageId = `auto:${row.data_source_id}:${row.schema}.${tableName}`;
+                                  toast.info(`Already generated — opening preview.`);
+                                  window.dispatchEvent(new CustomEvent('open-auto-page', { detail: { page_id: inferredPageId } }));
+                                } else {
+                                  toast.error(`Generate failed: ${msg}`);
+                                }
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 px-2 py-1 rounded"
+                            title="Auto-generate a UI page from this table's schema (BU-08)"
+                          >
+                            <Wand2 size={12} />
+                            Generate App
+                          </button>
+                        )}
+                        {!row.mapped_to_module ? (
+                          <button
+                            data-testid={`promote-${row.resource_id}`}
+                            onClick={async () => {
+                              setPromoteRow(row);
+                              setPromoteMode('create');
+                              setPromoteName(row.display_name);
+                              setPromoteTargetModuleId('');
+                              setPromoteModuleSearch('');
+                              await ensureModulesLoaded();
+                            }}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded"
+                            title="Create a Module that wraps this resource"
+                          >
+                            <Sparkles size={12} />
+                            Promote
+                          </button>
+                        ) : (
+                          <button
+                            data-testid={`reparent-${row.resource_id}`}
+                            onClick={async () => {
+                              setReparentRow(row);
+                              setReparentMode('move');
+                              setReparentTargetModuleId('');
+                              setReparentModuleSearch('');
+                              await ensureModulesLoaded();
+                            }}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded"
+                            title="Move to another Module or detach back to unmapped"
+                          >
+                            <Move size={12} />
+                            Move
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
