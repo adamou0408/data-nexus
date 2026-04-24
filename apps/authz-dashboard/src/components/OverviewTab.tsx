@@ -3,8 +3,9 @@ import { useAuthz } from '../AuthzContext';
 import { api, ActionItem } from '../api';
 import {
   Users, Shield, Database, FileText,
-  Layers, ArrowRight, CheckCircle2, XCircle,
+  Layers, ArrowRight, CheckCircle2, XCircle, Circle,
   Lock, Eye, Search, AlertTriangle, Clock,
+  Code2, BarChart3, Workflow,
 } from 'lucide-react';
 
 type Stats = {
@@ -14,24 +15,90 @@ type Stats = {
   policies: number;
 };
 
+type ChecklistItem = {
+  key: string;
+  label: string;
+  detail: string;
+  done: boolean;
+  count?: number;
+  cta: { label: string; tab: string };
+};
+
 export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
   const { user, config, isAdmin } = useAuthz();
   const [stats, setStats] = useState<Stats | null>(null);
   const [actionItems, setActionItems] = useState<ActionItem[]>([]);
-
+  const [checklist, setChecklist] = useState<ChecklistItem[] | null>(null);
 
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!isAdmin) { setStats(null); setChecklist(null); return; }
     Promise.all([
       api.subjects(), api.roles(), api.resources(), api.policies(),
-    ]).then(([s, r, res, p]) => {
+      api.datasourceLifecycleSummary().catch(() => [] as any[]),
+      api.discoverStats().catch(() => null),
+      api.adminAuditLogs({ limit: 1 }).catch(() => [] as Record<string, unknown>[]),
+    ]).then(([s, r, res, p, lifecycle, discover, audit]) => {
       setStats({ subjects: s.length, roles: r.length, resources: res.length, policies: p.length });
+
+      const dsCount = lifecycle.length;
+      const dsConnected = lifecycle.filter((d: any) => d.phases_done >= 1).length;
+      const discoveredTables = discover ? (discover.table?.total ?? 0) : 0;
+      const mappedTables = discover ? (discover.table?.mapped ?? 0) : 0;
+      const auditUsed = audit.length > 0;
+
+      setChecklist([
+        {
+          key: 'ds', label: '1. 接資料來源',
+          detail: dsCount === 0 ? '尚未註冊任何 Data Source' : `已註冊 ${dsCount} 筆，${dsConnected} 筆連線就緒`,
+          done: dsConnected > 0, count: dsConnected,
+          cta: { label: 'Sources', tab: 'pool' },
+        },
+        {
+          key: 'discover', label: '2. Discover 掃 schema',
+          detail: discoveredTables === 0 ? '還沒掃出任何 table/view' : `已發現 ${discoveredTables} 張表`,
+          done: discoveredTables > 0, count: discoveredTables,
+          cta: { label: 'Discover', tab: 'discover' },
+        },
+        {
+          key: 'modules', label: '3. 編 Modules 業務樹',
+          detail: mappedTables === 0 ? '尚未把表對到模組' : `${mappedTables}/${discoveredTables} 張表已歸入模組`,
+          done: mappedTables > 0, count: mappedTables,
+          cta: { label: 'Modules', tab: 'modules' },
+        },
+        {
+          key: 'subjects', label: '4. 同步 Subjects (LDAP)',
+          detail: s.length === 0 ? '沒有任何使用者' : `${s.length} 筆 subject`,
+          done: s.length > 0, count: s.length,
+          cta: { label: 'Subjects', tab: 'access-subjects' },
+        },
+        {
+          key: 'roles', label: '5. 設計 Roles',
+          detail: r.length === 0 ? '尚未定義 role' : `${r.length} 個 role`,
+          done: r.length > 0, count: r.length,
+          cta: { label: 'Roles', tab: 'access-roles' },
+        },
+        {
+          key: 'policies', label: '6. 寫 Policies (中央表)',
+          detail: p.length === 0 ? '尚無 policy — 使用者會看不到任何資料' : `${p.length} 條 policy`,
+          done: p.length > 0, count: p.length,
+          cta: { label: 'Policies', tab: 'access-policies' },
+        },
+        {
+          key: 'verify', label: '7. 用 Permission Tester 驗',
+          detail: auditUsed ? 'Audit log 有事件，已被使用' : '還沒有任何 audit 紀錄',
+          done: auditUsed,
+          cta: { label: 'Permissions', tab: 'permissions' },
+        },
+      ]);
     }).catch(() => {});
   }, [isAdmin]);
 
   useEffect(() => {
     api.actionItems(user?.id, isAdmin).then(setActionItems).catch(() => {});
   }, [user?.id, isAdmin]);
+
+  const checklistDone = checklist ? checklist.filter(c => c.done).length : 0;
+  const checklistTotal = checklist?.length ?? 0;
 
   return (
     <div className="space-y-6">
@@ -42,6 +109,69 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
           Phison Data Nexus AuthZ platform status and quick actions
         </p>
       </div>
+
+      {/* End-user primary CTA — non-admin only, when no actionItems */}
+      {!isAdmin && user && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <PrimaryCta
+            title="開始查詢資料"
+            desc="用 Query Tool 跑 SQL，或用 Flow Composer 拼資料流。"
+            icon={<Code2 size={28} />}
+            color="blue"
+            onClick={() => onNavigate('data-query')}
+          />
+          <PrimaryCta
+            title="打開 BI 報表"
+            desc="跳到 Metabase，看儀表板與報告。"
+            icon={<BarChart3 size={28} />}
+            color="purple"
+            onClick={() => onNavigate('metabase')}
+          />
+        </div>
+      )}
+
+      {/* Setup Checklist — admin only */}
+      {isAdmin && checklist && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <CheckCircle2 size={16} className="text-emerald-500" />
+              Setup Checklist
+            </h2>
+            <span className="badge badge-slate">{checklistDone} / {checklistTotal}</span>
+          </div>
+          <div className="card-body">
+            <div className="space-y-2">
+              {checklist.map((c) => (
+                <button
+                  key={c.key}
+                  onClick={() => onNavigate(c.cta.tab)}
+                  className={`w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-colors
+                    ${c.done
+                      ? 'border-emerald-200 bg-emerald-50/50 hover:bg-emerald-50'
+                      : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}
+                >
+                  <div className="shrink-0">
+                    {c.done
+                      ? <CheckCircle2 size={18} className="text-emerald-500" />
+                      : <Circle size={18} className="text-slate-300" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className={`text-sm font-medium ${c.done ? 'text-slate-700' : 'text-slate-900'}`}>{c.label}</div>
+                    <div className="text-xs text-slate-500">{c.detail}</div>
+                  </div>
+                  {typeof c.count === 'number' && c.count > 0 && (
+                    <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">{c.count}</span>
+                  )}
+                  <span className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 shrink-0">
+                    {c.cta.label} <ArrowRight size={12} />
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stat cards — admin only */}
       {isAdmin && (
@@ -199,9 +329,8 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
                   </div>
                 </div>
 
-                {/* My Access Card (W-USER-02) */}
+                {/* My Access Card */}
                 <div className="space-y-3">
-                  {/* L0 grouped by resource type */}
                   <div>
                     <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
                       Accessible Resources
@@ -233,7 +362,6 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
                     })()}
                   </div>
 
-                  {/* L1 data scope summary */}
                   {Object.keys(config.L1_data_scope).length > 0 && (
                     <div>
                       <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
@@ -253,7 +381,7 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
                     </div>
                   )}
 
-                  <button onClick={() => onNavigate('resolve')}
+                  <button onClick={() => onNavigate('permissions')}
                     className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
                     View full L0-L3 details <ArrowRight size={12} />
                   </button>
@@ -270,33 +398,31 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
           </div>
           <div className="card-body space-y-2">
             <QuickAction
-              icon={<Shield size={16} />} label="My Permissions"
-              desc="View your L0-L3 permission config"
-              onClick={() => onNavigate('resolve')}
+              icon={<Shield size={16} />} label="Permissions"
+              desc="View / test / simulate permissions"
+              onClick={() => onNavigate('permissions')}
             />
             <QuickAction
-              icon={<Grid3x3Icon />} label="Permission Matrix"
-              desc="Role x Resource access grid"
-              onClick={() => onNavigate('matrix')}
-            />
-            <QuickAction
-              icon={<Table2Icon />} label="Data Explorer"
+              icon={<Layers size={16} />} label="Data Explorer"
               desc="Browse business data with access control"
               onClick={() => onNavigate('tables')}
             />
+            <QuickAction
+              icon={<Code2 size={16} />} label="Query Tool"
+              desc="Write SQL against allowed tables"
+              onClick={() => onNavigate('data-query')}
+            />
+            <QuickAction
+              icon={<Workflow size={16} />} label="Flow Composer"
+              desc="Compose multi-step data flows"
+              onClick={() => onNavigate('flow-composer')}
+            />
             {isAdmin && (
-              <>
-                <QuickAction
-                  icon={<Search size={16} />} label="Permission Tester"
-                  desc="Test any user's permission"
-                  onClick={() => onNavigate('check')}
-                />
-                <QuickAction
-                  icon={<Eye size={16} />} label="RLS Simulator"
-                  desc="Compare data access side-by-side"
-                  onClick={() => onNavigate('rls')}
-                />
-              </>
+              <QuickAction
+                icon={<Search size={16} />} label="Discover"
+                desc="Scan a data source for new tables"
+                onClick={() => onNavigate('discover')}
+              />
             )}
           </div>
         </div>
@@ -364,7 +490,7 @@ function actionGuidance(
       return {
         hint: '如需此權限，請聯繫 IT Admin 申請存取。',
         label: 'View My Permissions',
-        action: () => onNavigate('resolve'),
+        action: () => onNavigate('permissions'),
       };
     default:
       return null;
@@ -405,6 +531,34 @@ function QuickAction({ icon, label, desc, onClick }: {
   );
 }
 
+function PrimaryCta({ title, desc, icon, color, onClick }: {
+  title: string; desc: string; icon: ReactNode;
+  color: 'blue' | 'purple'; onClick: () => void;
+}) {
+  const colors = {
+    blue:   { ring: 'hover:ring-blue-300',   icon: 'bg-blue-100 text-blue-600 group-hover:bg-blue-600 group-hover:text-white' },
+    purple: { ring: 'hover:ring-purple-300', icon: 'bg-purple-100 text-purple-600 group-hover:bg-purple-600 group-hover:text-white' },
+  };
+  const c = colors[color];
+  return (
+    <button onClick={onClick}
+      className={`group card p-6 text-left hover:shadow-md transition-all hover:ring-2 ${c.ring}`}>
+      <div className="flex items-start gap-4">
+        <div className={`w-14 h-14 rounded-xl flex items-center justify-center transition-colors shrink-0 ${c.icon}`}>
+          {icon}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-lg font-semibold text-slate-900 mb-1">{title}</div>
+          <div className="text-sm text-slate-500">{desc}</div>
+          <div className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-blue-600 group-hover:text-blue-800">
+            開始 <ArrowRight size={14} />
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
 function PathCard({ letter, name, desc, tags, color }: {
   letter: string; name: string; desc: string; tags: string[];
   color: 'blue' | 'emerald' | 'purple';
@@ -429,12 +583,4 @@ function PathCard({ letter, name, desc, tags, color }: {
       </div>
     </div>
   );
-}
-
-// Inline tiny icon components to avoid importing from lucide just for overview
-function Grid3x3Icon() {
-  return <Layers size={16} />;
-}
-function Table2Icon() {
-  return <Database size={16} />;
 }

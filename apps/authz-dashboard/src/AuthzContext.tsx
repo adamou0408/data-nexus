@@ -16,6 +16,14 @@ type ResolvedConfig = {
 
 export type { UserProfile };
 
+export type AdminStats = {
+  subjects: number;
+  roles: number;
+  resources: number;
+  policies: number;
+  auditErrors24h: number;
+};
+
 type AuthzState = {
   user: UserProfile | null;
   config: ResolvedConfig | null;
@@ -23,6 +31,8 @@ type AuthzState = {
   users: UserProfile[];
   usersLoading: boolean;
   isAdmin: boolean;
+  adminStats: AdminStats | null;
+  refreshAdminStats: () => void;
   login: (user: UserProfile) => Promise<void>;
   logout: () => void;
   hasPermission: (action: string, resource: string) => boolean;
@@ -81,8 +91,27 @@ export function AuthzProvider({ children }: { children: ReactNode }) {
 
   const isAdmin = config?.resolved_roles?.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN') ?? false;
 
+  const [adminStats, setAdminStats] = useState<AdminStats | null>(null);
+  const refreshAdminStats = useCallback(() => {
+    if (!isAdmin) { setAdminStats(null); return; }
+    Promise.all([
+      api.subjects(), api.roles(), api.resources(), api.policies(),
+      api.adminAuditLogs({ limit: 200 }).catch(() => [] as Record<string, unknown>[]),
+    ]).then(([s, r, res, p, audit]) => {
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const errors = audit.filter(row => {
+        const ts = typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : 0;
+        const dec = String(row.decision || '').toLowerCase();
+        return ts >= cutoff && (dec === 'deny' || dec === 'error');
+      }).length;
+      setAdminStats({ subjects: s.length, roles: r.length, resources: res.length, policies: p.length, auditErrors24h: errors });
+    }).catch(() => setAdminStats(null));
+  }, [isAdmin]);
+
+  useEffect(() => { refreshAdminStats(); }, [refreshAdminStats]);
+
   return (
-    <AuthzContext.Provider value={{ user, config, loading, users, usersLoading, isAdmin, login, logout, hasPermission, hasRole }}>
+    <AuthzContext.Provider value={{ user, config, loading, users, usersLoading, isAdmin, adminStats, refreshAdminStats, login, logout, hasPermission, hasRole }}>
       {children}
     </AuthzContext.Provider>
   );
