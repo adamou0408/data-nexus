@@ -237,6 +237,8 @@ export const api = {
     }),
   // Data Source Registry
   datasources: () => request<DataSource[]>('/datasources'),
+  // Lightweight catalog list — non-admin friendly (Flow Composer, Data Query)
+  datasourcesLite: () => request<{ source_id: string; display_name: string; db_type: string }[]>('/datasources/list'),
   datasource: (id: string) => request<DataSource>(`/datasources/${encodeURIComponent(id)}`),
   datasourceCreate: (data: Partial<DataSource> & { connector_password?: string }) =>
     request<DataSource>('/datasources', { method: 'POST', body: JSON.stringify(data) }),
@@ -491,6 +493,55 @@ export const api = {
       module_display_name?: string | null;
       module_created: boolean;
     }>('/discover/bulk', { method: 'POST', body: JSON.stringify(body) }),
+
+  // Bottom-up suggestion review
+  discoverRunRules: (data_source_id?: string) =>
+    request<{
+      resources_scanned: number;
+      rules_evaluated: number;
+      policies_created: number;
+      policies_skipped: number;
+      classifications_tagged: number;
+    }>('/discover/run-rules', {
+      method: 'POST',
+      body: JSON.stringify(data_source_id ? { data_source_id } : {}),
+    }),
+
+  discoverSuggestions: (params: { data_source_id?: string; rule_type?: 'column_mask' | 'row_filter' }) => {
+    const q = new URLSearchParams();
+    if (params.data_source_id) q.set('data_source_id', params.data_source_id);
+    if (params.rule_type) q.set('rule_type', params.rule_type);
+    const qs = q.toString();
+    return request<Array<{
+      policy_id: number;
+      policy_name: string;
+      description: string | null;
+      column_mask_rules: Record<string, string> | null;
+      rls_expression: string | null;
+      suggested_by_rule: string;
+      suggested_at: string | null;
+      suggested_reason: string | null;
+      status: string;
+      resource_condition: { resource_ids?: string[] } | null;
+      rule_type: 'column_mask' | 'row_filter' | 'classification';
+      suggested_label: string | null;
+      match_pattern: string | null;
+      target_resource_id: string | null;
+      target_display_name: string | null;
+      target_resource_type: string | null;
+      target_data_source_id: string | null;
+      target_data_source_name: string | null;
+    }>>(`/discover/suggestions${qs ? '?' + qs : ''}`);
+  },
+
+  discoverSuggestionAct: (
+    policy_id: number,
+    body: { action: 'approve' | 'reject'; subject_condition?: Record<string, unknown> },
+  ) =>
+    request<{ policy_id: number; policy_name: string; status: string }>(
+      `/discover/suggestions/${policy_id}`,
+      { method: 'PATCH', body: JSON.stringify(body) },
+    ),
 
   poolUncredentialedRoles: () =>
     request<{ pg_role: string; profile_id: string; connection_mode: string; data_source_id: string | null }[]>('/pool/uncredentialed-roles'),

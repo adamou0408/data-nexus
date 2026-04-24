@@ -6,7 +6,9 @@ import { EmptyState } from './shared/atoms/EmptyState';
 import { StatCard } from './shared/atoms/StatCard';
 import {
   Search, Table2, Eye, Code2, Database, CheckCircle2, AlertCircle, Loader2, Sparkles, X, Move, Unlink, Filter,
+  Inbox,
 } from 'lucide-react';
+import { PendingReviewPanel } from './discover/PendingReviewPanel';
 
 type DiscoverRow = {
   resource_id: string;
@@ -35,8 +37,17 @@ const TYPE_ICONS = {
   function: <Code2 size={14} className="text-amber-600" />,
 };
 
+type SubTab = 'resources' | 'pending';
+
 export function DiscoverTab() {
   const toast = useToast();
+  const [subTab, setSubTab] = useState<SubTab>(() => {
+    const hint = sessionStorage.getItem('discover.subTab');
+    if (hint === 'pending' || hint === 'resources') return hint;
+    return 'resources';
+  });
+  useEffect(() => { sessionStorage.setItem('discover.subTab', subTab); }, [subTab]);
+
   const [rows, setRows] = useState<DiscoverRow[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -195,6 +206,37 @@ export function DiscoverTab() {
         subtitle="Cross-source view of every table, view, and function in the catalog. Spot what's been registered and what's still unmapped to a Module."
       />
 
+      {/* Sub-tab nav */}
+      <div className="flex gap-1 border-b border-slate-200">
+        <button
+          data-testid="subtab-resources"
+          onClick={() => setSubTab('resources')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-1.5 ${
+            subTab === 'resources'
+              ? 'border-blue-600 text-blue-700'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <Database size={14} />
+          Resources
+        </button>
+        <button
+          data-testid="subtab-pending"
+          onClick={() => setSubTab('pending')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-1.5 ${
+            subTab === 'pending'
+              ? 'border-blue-600 text-blue-700'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <Inbox size={14} />
+          Pending Review
+        </button>
+      </div>
+
+      {subTab === 'pending' && <PendingReviewPanel dsList={dsList} />}
+
+      {subTab === 'resources' && (<>
       {/* Stat strip */}
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -496,6 +538,7 @@ export function DiscoverTab() {
           </div>
         </div>
       )}
+      </>)}
 
       {/* Promote modal */}
       {promoteRow && (
