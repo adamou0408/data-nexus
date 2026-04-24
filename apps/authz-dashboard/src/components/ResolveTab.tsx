@@ -1,6 +1,20 @@
 import { useAuthz } from '../AuthzContext';
 import { JsonView } from './JsonView';
-import { Shield, ChevronRight, Info } from 'lucide-react';
+import { Shield, ChevronRight, Info, EyeOff, Database } from 'lucide-react';
+
+// Human-readable hint for what each mask function does to the column value.
+// Keep in sync with database/migrations/V016__mask_functions.sql + V046 (fn_mask_last4).
+const MASK_HINT: Record<string, { short: string; example?: string }> = {
+  fn_mask_full:    { short: 'fully hidden',         example: "'***'" },
+  fn_mask_partial: { short: 'partially masked',     example: "'a***z'" },
+  fn_mask_hash:    { short: 'irreversible hash',    example: "'sha256:…'" },
+  fn_mask_range:   { short: 'bucketed range',       example: "'100-200'" },
+  fn_mask_null:    { short: 'returned as NULL' },
+  fn_mask_nullify: { short: 'returned as NULL' },
+  fn_mask_email:   { short: 'email partially masked', example: "'j***@x.com'" },
+  fn_mask_redact:  { short: 'redacted' },
+  fn_mask_last4:   { short: 'last 4 chars only',    example: "'****5678'" },
+};
 
 export function ResolveTab() {
   const { user, config } = useAuthz();
@@ -112,40 +126,8 @@ export function ResolveTab() {
               </div>
             </div>
 
-            {/* L2 Column Masks */}
-            <div className="card">
-              <div className="card-header">
-                <h3 className="text-sm font-semibold text-slate-900">L2: Column Masks</h3>
-                <span className="badge badge-purple">
-                  {Object.keys(r.L2_column_masks as Record<string, unknown> || {}).length}
-                </span>
-              </div>
-              <div className="card-body">
-                {Object.keys(r.L2_column_masks as Record<string, unknown> || {}).length === 0 ? (
-                  <p className="text-slate-400 text-sm text-center py-4">No column mask rules apply</p>
-                ) : (
-                  <div className="space-y-3">
-                    {Object.entries(
-                      r.L2_column_masks as Record<string, Record<string, { mask_type: string; function?: string }>>
-                    ).map(([policy, cols]) => (
-                      <div key={policy} className="rounded-lg border border-purple-200 bg-purple-50/50 p-3">
-                        <div className="text-sm font-medium text-slate-900 mb-2">{policy}</div>
-                        <div className="space-y-1">
-                          {Object.entries(cols).map(([col, rule]) => (
-                            <div key={col} className="flex items-center gap-2 text-xs">
-                              <span className="font-mono text-slate-700">{col}</span>
-                              <ChevronRight size={12} className="text-slate-400" />
-                              <span className="badge badge-purple">{rule.mask_type}</span>
-                              {rule.function && <span className="text-slate-500">{rule.function}</span>}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+            {/* L2 Column Masks — grouped by table, end-user friendly */}
+            <MaskedColumnsCard l2={r.L2_column_masks as Record<string, Record<string, { mask_type: string; function?: string }>> | undefined} />
 
             {/* L3 Actions */}
             <div className="card">
@@ -194,6 +176,85 @@ export function ResolveTab() {
           <div className="card-body text-red-700 text-sm">{String(r.error)}</div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Show column masks grouped by table — answers the user's real question:
+// "If I SELECT * FROM <table>, which columns will be masked and how?"
+function MaskedColumnsCard({
+  l2,
+}: {
+  l2: Record<string, Record<string, { mask_type: string; function?: string }>> | undefined;
+}) {
+  // Flatten { policy: { 'table.col': rule } } → { table: [{ col, mask_type, function, policy }] }
+  const byTable = new Map<string, { col: string; mask_type: string; function?: string; policy: string }[]>();
+  for (const [policy, cols] of Object.entries(l2 || {})) {
+    for (const [colKey, rule] of Object.entries(cols)) {
+      const dot = colKey.indexOf('.');
+      if (dot < 0) continue; // legacy shape — skip
+      const table = colKey.slice(0, dot);
+      const col = colKey.slice(dot + 1);
+      const list = byTable.get(table) ?? [];
+      list.push({ col, mask_type: rule.mask_type, function: rule.function, policy });
+      byTable.set(table, list);
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+          <EyeOff size={14} className="text-purple-600" />
+          L2: Column Masks
+        </h3>
+        <span className="badge badge-purple">{byTable.size} {byTable.size === 1 ? 'table' : 'tables'}</span>
+      </div>
+      <div className="card-body">
+        {byTable.size === 0 ? (
+          <p className="text-slate-400 text-sm text-center py-4">No column mask rules apply to your queries.</p>
+        ) : (
+          <>
+            <div className="text-xs text-slate-600 mb-3 flex items-start gap-1.5">
+              <Info size={12} className="text-slate-400 mt-0.5 shrink-0" />
+              <span>
+                When you query these tables, the columns below will be masked in your results.
+                Other rows and columns are unaffected.
+              </span>
+            </div>
+            <div className="space-y-3">
+              {[...byTable.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([table, cols]) => (
+                <div key={table} className="rounded-lg border border-purple-200 bg-purple-50/50 p-3">
+                  <div className="text-sm font-medium text-slate-900 mb-2 flex items-center gap-1.5">
+                    <Database size={13} className="text-purple-500" />
+                    <code className="font-mono">{table}</code>
+                  </div>
+                  <div className="space-y-1.5">
+                    {cols.map((c, i) => {
+                      const hint = c.function ? MASK_HINT[c.function] : undefined;
+                      return (
+                        <div key={`${c.col}-${i}`} className="flex items-center gap-2 text-xs flex-wrap">
+                          <code className="font-mono text-slate-800 bg-white px-1.5 py-0.5 rounded border border-purple-100">
+                            {c.col}
+                          </code>
+                          <ChevronRight size={11} className="text-slate-400" />
+                          <span className="text-slate-700">{hint?.short ?? c.mask_type}</span>
+                          {hint?.example && (
+                            <span className="text-slate-400 font-mono">e.g. {hint.example}</span>
+                          )}
+                          <span className="text-[10px] text-slate-400 font-mono ml-auto" title={c.policy}>
+                            {c.mask_type}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
