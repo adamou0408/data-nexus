@@ -322,14 +322,56 @@ Schema introspector **每次重跑**都會重新 derive 一份 baseline,然後 m
 
 ---
 
+## 11. Formal Eng Review (2026-04-24, post-POC)
+
+Run via `/plan-eng-review` after BU-08 POC sealed (commit c567001). Reviewed: design doc + actual POC implementation (`schema-to-ui.ts`, `discover.ts /generate-app`, `V048` migration, `bu08-e2e.ts`, `App.tsx` `auto-page` tab + `DiscoverTab.tsx` inline button). Load-bearing question: **is the POC safe to build Phase 2 (function → form) on top of?**
+
+### Phase-2 BLOCKERS (fix before starting Phase 2)
+
+1. **No unit tests for `schema-to-ui.ts`** — pure function with `__test__` exports at `services/authz-api/src/lib/schema-to-ui.ts:206`, but no `.test.ts` file. Locks in `defaultRenderHint` heuristics, `classifyType` integration, MAX_COLUMNS truncation, schema_hash determinism. Phase 2 will add `form_*` render hints; without snapshot tests, regressions to existing `email_link` / `active_badge` / `array_pills` mappings will be invisible. Estimated cost: 1-2 hours, pure function so trivial to fixture.
+
+2. **No `db_type` guard in `/generate-app`** — `services/authz-api/src/routes/discover.ts` (lines 757-981) does not check `authz_data_source.db_type` before calling `introspectTable()`. `getDataSourcePool()` returns a pool for Oracle/MySQL too, but `introspectTable` queries `information_schema.columns` which is PG-specific. An admin clicking Generate App on an Oracle source → cryptic `relation "information_schema.columns" does not exist` failure. §8 says "POC 限 Postgres" but the route doesn't enforce it. Either add `if (ds.db_type !== 'postgresql') return res.status(412).json({ error: 'unsupported_source_type' })` or ship a non-PG E2E fixture.
+
+### Fix-during-Phase-2 (real but not blockers)
+
+3. **MAX_COLUMNS=50 cap is metadata-only and misleading** — `schema-to-ui.ts:47` caps `descriptor.columns` at 50, returns `truncated: true`. But `buildMaskedSelect` in `services/authz-api/src/lib/masked-query.ts:155` queries `information_schema.columns` directly with no cap, then iterates all rows at line 188 and only consults `columnsOverride` for label/render/hidden. Net effect: a 60-column table renders all 60 columns at runtime; the last 10 just lose per-column render hints. Either push the cap into `buildMaskedSelect` (consistent), drop the cap and let UI virtualize (cleaner), or rename the field to `metadata_truncated` and document that the cap is descriptor-only (cheapest).
+
+4. **Two sources of truth for derived columns** — `authz_ui_page.columns_override` (consumed by `config-exec.ts:121`) and `authz_ui_descriptor.columns` (specced for Phase 4 override editor). They're written together in `/generate-app` today, but Phase 4 admin edits to descriptor will silently desync from page row unless we add a write-through trigger or pick one as canonical. Decide before Phase 4 starts; Phase 2 should at minimum add a comment in V048 or in the route handler flagging this.
+
+5. **Coarse role auth instead of per-resource L0 check** — `services/authz-api/src/index.ts:95` enforces `requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA')` for all `/api/discover/*`. Design §5 step 1 calls for `authz_check(user, 'admin', resource:auto_app_generate)` to enable per-source delegation (e.g., "Bob can generate apps on `ds:warehouse` only"). Acceptable for POC since admin = god mode. Phase 2 should swap in the granular check when `target_module_id` becomes admin-routable.
+
+### Nits (note, fix opportunistically)
+
+6. `module:_unmapped` auto-create has no audit row (`discover.ts` writes resource without entry to audit log, unlike module promotion endpoints).
+7. `GenerateAppButton` was specced as a separate component but inlined in `apps/authz-dashboard/src/components/DiscoverTab.tsx:499-531`. Functionally equivalent, deviates from §5 step 6. Accept as pragmatism — extract if Phase 2/3 needs to reuse the trigger elsewhere.
+8. Reparent semantics in `/generate-app` (only reparent if current parent is not a module OR caller passed `target_module_id`) differ from `/promote` + `/reparent` endpoints. Slight inconsistency, document in `docs/api-reference.md` when convenient.
+9. `schema_hash` truncated to 16 hex chars / 64 bits (`schema-to-ui.ts:182-183`). Birthday collision ~4B unique schemas. Negligible for drift detection use case, worth knowing.
+10. `bu08-e2e.ts:112-114` stubs the auth middleware so the route handler runs without `requireRole`. Useful for narrow contract testing but won't catch auth regressions. Integrate with the proper test framework before Phase 2 widens the surface.
+
+### What was checked and is fine
+
+- Idempotency guard (409 `app_already_generated`) — verified via E2E
+- Precondition guard (412 `discover_scan_required`) — verified via E2E
+- Identifier regex on `schema` / `table_name` (`^[a-zA-Z_][a-zA-Z0-9_]*$`) — SQL injection surface closed
+- Constitution Article 8 compliance — `bu08-e2e.ts` uses `ds:_agent_bu08_test` prefix, cleans up before exit, points only at localhost
+- Migration V048 is backward-compatible (defaults preserve existing `manual` rows)
+- Frontend wiring works end-to-end via `open-auto-page` event bus + `ConfigEngine` reuse (`App.tsx:71-82`, `:156-158`)
+- Pure-function design of `introspectTable` (no writes) makes Phase 2 reuse straightforward
+
+### Verdict
+
+**POC is safe to build Phase 2 on top of, conditional on closing blockers (1) and (2) before or during the first Phase 2 sprint.** The architecture is right: pure introspection function + thin route handler + reuse of existing renderer. No structural rework needed for Phase 2's `form_*` render hints — `defaultRenderHint` is the natural extension point. Two blockers are both small (a few hours each). Do them in the same sprint that adds `introspectFunction()`.
+
+---
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | informal | thesis confirmed via inline dialog with Adam (no formal skill ceremony), mode = HOLD SCOPE (POC clearly bounded) |
 | Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
-| Eng Review | `/plan-eng-review` | Architecture & tests | 0 | informal | advisor() pass 2026-04-24 raised 4 blockers (re-run semantics / page_id namespace / resource precondition / module fallback) + 2 nits — all addressed in this revision; auto mode efficiency call vs full skill ceremony |
+| Eng Review | `/plan-eng-review` | Architecture & tests | 1 | formal | 2 Phase-2 blockers (no unit tests on `schema-to-ui.ts`; no `db_type` guard on `/generate-app`), 3 fix-during-Phase-2 items (MAX_COLUMNS cap is metadata-only; two SoT for derived columns; coarse role auth vs per-resource L0), 5 nits. POC architecture is sound. See §11 |
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
-**VERDICT:** Informal eng review CLEAR after blocker pass — proceed to POC implementation. Formal `/plan-eng-review` recommended before Phase 2 (function → form) since override merge logic increases complexity.
+**VERDICT:** Formal eng review CLEAR — POC is safe to build Phase 2 on top of, conditional on closing the 2 blockers (unit tests for `schema-to-ui.ts` + `db_type` guard) in the first Phase 2 sprint. Architecture (pure introspection + thin route + renderer reuse) holds for Phase 2's `form_*` extension. See §11 for full classification.
