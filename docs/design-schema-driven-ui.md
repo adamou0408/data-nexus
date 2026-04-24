@@ -172,12 +172,20 @@ Schema introspector **每次重跑**都會重新 derive 一份 baseline,然後 m
    - Input: `{ resource_id, source_id, schema, table_name, target_module_id? }`
    - 流程:
      1. `authz_check(user, 'admin', resource:auto_app_generate)` — admin only
+     1.5. **Precondition check** — `SELECT 1 FROM authz_resource WHERE resource_id = 'resource:table:<schema>.<table>' AND resource_type = 'table'`。沒有 → 回 412 Precondition Failed `{error: 'discover_scan_required', detail: 'Run datasource scan on this source first'}`。原因:Discover scan (`datasource.ts:740` batch upsert) 才會建 `authz_resource` table row,沒這個 row,後面 L0 `authz_check` 第一次載入會 403。
      2. Call `introspectTable()`
-     3. Upsert `authz_ui_page` (page_id = `auto:<table>`)
-     4. Upsert `authz_ui_descriptor` (status = 'derived')
-     5. 如果 `target_module_id` 給了,把 resource reparent 到該 module (reuse 現有 promote 邏輯)
-     6. Audit log: `AUTO_GENERATE_APP`
-     7. Return `{ page_id, descriptor_id, preview_url }`
+     3. **Insert** (not upsert) `authz_ui_page`,page_id = `auto:<source_id>:<schema>.<table_name>`。On conflict → 回 409 Conflict `{error: 'app_already_generated', existing_page_id, hint: '改用 admin override editor (Phase 4) 修改既有 page;POC 階段 derived descriptor 是 read-only'}`。理由:silent upsert 會洗掉 admin 在 Phase 4 加的 override,不可逆。POC 鎖死「一張表只能 generate 一次,要重 generate 必須先手動刪」。
+     4. Insert `authz_ui_descriptor` (status = 'derived', derived_at = now(), derived_from = `{source_id, schema, table_name, schema_hash}`)
+     5. Resource reparent 邏輯:
+        - 如果 `target_module_id` 有給 → reparent 到該 module (reuse 現有 promote 邏輯)
+        - 如果 **沒給** → page 掛在 `module:_unmapped` (auto-create if missing,parent_id = NULL,display_name = 'Ungrouped')。Admin 後續用既有 Discover reparent 動作移走。理由:不允許 orphan page (UI 找不到入口),也不要在 generate 時強制做 module 決策 (admin 想先看 preview)。
+     6. Audit log: `AUTO_GENERATE_APP` (含 source_id, schema, table_name, page_id, target_module_id_resolved)
+     7. Return `{ page_id, descriptor_id, preview_url, module_id }`
+
+   **Rollback / undo (POC 不開新 endpoint):**
+   - 撤銷 generated app:`DELETE FROM authz_ui_page WHERE page_id = 'auto:<source>:<schema>.<table>'` (cascade 連 descriptor row),然後用既有 `POST /api/discover/reparent` 把 resource 從 `module:_unmapped` (or 任何 module) 移回原本位置。
+   - 為什麼不開新 endpoint:DELETE 是兩行 SQL,reparent 已經有,沒有要建用戶介面 (admin 直接從 dev console 處理),POC 階段這樣夠。
+   - Phase 4 (override editor) 才會做正式的 "Disable App" / "Delete App" UI 動作 + soft-delete。
 
 3. **`database/migrations/V048__ui_descriptor_status.sql`**
    - `ALTER TABLE authz_ui_descriptor ADD COLUMN status TEXT DEFAULT 'manual' CHECK (status IN ('manual', 'derived', 'overridden', 'hybrid'))`
@@ -265,13 +273,14 @@ Schema introspector **每次重跑**都會重新 derive 一份 baseline,然後 m
 
 1. **`authz_ui_descriptor` schema 加 column** — V048 migration 是 backward-compatible (新欄位有 default),但要驗證現有 seed 不會壞
 2. **`/api/config-exec` 對 `auto:*` page_id 的處理** — 要驗 config-exec 會正確讀 derived descriptor 的 columns_override
-3. **Page id collision** — `auto:lot_status` vs admin 之前手建的 `lot_status` page_id?加 `auto:` prefix 強制 namespace 隔離
-4. **權限** — auto-generated page 預設 `resource_id = 'resource:table:<schema>.<table>'` (即 sensible default),admin 可後續調整
+3. **Page id collision** — page_id namespace 鎖死為 `auto:<source_id>:<schema>.<table_name>` (e.g. `auto:src_phison_main:public.lot_status`)。理由:跨 source 同名 table 會撞 (POC 雖只跑單 source 但要避免之後 migration);手刻 page 用 `<table>` 或自定 id,不會撞到 `auto:` prefix
+4. **權限** — auto-generated page 預設 `resource_id = 'resource:table:<schema>.<table>'`。**前提:該 row 必須存在於 `authz_resource`**,由 Discover scan 自動建立 (datasource.ts:740 batch upsert resource_type='table')。`/generate-app` 第一步會 412 拒絕未掃描過的表,避免靜默 403
 
 ---
 
 ## 8. NOT in Scope (POC)
 
+- **Override / 編輯 derived descriptor** — POC 階段 derived descriptor 是 **read-only**。重 generate (insert-only) 會 409 拒絕。Admin 想改 label / 藏欄位,等 Phase 4 override editor。理由:override merge 邏輯有 corner case (admin 改完後 schema 又變,merge 衝突),POC 不引入這個複雜度
 - Function → form generator (Phase 2)
 - 多表 join → dashboard composition (Phase 3)
 - Admin override editor UI (Phase 4)
@@ -280,6 +289,7 @@ Schema introspector **每次重跑**都會重新 derive 一份 baseline,然後 m
 - 自動生成 chart / aggregation (Phase 3+)
 - Path C 直連場景 (Path A 自動生成的 UI 走 Path B SQL rewrite,Path C 不在範圍)
 - LLM 推測欄位語意 (e.g. 「這欄看起來是金額,套 currency」) — Phase 4+ optional
+- 正式的 "Disable / Delete App" UI 動作 — POC 撤銷靠 SQL DELETE + 既有 reparent endpoint (見 §5 rollback 段)
 
 ---
 
@@ -293,16 +303,22 @@ Schema introspector **每次重跑**都會重新 derive 一份 baseline,然後 m
 
 ---
 
-## 10. Open Questions (給 `/plan-eng-review` 挑戰)
+## 10. Open Questions
 
-1. **Page id namespace** — `auto:<table>` 夠嗎?跨 source 要不要 `auto:<source>:<table>`?
-2. **Re-introspect 時機** — schema 變了怎麼觸發?手動?Cron?LISTEN/NOTIFY on data source DDL? (傾向 admin 手動 + 顯示「上次 introspect」時間 + diff 預覽)
-3. **多 source 同名 table** — 兩個 source 都有 `lot_status`,page_id 怎麼算?
-4. **權限預設值** — auto-gen page 的 `resource_id` 預設 = `'resource:table:<schema>.<table>'`,夠 sensible 嗎?還是強制 admin 在 generate 時選?
-5. **Materialized view / function 是否一視同仁?** — POC 限 base table,view 算不算?
-6. **欄位順序** — `ordinal_position` 直接照搬?還是 PK 先、其他 alphabetical?
-7. **大表 (1000+ columns)** — 邊界情況,要不要 cap default 顯示前 N 欄?
-8. **i18n** — 自動 derive 的 column label 用英文 (column_name → Title Case)?還是查 `pg_description` 裡的 comment?
+### 已 resolve (advisor pass 2026-04-24)
+
+1. ✅ **Page id namespace** — 鎖死 `auto:<source_id>:<schema>.<table_name>` (見 §5 step 3)
+2. ✅ **多 source 同名 table** — namespace 含 source_id,自動隔離
+3. ✅ **權限預設值** — `resource:table:<schema>.<table>` + 412 precondition (見 §5 step 1.5)
+4. ✅ **Re-generate 行為** — POC 鎖死 insert-only,409 on conflict;override 是 Phase 4 (見 §8)
+
+### 還沒 resolve (Phase 2+ 才需要決定)
+
+5. **Re-introspect 時機 (schema 變了)** — 手動?Cron?LISTEN/NOTIFY on data source DDL? (傾向 admin 手動 + 顯示「上次 introspect」時間 + diff 預覽)。POC 不做 re-introspect,只做 first-time generate
+6. **Materialized view / function 是否一視同仁?** — POC 限 base table + view (`information_schema.tables` table_type IN ('BASE TABLE', 'VIEW'))
+7. **欄位順序** — POC 用 `ordinal_position` 直接照搬;Phase 4 override 才允許重排
+8. **大表 (1000+ columns)** — POC cap 顯示前 50 欄 (避免 UI 卡死),其餘存在 descriptor 但 default hidden
+9. **i18n** — POC 用英文 (column_name → Title Case);Phase 4 查 `pg_description` (column comment) 作為 label override 來源
 
 ---
 
@@ -310,10 +326,10 @@ Schema introspector **每次重跑**都會重新 derive 一份 baseline,然後 m
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | CLEAR | thesis confirmed via dialog with Adam, mode = HOLD SCOPE (POC clearly bounded) |
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | informal | thesis confirmed via inline dialog with Adam (no formal skill ceremony), mode = HOLD SCOPE (POC clearly bounded) |
 | Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 0 | PENDING | Next step before POC implementation |
+| Eng Review | `/plan-eng-review` | Architecture & tests | 0 | informal | advisor() pass 2026-04-24 raised 4 blockers (re-run semantics / page_id namespace / resource precondition / module fallback) + 2 nits — all addressed in this revision; auto mode efficiency call vs full skill ceremony |
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
-**VERDICT:** CEO CLEARED — proceed to /plan-eng-review for architecture validation, then implement POC.
+**VERDICT:** Informal eng review CLEAR after blocker pass — proceed to POC implementation. Formal `/plan-eng-review` recommended before Phase 2 (function → form) since override merge logic increases complexity.
