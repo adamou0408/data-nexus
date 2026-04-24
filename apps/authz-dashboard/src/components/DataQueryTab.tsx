@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
-import { api, DataSource } from '../api';
+import { api } from '../api';
+
+type DataSourceLite = { source_id: string; display_name: string; db_type: string };
 import { useToast } from './Toast';
 import { EmptyState } from './shared/atoms/EmptyState';
 import { PageHeader } from './shared/atoms/PageHeader';
@@ -124,7 +126,7 @@ function SubtypeBadge({ subtype }: { subtype?: Subtype }) {
 
 export function DataQueryTab() {
   const toast = useToast();
-  const [dataSources, setDataSources] = useState<DataSource[]>([]);
+  const [dataSources, setDataSources] = useState<DataSourceLite[]>([]);
   const [dsId, setDsId] = useState<string>('');
   const [functions, setFunctions] = useState<FunctionMeta[]>([]);
   const [selectedFn, setSelectedFn] = useState<FunctionMeta | null>(null);
@@ -137,8 +139,8 @@ export function DataQueryTab() {
   const [mode, setMode] = useState<'run' | 'author'>('run');
 
   useEffect(() => {
-    api.datasources().then(ds => {
-      const pgDs = ds.filter(d => d.db_type !== 'oracle' && d.is_active);
+    api.datasourcesLite().then(ds => {
+      const pgDs = ds.filter(d => d.db_type !== 'oracle');
       setDataSources(pgDs);
       if (pgDs.length > 0 && !dsId) setDsId(pgDs[0].source_id);
     }).catch(() => {});

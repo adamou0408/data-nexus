@@ -361,9 +361,11 @@ export function Layout({
           )}
         </header>
 
-        {/* Main content */}
+        {/* Main content — Flow Composer opts out of the 1400px cap so its canvas
+            can use the full viewport width (collapsible panels then drive the
+            actual canvas-vs-chrome ratio). */}
         <main className="flex-1 overflow-y-auto">
-          <div className="max-w-[1400px] mx-auto p-4 sm:p-6 lg:p-8">
+          <div className={`${activeTab === 'flow-composer' ? 'w-full' : 'max-w-[1400px] mx-auto'} p-4 sm:p-6 lg:p-8`}>
             {children}
           </div>
         </main>

@@ -6,13 +6,16 @@ import {
   type Node, type Edge, type NodeChange, type EdgeChange, type Connection, type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { api, DataSource } from '../api';
+import { api } from '../api';
+
+type DataSourceLite = { source_id: string; display_name: string; db_type: string };
 import { useToast } from './Toast';
 import { PageHeader } from './shared/atoms/PageHeader';
 import { EmptyState } from './shared/atoms/EmptyState';
 import {
   Workflow, Save, Trash2, Play, Plus, Search, CheckCircle2, AlertCircle,
-  Loader2, Database, Sparkles, FileText,
+  Loader2, Database, Sparkles, FileText, Undo2, Redo2, X,
+  PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen,
 } from 'lucide-react';
 
 // ── Types ──
@@ -63,65 +66,154 @@ const SEMANTIC_COLORS: Record<string, string> = {
 const colorFor = (t?: string) => SEMANTIC_COLORS[t || 'unknown'] || SEMANTIC_COLORS.unknown;
 
 // ── Custom function-node ──
+// Each I/O row is a fixed-height flex container with `position: relative`.
+// xyflow's default `.react-flow__handle-left/right` CSS centers handles at
+// `top: 50%`, so we no longer compute pixel offsets manually — the handle
+// stays aligned with its row no matter how the title wraps or how many
+// inputs the node has.
+const ROW_H = 22;
+const SUBTYPE_STYLES: Record<string, { bg: string; accent: string }> = {
+  action: { bg: '#fef3c7', accent: '#d97706' },
+  report: { bg: '#ede9fe', accent: '#7c3aed' },
+  query:  { bg: '#f0f9ff', accent: '#0284c7' },
+};
 function FunctionNode({ data, selected }: NodeProps<Node<NodeData>>) {
-  const bg = data.subtype === 'action' ? '#fef3c7'
-    : data.subtype === 'report' ? '#ede9fe'
-    : '#f0f9ff';
+  const s = SUBTYPE_STYLES[data.subtype] || SUBTYPE_STYLES.query;
   const border = selected ? '#2563eb' : '#cbd5e1';
+  const visibleOutputs = data.outputs.slice(0, 6);
+  const hiddenCount = data.outputs.length - visibleOutputs.length;
+
   return (
     <div
       data-testid={`node-${data.resource_id}`}
       style={{
-        background: bg, border: `2px solid ${border}`, borderRadius: 8,
-        padding: '8px 12px', minWidth: 220, fontSize: 12, boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+        background: s.bg,
+        border: `2px solid ${border}`,
+        borderRadius: 8,
+        minWidth: 240,
+        fontSize: 12,
+        boxShadow: selected ? '0 4px 10px rgba(37,99,235,0.18)' : '0 1px 2px rgba(0,0,0,0.06)',
       }}
     >
-      <div style={{ fontWeight: 600, color: '#0f172a', marginBottom: 4 }}>
-        {data.label}
-        <span style={{ marginLeft: 6, fontSize: 10, color: '#64748b', textTransform: 'uppercase' }}>{data.subtype}</span>
+      {/* Header */}
+      <div
+        style={{
+          padding: '6px 10px',
+          background: 'rgba(255,255,255,0.55)',
+          borderBottom: '1px solid rgba(15,23,42,0.06)',
+          borderTopLeftRadius: 6,
+          borderTopRightRadius: 6,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 6,
+        }}
+      >
+        <span style={{ fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {data.label}
+        </span>
+        <span
+          style={{
+            fontSize: 9,
+            letterSpacing: 0.5,
+            textTransform: 'uppercase',
+            padding: '1px 6px',
+            borderRadius: 999,
+            background: s.accent,
+            color: 'white',
+            flexShrink: 0,
+          }}
+        >
+          {data.subtype}
+        </span>
       </div>
 
-      {/* Inputs (left) — one handle per input */}
-      {data.inputs.map((i, idx) => (
-        <div key={`in-${i.name}`} style={{ position: 'relative', padding: '2px 0', color: '#334155' }}>
-          <Handle
-            type="target"
-            position={Position.Left}
-            id={i.name}
-            style={{ top: 10 + idx * 16, background: colorFor(i.semantic_type), width: 10, height: 10 }}
-          />
-          <span style={{ fontSize: 11 }}>
-            <span style={{ color: colorFor(i.semantic_type), marginRight: 4 }}>●</span>
-            {i.name}
-            {i.hasDefault && <span style={{ color: '#94a3b8' }}> (opt)</span>}
-          </span>
+      {/* Inputs (left) — handle centered per row by xyflow's default CSS */}
+      {data.inputs.length > 0 && (
+        <div style={{ padding: '4px 0' }}>
+          {data.inputs.map((i) => (
+            <div
+              key={`in-${i.name}`}
+              style={{
+                position: 'relative',
+                height: ROW_H,
+                display: 'flex',
+                alignItems: 'center',
+                padding: '0 10px 0 14px',
+                color: '#334155',
+              }}
+            >
+              <Handle
+                type="target"
+                position={Position.Left}
+                id={i.name}
+                style={{ background: colorFor(i.semantic_type), width: 10, height: 10, border: '2px solid white' }}
+              />
+              <span style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: colorFor(i.semantic_type), display: 'inline-block' }} />
+                {i.name}
+                {i.hasDefault && <span style={{ color: '#94a3b8', fontSize: 10 }}>(opt)</span>}
+              </span>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
 
-      <div style={{ borderTop: '1px dashed #cbd5e1', margin: '4px 0' }} />
+      {data.inputs.length > 0 && visibleOutputs.length > 0 && (
+        <div style={{ borderTop: '1px dashed #cbd5e1', margin: '0 8px' }} />
+      )}
 
       {/* Outputs (right) */}
-      {data.outputs.slice(0, 6).map((o, idx) => (
-        <div key={`out-${o.name}`} style={{ position: 'relative', padding: '2px 0', textAlign: 'right', color: '#334155' }}>
-          <span style={{ fontSize: 11 }}>
-            {o.name}
-            <span style={{ color: colorFor(o.semantic_type), marginLeft: 4 }}>●</span>
-          </span>
-          <Handle
-            type="source"
-            position={Position.Right}
-            id={o.name}
-            style={{ top: (data.inputs.length * 16) + 18 + idx * 16, background: colorFor(o.semantic_type), width: 10, height: 10 }}
-          />
+      {visibleOutputs.length > 0 && (
+        <div style={{ padding: '4px 0' }}>
+          {visibleOutputs.map((o) => (
+            <div
+              key={`out-${o.name}`}
+              style={{
+                position: 'relative',
+                height: ROW_H,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-end',
+                padding: '0 14px 0 10px',
+                color: '#334155',
+              }}
+            >
+              <span style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {o.name}
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: colorFor(o.semantic_type), display: 'inline-block' }} />
+              </span>
+              <Handle
+                type="source"
+                position={Position.Right}
+                id={o.name}
+                style={{ background: colorFor(o.semantic_type), width: 10, height: 10, border: '2px solid white' }}
+              />
+            </div>
+          ))}
+          {hiddenCount > 0 && (
+            <div style={{ fontSize: 10, color: '#94a3b8', textAlign: 'right', padding: '0 14px 2px' }}>+{hiddenCount} more</div>
+          )}
         </div>
-      ))}
-      {data.outputs.length > 6 && (
-        <div style={{ fontSize: 10, color: '#94a3b8', textAlign: 'right' }}>+{data.outputs.length - 6} more</div>
       )}
 
       {data.last_result && (
-        <div style={{ marginTop: 6, padding: '4px 6px', background: '#dcfce7', color: '#166534', borderRadius: 4, fontSize: 10 }}>
-          ✓ {data.last_result.row_count} rows • {data.last_result.elapsed_ms}ms
+        <div
+          style={{
+            padding: '4px 10px',
+            background: '#dcfce7',
+            color: '#166534',
+            fontSize: 10,
+            fontWeight: 500,
+            borderTop: '1px solid rgba(22,101,52,0.15)',
+            borderBottomLeftRadius: 6,
+            borderBottomRightRadius: 6,
+            display: 'flex',
+            justifyContent: 'space-between',
+          }}
+        >
+          <span>✓ {data.last_result.row_count} rows</span>
+          <span>{data.last_result.elapsed_ms}ms</span>
         </div>
       )}
     </div>
@@ -135,7 +227,7 @@ export function DagTab() {
   const toast = useToast();
   const showToast = (msg: string, kind: 'success' | 'error' | 'info' = 'info') =>
     kind === 'success' ? toast.success(msg) : kind === 'error' ? toast.error(msg) : toast.info(msg);
-  const [dataSources, setDataSources] = useState<DataSource[]>([]);
+  const [dataSources, setDataSources] = useState<DataSourceLite[]>([]);
   const [dsId, setDsId] = useState('');
   const [dags, setDags] = useState<{ resource_id: string; display_name: string; node_count: number }[]>([]);
   const [currentDagId, setCurrentDagId] = useState<string | null>(null);
@@ -151,11 +243,101 @@ export function DagTab() {
   const [saving, setSaving] = useState(false);
   const nextIdRef = useRef(1);
 
+  // ── Layout Tier 4 (FC-01b): collapsible Palette/Inspector + viewport-tall canvas ──
+  const [paletteCollapsed, setPaletteCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem('dag.paletteCollapsed') === '1'; } catch { return false; }
+  });
+  const [inspectorCollapsed, setInspectorCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem('dag.inspectorCollapsed') === '1'; } catch { return false; }
+  });
+  useEffect(() => { try { localStorage.setItem('dag.paletteCollapsed', paletteCollapsed ? '1' : '0'); } catch {} }, [paletteCollapsed]);
+  useEffect(() => { try { localStorage.setItem('dag.inspectorCollapsed', inspectorCollapsed ? '1' : '0'); } catch {} }, [inspectorCollapsed]);
+
+  // ── Undo/redo history (FC-01a) ──
+  // Refs hold the canonical past/future stacks; tick triggers re-render
+  // so toolbar buttons can read past/future depth via the ref.
+  type Snapshot = { nodes: Node<NodeData>[]; edges: Edge[] };
+  const historyPastRef = useRef<Snapshot[]>([]);
+  const historyFutureRef = useRef<Snapshot[]>([]);
+  const [, bumpHistory] = useState(0);
+  const nodesRef = useRef(nodes);
+  const edgesRef = useRef(edges);
+  useEffect(() => { nodesRef.current = nodes; edgesRef.current = edges; }, [nodes, edges]);
+  const HISTORY_CAP = 50;
+
+  const pushHistory = useCallback(() => {
+    historyPastRef.current = [
+      ...historyPastRef.current.slice(-(HISTORY_CAP - 1)),
+      { nodes: nodesRef.current, edges: edgesRef.current },
+    ];
+    historyFutureRef.current = [];
+    bumpHistory((t) => t + 1);
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    historyPastRef.current = [];
+    historyFutureRef.current = [];
+    bumpHistory((t) => t + 1);
+  }, []);
+
+  const undo = useCallback(() => {
+    const past = historyPastRef.current;
+    if (past.length === 0) return;
+    const prev = past[past.length - 1];
+    historyPastRef.current = past.slice(0, -1);
+    historyFutureRef.current = [
+      ...historyFutureRef.current,
+      { nodes: nodesRef.current, edges: edgesRef.current },
+    ];
+    setNodes(prev.nodes);
+    setEdges(prev.edges);
+    setSelectedId((sid) => (sid && prev.nodes.some((n) => n.id === sid) ? sid : null));
+    bumpHistory((t) => t + 1);
+  }, []);
+
+  const redo = useCallback(() => {
+    const future = historyFutureRef.current;
+    if (future.length === 0) return;
+    const next = future[future.length - 1];
+    historyFutureRef.current = future.slice(0, -1);
+    historyPastRef.current = [
+      ...historyPastRef.current,
+      { nodes: nodesRef.current, edges: edgesRef.current },
+    ];
+    setNodes(next.nodes);
+    setEdges(next.edges);
+    setSelectedId((sid) => (sid && next.nodes.some((n) => n.id === sid) ? sid : null));
+    bumpHistory((t) => t + 1);
+  }, []);
+
+  // Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z (skip when typing in inputs).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+      if (e.key === 'z' || e.key === 'Z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (e.key === 'y' || e.key === 'Y') {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo, redo]);
+
   const selected = useMemo(() => nodes.find((n) => n.id === selectedId) || null, [nodes, selectedId]);
+  const selectedNodes = useMemo(() => nodes.filter((n) => n.selected), [nodes]);
+  const selectedEdges = useMemo(() => edges.filter((e) => e.selected), [edges]);
 
   // ── Load data sources + DAG list ──
   useEffect(() => {
-    api.datasources().then((ds) => {
+    api.datasourcesLite().then((ds) => {
       setDataSources(ds);
       const first = ds.find((d) => d.source_id === 'ds:pg_k8') || ds[0];
       if (first) setDsId(first.source_id);
@@ -185,6 +367,7 @@ export function DagTab() {
     setIssues([]);
     setSelectedId(null);
     nextIdRef.current = 1;
+    clearHistory();
   };
 
   const loadDag = async (rid: string) => {
@@ -203,6 +386,7 @@ export function DagTab() {
         return m2 ? Math.max(m, parseInt(m2[1])) : m;
       }, 0);
       nextIdRef.current = maxN + 1;
+      clearHistory();
     } catch (e) {
       showToast(String(e), 'error');
     }
@@ -228,13 +412,39 @@ export function DagTab() {
         bound_params: {},
       },
     };
+    pushHistory();
     setNodes((nds) => [...nds, node]);
     setSelectedId(id);
   };
 
+  const deleteSelected = useCallback(() => {
+    const nodeIds = new Set(nodesRef.current.filter((n) => n.selected).map((n) => n.id));
+    if (selectedId) nodeIds.add(selectedId);
+    const edgeIds = new Set(edgesRef.current.filter((e) => e.selected).map((e) => e.id));
+    if (nodeIds.size === 0 && edgeIds.size === 0) return;
+    pushHistory();
+    setNodes((nds) => nds.filter((n) => !nodeIds.has(n.id)));
+    setEdges((eds) => eds.filter((e) =>
+      !edgeIds.has(e.id) && !nodeIds.has(e.source) && !nodeIds.has(e.target)
+    ));
+    setSelectedId(null);
+  }, [pushHistory, selectedId]);
+
   // ── React Flow callbacks ──
-  const onNodesChange = useCallback((changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds) as Node<NodeData>[]), []);
-  const onEdgesChange = useCallback((changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)), []);
+  // Snapshot before destructive changes (remove) and after a drag finishes
+  // (drag-end is the only position change worth committing to history;
+  // in-flight position frames are noise).
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    const isRemove = changes.some((c) => c.type === 'remove');
+    const isDragEnd = changes.some((c) => c.type === 'position' && (c as any).dragging === false);
+    if (isRemove || isDragEnd) pushHistory();
+    setNodes((nds) => applyNodeChanges(changes, nds) as Node<NodeData>[]);
+  }, [pushHistory]);
+  const onEdgesChange = useCallback((changes: EdgeChange[]) => {
+    const isRemove = changes.some((c) => c.type === 'remove');
+    if (isRemove) pushHistory();
+    setEdges((eds) => applyEdgeChanges(changes, eds));
+  }, [pushHistory]);
 
   // Edge type-check on connect (W6-5 — do it client-side for instant feedback;
   // server revalidates on save/execute)
@@ -251,12 +461,13 @@ export function DagTab() {
       showToast(`Type mismatch: ${srcOut.semantic_type} → ${tgtIn.semantic_type}`, 'error');
       return;
     }
+    pushHistory();
     setEdges((eds) => addEdge({
       ...conn,
       id: `e${eds.length + 1}_${Date.now()}`,
       style: { stroke: colorFor(srcOut.semantic_type), strokeWidth: 2 },
     }, eds));
-  }, [nodes]);
+  }, [nodes, pushHistory]);
 
   // ── Toolbar actions ──
   const validate = async () => {
@@ -347,6 +558,38 @@ export function DagTab() {
     }
   };
 
+  // ── Run all nodes in topological order (Kahn's algorithm) ──
+  const runAll = async () => {
+    if (nodes.length === 0) return;
+    const adj = new Map<string, string[]>();
+    const indeg = new Map<string, number>();
+    nodes.forEach((n) => { adj.set(n.id, []); indeg.set(n.id, 0); });
+    edges.forEach((e) => {
+      adj.get(e.source)?.push(e.target);
+      indeg.set(e.target, (indeg.get(e.target) || 0) + 1);
+    });
+    const queue: string[] = [];
+    indeg.forEach((d, id) => { if (d === 0) queue.push(id); });
+    const order: string[] = [];
+    while (queue.length) {
+      const id = queue.shift()!;
+      order.push(id);
+      for (const next of adj.get(id) || []) {
+        const d = (indeg.get(next) || 0) - 1;
+        indeg.set(next, d);
+        if (d === 0) queue.push(next);
+      }
+    }
+    if (order.length !== nodes.length) {
+      showToast('Cycle detected — fix edges before running', 'error');
+      return;
+    }
+    for (const id of order) {
+      await executeNode(id);
+    }
+    showToast(`Ran ${order.length} node(s)`, 'success');
+  };
+
   // ── Suggest compatible next nodes (W3-2 integration) ──
   const availableSemTypes = useMemo(() => {
     const s = new Set<string>();
@@ -371,10 +614,15 @@ export function DagTab() {
 
   const updateBoundParam = (argName: string, value: unknown) => {
     if (!selected) return;
+    pushHistory();
     setNodes((nds) => nds.map((n) => n.id === selected.id ? {
       ...n, data: { ...n.data, bound_params: { ...n.data.bound_params, [argName]: value } },
     } : n));
   };
+
+  const canUndo = historyPastRef.current.length > 0;
+  const canRedo = historyFutureRef.current.length > 0;
+  const selectionCount = selectedNodes.length + selectedEdges.length + (selected && !selectedNodes.find((n) => n.id === selected.id) ? 1 : 0);
 
   return (
     <div data-testid="dag-tab" className="space-y-4">
@@ -410,8 +658,44 @@ export function DagTab() {
           placeholder="DAG name"
         />
 
+        <button
+          onClick={undo}
+          disabled={!canUndo}
+          title="Undo (Ctrl/Cmd+Z)"
+          className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Undo2 size={14} /> Undo
+        </button>
+        <button
+          onClick={redo}
+          disabled={!canRedo}
+          title="Redo (Ctrl/Cmd+Shift+Z)"
+          className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Redo2 size={14} /> Redo
+        </button>
+        <button
+          onClick={deleteSelected}
+          disabled={selectionCount === 0}
+          title="Delete selected (Del / Backspace)"
+          data-testid="delete-selected"
+          className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed text-red-600"
+        >
+          <X size={14} /> Delete{selectionCount > 1 ? ` (${selectionCount})` : ''}
+        </button>
+
         <button onClick={validate} className="btn-secondary text-sm flex items-center gap-1">
           <CheckCircle2 size={14} /> Validate
+        </button>
+        <button
+          onClick={runAll}
+          disabled={running !== null || nodes.length === 0}
+          data-testid="run-all"
+          className="btn-secondary text-sm flex items-center gap-1"
+          title="Execute all nodes in topological order"
+        >
+          {running !== null ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+          Run all
         </button>
         <button onClick={save} disabled={saving} className="btn-primary text-sm flex items-center gap-1">
           {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save
@@ -440,9 +724,38 @@ export function DagTab() {
         </div>
       )}
 
-      <div className="grid grid-cols-12 gap-4" style={{ minHeight: 600 }}>
+      {/* Three-pane layout: collapsible Palette / fluid Canvas / collapsible Inspector.
+          Canvas height tracks viewport (calc) so wider screens get a bigger drawing area. */}
+      <div
+        className="flex gap-4"
+        style={{ height: 'calc(100vh - 240px)', minHeight: 560 }}
+      >
         {/* ── Left: Palette ── */}
-        <div className="col-span-3 bg-white border border-slate-200 rounded-lg p-3 flex flex-col" style={{ maxHeight: 720 }}>
+        {paletteCollapsed ? (
+          <div className="bg-white border border-slate-200 rounded-lg p-2 flex flex-col items-center gap-2 shrink-0" style={{ width: 44 }}>
+            <button
+              onClick={() => setPaletteCollapsed(false)}
+              title="Expand palette"
+              data-testid="palette-expand"
+              className="p-1.5 rounded hover:bg-slate-100 text-slate-600"
+            >
+              <PanelLeftOpen size={16} />
+            </button>
+            <div className="text-[10px] uppercase text-slate-400 [writing-mode:vertical-rl] mt-2">Palette ({filteredFns.length})</div>
+          </div>
+        ) : (
+        <div className="bg-white border border-slate-200 rounded-lg p-3 flex flex-col shrink-0" style={{ width: 280 }}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Palette</div>
+            <button
+              onClick={() => setPaletteCollapsed(true)}
+              title="Collapse palette"
+              data-testid="palette-collapse"
+              className="p-1 rounded hover:bg-slate-100 text-slate-500"
+            >
+              <PanelLeftClose size={14} />
+            </button>
+          </div>
           <div className="flex items-center gap-2 mb-2">
             <Search size={14} className="text-slate-400" />
             <input
@@ -496,38 +809,112 @@ export function DagTab() {
             {filteredFns.length === 0 && <EmptyState message="No functions" hint="Deploy functions via Query Tool first" icon={<FileText size={24} />} />}
           </div>
         </div>
+        )}
 
         {/* ── Center: Canvas ── */}
-        <div className="col-span-6 bg-white border border-slate-200 rounded-lg overflow-hidden" style={{ height: 720 }}>
-          <ReactFlowProvider>
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              onNodeClick={(_, n) => setSelectedId(n.id)}
-              onPaneClick={() => setSelectedId(null)}
-              nodeTypes={nodeTypes}
-              fitView
-            >
-              <Background />
-              <Controls />
-              <MiniMap />
-            </ReactFlow>
-          </ReactFlowProvider>
+        <div className="bg-white border border-slate-200 rounded-lg overflow-hidden flex flex-col flex-1 min-w-0">
+          {/* Semantic legend — only show types actually present on the canvas */}
+          {(() => {
+            const present = new Set<string>();
+            nodes.forEach((n) => {
+              n.data.inputs.forEach((i) => i.semantic_type && i.semantic_type !== 'unknown' && present.add(i.semantic_type));
+              n.data.outputs.forEach((o) => o.semantic_type && o.semantic_type !== 'unknown' && present.add(o.semantic_type));
+            });
+            const list = Array.from(present);
+            if (list.length === 0) return null;
+            return (
+              <div className="px-3 py-1.5 border-b border-slate-200 bg-slate-50 flex items-center gap-3 flex-wrap text-[10px] text-slate-600">
+                <span className="font-semibold uppercase tracking-wide">Types</span>
+                {list.map((t) => (
+                  <span key={t} className="inline-flex items-center gap-1">
+                    <span className="inline-block w-2 h-2 rounded-full" style={{ background: colorFor(t) }} />
+                    {t}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
+          <div className="relative flex-1">
+            <ReactFlowProvider>
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodeClick={(_, n) => setSelectedId(n.id)}
+                onPaneClick={() => setSelectedId(null)}
+                nodeTypes={nodeTypes}
+                deleteKeyCode={['Delete', 'Backspace']}
+                multiSelectionKeyCode={['Control', 'Meta']}
+                selectionKeyCode={'Shift'}
+                fitView
+              >
+                <Background />
+                <Controls />
+                <MiniMap />
+              </ReactFlow>
+            </ReactFlowProvider>
+            {nodes.length === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="text-center text-slate-400 max-w-xs">
+                  <Workflow size={36} className="mx-auto mb-2 opacity-60" />
+                  <div className="text-sm font-medium text-slate-500">Empty canvas</div>
+                  <div className="text-xs mt-1">Click a function in the left palette to add it as a node, then drag from output (right) to input (left) to connect.</div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ── Right: Inspector ── */}
-        <div className="col-span-3 bg-white border border-slate-200 rounded-lg p-3" style={{ maxHeight: 720, overflowY: 'auto' }}>
+        {inspectorCollapsed ? (
+          <div className="bg-white border border-slate-200 rounded-lg p-2 flex flex-col items-center gap-2 shrink-0" style={{ width: 44 }}>
+            <button
+              onClick={() => setInspectorCollapsed(false)}
+              title="Expand inspector"
+              data-testid="inspector-expand"
+              className="p-1.5 rounded hover:bg-slate-100 text-slate-600"
+            >
+              <PanelRightOpen size={16} />
+            </button>
+            <div className="text-[10px] uppercase text-slate-400 [writing-mode:vertical-rl] mt-2">
+              {selected ? selected.data.label.slice(0, 24) : 'Inspector'}
+            </div>
+          </div>
+        ) : (
+        <div className="bg-white border border-slate-200 rounded-lg flex flex-col shrink-0" style={{ width: 320 }}>
+          <div className="flex items-center justify-between p-2 border-b border-slate-100">
+            <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Inspector</div>
+            <button
+              onClick={() => setInspectorCollapsed(true)}
+              title="Collapse inspector"
+              data-testid="inspector-collapse"
+              className="p-1 rounded hover:bg-slate-100 text-slate-500"
+            >
+              <PanelRightClose size={14} />
+            </button>
+          </div>
+          <div className="p-3 overflow-y-auto flex-1">
           {!selected ? (
             <EmptyState message="No node selected" hint="Click a node to bind parameters or run it." icon={<Workflow size={24} />} />
           ) : (
             <div className="space-y-3 text-sm">
-              <div>
-                <div className="font-semibold text-slate-900">{selected.data.label}</div>
-                <div className="text-xs text-slate-500">{selected.data.resource_id}</div>
-                <div className="text-[10px] uppercase text-slate-400 mt-1">{selected.data.subtype}</div>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-semibold text-slate-900 truncate">{selected.data.label}</div>
+                  <div className="text-xs text-slate-500 truncate">{selected.data.resource_id}</div>
+                  <div className="text-[10px] uppercase text-slate-400 mt-1">{selected.data.subtype}</div>
+                </div>
+                <button
+                  onClick={deleteSelected}
+                  title="Delete this node (Del)"
+                  data-testid={`delete-node-${selected.id}`}
+                  className="shrink-0 text-red-600 hover:bg-red-50 rounded p-1"
+                  aria-label="Delete node"
+                >
+                  <Trash2 size={14} />
+                </button>
               </div>
 
               <div>
@@ -596,7 +983,9 @@ export function DagTab() {
               )}
             </div>
           )}
+          </div>
         </div>
+        )}
       </div>
     </div>
   );
