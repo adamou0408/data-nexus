@@ -587,8 +587,8 @@ function actionGuidance(
       };
     case 'role_expiring':
       return {
-        hint: '授權即將到期，如需延期請至 Access Manager 處理。',
-        label: 'Go to Access Manager',
+        hint: '授權即將到期，如需延期請至 Subjects 處理。',
+        label: 'Go to Subjects',
         action: () => onNavigate('access-subjects'),
       };
     case 'access_denied':

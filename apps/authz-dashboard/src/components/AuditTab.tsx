@@ -6,14 +6,16 @@ const PAGE_SIZE = 50;
 
 type AuditMode = 'access' | 'admin';
 
-export function AuditTab() {
+export function AuditTab({ config }: { config?: { title?: string; subtitle?: string } } = {}) {
   const [mode, setMode] = useState<AuditMode>('access');
+  const title = config?.title || 'Audit Log';
+  const subtitle = config?.subtitle || 'All authorization decisions and admin operations are recorded here for compliance and debugging';
 
   return (
     <div className="space-y-6">
       <div className="page-header">
-        <h1 className="page-title">Audit Log</h1>
-        <p className="page-desc">All authorization decisions and admin operations are recorded here for compliance and debugging</p>
+        <h1 className="page-title">{title}</h1>
+        <p className="page-desc">{subtitle}</p>
       </div>
 
       <div className="flex gap-1.5 mb-4">

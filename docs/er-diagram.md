@@ -40,11 +40,16 @@ erDiagram
 
     authz_resource {
         TEXT resource_id PK
-        TEXT resource_type "module | page | table | column | function | ai_tool | web_page | web_api | db_schema | db_table | db_pool"
+        TEXT resource_type "module | page | table | view | column | function | ai_tool | web_page | web_api | db_schema | db_table | db_pool | dag"
         TEXT parent_id FK
         TEXT display_name
-        JSONB attributes
+        JSONB attributes "type-specific; for dag: {nodes, edges, data_source_id, version}"
         BOOLEAN is_active
+        TEXT lifecycle_state "discovered | suggested | active | deprecated | retired (V046)"
+        TIMESTAMPTZ discovered_at "V046"
+        UUID discovered_by_scan_id "V046"
+        TEXT approved_by "V046"
+        TIMESTAMPTZ approved_at "V046"
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
     }
@@ -192,7 +197,7 @@ erDiagram
         TEXT page_id PK
         TEXT title
         TEXT subtitle
-        TEXT layout "card_grid | table | agg_table | split | timeline | context_panel"
+        TEXT layout "card_grid | table | tree_detail | agg_table | split | timeline | context_panel"
         TEXT resource_id FK
         TEXT data_table
         TEXT order_by
@@ -204,8 +209,24 @@ erDiagram
         TEXT icon
         TEXT description
         INTEGER display_order
+        TEXT handler_name "V038 — ConfigEngine dispatch (e.g. audit_home_handler, modules_home_handler)"
         BOOLEAN is_active
         TIMESTAMPTZ created_at
+    }
+
+    authz_ui_descriptor {
+        TEXT descriptor_id PK
+        TEXT page_id FK
+        TEXT section_key
+        TEXT section_label
+        TEXT section_icon
+        INTEGER display_order
+        TEXT visibility
+        JSONB columns
+        JSONB render_hints
+        TEXT status "manual | derived | overridden | hybrid (V048)"
+        TIMESTAMPTZ derived_at "V048"
+        JSONB derived_from "V048 — {source_id, schema, table_name, schema_hash}"
     }
 
     authz_admin_audit_log {
@@ -217,6 +238,10 @@ erDiagram
         TEXT resource_id
         JSONB details
         TEXT ip_address
+        TEXT actor_type "ai_agent | human | system (V049)"
+        TEXT agent_id "V049 — required when actor_type=ai_agent"
+        TEXT model_id "V049"
+        TEXT consent_given "V049 — human_explicit | human_via_suggestion_card | agent_auto_read | agent_unauthorized"
         TIMESTAMPTZ created_at
     }
 
@@ -266,14 +291,29 @@ erDiagram
 
     authz_sync_log {
         BIGSERIAL sync_id PK
-        TEXT sync_type "rls_policy | column_view | ui_metadata | web_acl | db_grant | pgbouncer_config | agent_scope"
+        TEXT sync_type "rls_policy | column_view | ui_metadata | web_acl | db_grant | pgbouncer_config | agent_scope | external_db_grant | external_credential_sync | oracle_function_call"
         BIGINT source_policy_id
         TEXT target_name
+        TEXT data_source_id FK
         TEXT generated_sql
         TEXT generated_config
         sync_status sync_status "pending | synced | failed | rollback"
         TEXT error_message
         TIMESTAMPTZ synced_at
+        TIMESTAMPTZ created_at
+    }
+
+    authz_discovery_rule {
+        UUID rule_id PK
+        TEXT rule_type "column_mask | row_filter | classification"
+        TEXT match_target "column_name | table_name | schema_name"
+        TEXT match_pattern "regex"
+        TEXT suggested_mask_fn FK
+        TEXT suggested_filter_template "${subject.x} placeholder (V047 — resolved at app layer for Path A/B/C)"
+        TEXT suggested_label
+        TEXT description
+        INTEGER priority
+        BOOLEAN enabled
         TIMESTAMPTZ created_at
     }
 
@@ -291,36 +331,14 @@ erDiagram
     }
 
     %% ============================================================
-    %% BUSINESS DATA TABLES (for RLS simulation)
+    %% BUSINESS DATA
     %% ============================================================
-
-    lot_status {
-        TEXT lot_id PK
-        TEXT product_line "SSD | eMMC | SD | PCIe"
-        TEXT chip_model
-        TEXT grade
-        NUMERIC unit_price "restricted"
-        NUMERIC cost "highly restricted"
-        TEXT customer
-        TEXT wafer_lot
-        TEXT site "HQ | HK | JP"
-        TEXT status "active | hold | shipped | scrapped"
-        TIMESTAMPTZ created_at
-    }
-
-    sales_order {
-        TEXT order_id PK
-        TEXT customer
-        TEXT product_line
-        TEXT chip_model
-        INTEGER quantity
-        NUMERIC unit_price
-        NUMERIC total_amount
-        TEXT region "TW | CN | US | JP | EU"
-        TEXT status "pending | confirmed | shipped | closed"
-        DATE order_date
-        TIMESTAMPTZ created_at
-    }
+    %% Business tables are NOT control-plane tables — they live in
+    %% external sources registered via authz_data_source. Each scanned
+    %% table/column becomes an authz_resource row with lifecycle_state
+    %% (discovered → suggested → active), so the ER doesn't enumerate
+    %% them directly. See authz_resource.attributes for shape:
+    %%   { data_source_id, table_schema, table_name, outputs:[columns] }
 
     %% ============================================================
     %% RELATIONSHIPS
@@ -350,8 +368,13 @@ erDiagram
 
     %% Data source & Config-SM
     authz_data_source ||--o{ authz_db_pool_profile : "data_source_id"
+    authz_data_source ||--o{ authz_sync_log : "data_source_id"
     authz_resource ||--o{ authz_ui_page : "resource_id"
     authz_ui_page ||--o{ authz_ui_page : "parent_page_id"
+    authz_ui_page ||--o{ authz_ui_descriptor : "page_id"
+
+    %% Discovery (V047)
+    authz_mask_function ||--o{ authz_discovery_rule : "suggested_mask_fn"
 
     %% Path C pool
     authz_subject ||--o{ authz_db_pool_assignment : "assigned to pool"
@@ -429,23 +452,34 @@ erDiagram
     └───────────────┘  │ (decision trail)│  └─────────────────────┘
                        └─────────────────┘
 
-    ═══════════ Business Data (RLS targets) ═══════════
-    ┌────────────┐           ┌──────────────┐
-    │ lot_status │           │ sales_order  │
-    │ (by product│           │ (by region)  │
-    │  line/site)│           └──────────────┘
-    └────────────┘
+    ═══════════ Business Data (bottom-up) ═══════════
+    External data lives in registered sources (authz_data_source). Tables/columns
+    are materialized as authz_resource rows via Discover → Suggest → Approve
+    (V046 lifecycle). The ER doesn't enumerate them — they're runtime-created.
 ```
 
-## Table Count Summary
+## Table Count Summary (post-V050)
 
 | Category | Tables | Description |
 |----------|--------|-------------|
-| Core RBAC | 4 | subject, role, action, resource |
+| Core RBAC | 4 | subject, role, action, resource (+V046 lifecycle_state) |
 | Assignment | 3 | subject_role, role_permission, group_member |
 | Policy | 6 | policy, policy_version, policy_assignment, composite_action, mask_function, data_classification |
-| Data Source & Config | 3 | data_source, ui_page, clearance_mapping |
+| Discovery | 1 | discovery_rule (+V047 ${subject.x} templates) |
+| Data Source & Config | 4 | data_source, ui_page (+V038 handler_name), ui_descriptor (+V048 status), clearance_mapping |
 | Path C Pool | 3 | pool_profile, pool_assignment, pool_credentials |
-| Ops | 3 | sync_log, audit_log (partitioned), admin_audit_log |
-| Business | 2 | lot_status, sales_order (+ 6 more in nexus_data) |
-| **Total** | **24** | (excluding audit_log partitions and nexus_data business tables) |
+| Ops | 3 | sync_log, audit_log (TimescaleDB hypertable), admin_audit_log (+V049 actor_type/agent_id/consent_given) |
+| **Total** | **24** | Control plane only — business data lives in external sources (see authz_data_source) |
+
+## Recent migrations (V038 → V050)
+
+| Migration | Schema impact |
+|-----------|---------------|
+| V038 | `authz_ui_page.handler_name` — ConfigEngine dispatch key |
+| V042 | `authz_resource.resource_type` adds `dag` |
+| V043 | `authz_ui_descriptor` seeds `modules_home:functions` sub-tab |
+| V046 | Bottom-up lifecycle: `authz_resource.lifecycle_state` + `discovered_at` / `_by_scan_id` + `approved_by` / `_at` |
+| V047 | `authz_discovery_rule.suggested_filter_template` rewritten to `${subject.x}` (app-layer resolution) |
+| V048 | `authz_ui_descriptor.status` / `derived_at` / `derived_from` — schema-driven descriptor lineage |
+| V049 | `authz_admin_audit_log` adds `actor_type` / `agent_id` / `model_id` / `consent_given` (Constitution §9.7) |
+| V050 | `audit_home.handler_name='audit_home_handler'`, `fn_ui_page` gated on `is_active OR handler_name IS NOT NULL` |

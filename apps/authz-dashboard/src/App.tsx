@@ -5,8 +5,7 @@ import { Layout, TabId, navGroups } from './components/Layout';
 import { OverviewTab } from './components/OverviewTab';
 import { PermissionsTab } from './components/PermissionsTab';
 import { PoolTab } from './components/pool';
-import { BrowserTab, Section } from './components/BrowserTab';
-import { AuditTab } from './components/AuditTab';
+import { AccessSectionPage, AccessSection } from './components/access-manager/AccessSectionPage';
 import { TablesTab } from './components/TablesTab';
 import { ConfigEngine } from './components/ConfigEngine';
 import { MetabaseTab } from './components/MetabaseTab';
@@ -18,7 +17,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { X } from 'lucide-react';
 
 // Map sidebar access-* TabIds to Access Manager sections
-const accessTabMap: Record<string, Section> = {
+const accessTabMap: Record<string, AccessSection> = {
   'access-subjects': 'subjects',
   'access-roles': 'roles',
   'access-resources': 'resources',
@@ -162,16 +161,8 @@ function AppInner() {
           <p className="text-sm mt-2">Go to <button onClick={() => setTab('discover' as TabId)} className="text-blue-600 hover:underline">Discover</button> and use Generate App on a table.</p>
         </div>
       )}
-      {accessSection && (
-        <BrowserTab
-          initialSection={accessSection}
-          onSectionChange={(s) => {
-            const newTab = Object.entries(accessTabMap).find(([, v]) => v === s)?.[0] as TabId | undefined;
-            if (newTab) setTab(newTab);
-          }}
-        />
-      )}
-      {tab === 'audit' && <AuditTab />}
+      {accessSection && <AccessSectionPage key={accessSection} section={accessSection} />}
+      {tab === 'audit' && <ConfigEngine initialPageId="audit_home" />}
 
       <CommandPalette
         open={paletteOpen}

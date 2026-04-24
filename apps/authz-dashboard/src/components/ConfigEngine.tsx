@@ -7,6 +7,7 @@ import {
   DollarSign, ClipboardCheck, Layers, Database, Boxes,
 } from 'lucide-react';
 import { ModulesTab } from './modules/ModulesTab';
+import { AuditTab } from './AuditTab';
 
 // ============================================================
 // Types — all derived from API response, never hardcoded
@@ -55,8 +56,9 @@ type PageConfig = {
   components?: CardComponent[];
   icon?: string;
   description?: string;
-  /** L4: optional handler name for layouts that dispatch (e.g. tree_detail).
-   *  Mapped to a React component via TREE_DETAIL_HANDLERS. */
+  /** L4: optional handler name. When set, the named handler owns the page
+   *  (header + body); ConfigEngine skips built-in layout rendering.
+   *  Mapped to a React component via HANDLER_REGISTRY. */
   handler_name?: string;
 };
 
@@ -94,19 +96,21 @@ const ICON_MAP: Record<string, ReactNode> = {
 };
 
 // ============================================================
-// tree_detail handler registry — L4 Config-SM dispatch
+// Handler registry — L4 Config-SM dispatch
 // Maps handler_name (from authz_ui_page.handler_name) to a React
 // component. Admin assigns handlers to pages via SQL — no code change
-// needed to reuse an existing handler on a new page.
+// needed to reuse an existing handler on a new page. Handlers own
+// their own header + layout; ConfigEngine just routes.
 // ============================================================
-export type TreeDetailHandlerProps = {
+export type HandlerProps = {
   config: PageConfig;
 };
 
-const TREE_DETAIL_HANDLERS: Record<string, ComponentType<TreeDetailHandlerProps>> = {
+const HANDLER_REGISTRY: Record<string, ComponentType<HandlerProps>> = {
   // Handler names are identifiers, not page_ids. Multiple pages can
   // share a handler (e.g. different module roots all using modules_home_handler).
   'modules_home_handler': ModulesTab,
+  'audit_home_handler': AuditTab,
 };
 
 // ============================================================
@@ -607,13 +611,14 @@ export function ConfigEngine({ initialPageId }: { initialPageId?: string } = {})
 
   if (!current) return null;
 
-  // tree_detail handlers render their own header + layout — ConfigEngine just routes
-  const isTreeDetail = current.config.layout === 'tree_detail';
+  // Handler-driven pages render their own header + layout — ConfigEngine just routes.
+  // handler_name in authz_ui_page is the SSOT for dispatch (works across any layout).
+  const hasHandler = !!current.config.handler_name;
 
   return (
     <div>
-      {/* Page header — suppressed for tree_detail (handler owns the header) */}
-      {!isTreeDetail && (
+      {/* Page header — suppressed when a handler owns the page */}
+      {!hasHandler && (
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-slate-900">{current.config.title}</h1>
           {current.config.subtitle && (
@@ -641,54 +646,48 @@ export function ConfigEngine({ initialPageId }: { initialPageId?: string } = {})
         </div>
       )}
 
-      {/* Layout router */}
-      {current.config.layout === 'card_grid' && current.config.components && (
-        <CardGrid
-          components={current.config.components}
-          onCardClick={handleCardClick}
-        />
-      )}
-
-      {current.config.layout === 'table' && current.config.columns && (
-        <DataTable
-          columns={current.config.columns}
-          data={current.data}
-          filters={current.config.filters || []}
-          drilldown={current.config.row_drilldown}
-          columnMasks={current.meta?.columnMasks || {}}
-          meta={current.meta}
-          onRowClick={current.config.row_drilldown
-            ? (row) => handleRowClick(row, current.config.row_drilldown!)
-            : undefined}
-        />
-      )}
-
-      {/* tree_detail layout → dispatch via DB-driven handler_name (L4) */}
-      {isTreeDetail && (() => {
-        const handlerName = current.config.handler_name;
-        if (!handlerName) {
-          return (
-            <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 flex items-start gap-2">
-              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-              <div>
-                Page <code className="font-mono">{current.pageId}</code> has layout=tree_detail but no <code className="font-mono">handler_name</code> set in authz_ui_page.
-              </div>
-            </div>
-          );
-        }
-        const Handler = TREE_DETAIL_HANDLERS[handlerName];
+      {/* Handler-driven pages → dispatch via DB-driven handler_name (L4).
+          When a handler is set it owns the entire page body — built-in
+          layouts (card_grid/table) are skipped. */}
+      {hasHandler ? (() => {
+        const handlerName = current.config.handler_name!;
+        const Handler = HANDLER_REGISTRY[handlerName];
         if (!Handler) {
           return (
             <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 flex items-start gap-2">
               <AlertTriangle size={16} className="shrink-0 mt-0.5" />
               <div>
-                Unknown handler <code className="font-mono">{handlerName}</code> for page <code className="font-mono">{current.pageId}</code>. Registered handlers: {Object.keys(TREE_DETAIL_HANDLERS).join(', ')}.
+                Unknown handler <code className="font-mono">{handlerName}</code> for page <code className="font-mono">{current.pageId}</code>. Registered handlers: {Object.keys(HANDLER_REGISTRY).join(', ')}.
               </div>
             </div>
           );
         }
         return <Handler config={current.config} />;
-      })()}
+      })() : (
+        <>
+          {/* Built-in layout router (no handler) */}
+          {current.config.layout === 'card_grid' && current.config.components && (
+            <CardGrid
+              components={current.config.components}
+              onCardClick={handleCardClick}
+            />
+          )}
+
+          {current.config.layout === 'table' && current.config.columns && (
+            <DataTable
+              columns={current.config.columns}
+              data={current.data}
+              filters={current.config.filters || []}
+              drilldown={current.config.row_drilldown}
+              columnMasks={current.meta?.columnMasks || {}}
+              meta={current.meta}
+              onRowClick={current.config.row_drilldown
+                ? (row) => handleRowClick(row, current.config.row_drilldown!)
+                : undefined}
+            />
+          )}
+        </>
+      )}
 
       {/* Drill-down params display (when navigated with params) */}
       {Object.keys(current.params).length > 0 && (
