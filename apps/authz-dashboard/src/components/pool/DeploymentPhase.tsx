@@ -108,26 +108,26 @@ export function DeploymentPhase({ dsId, lifecycle, onMutate }: { dsId: string; l
   const toggleStep = (id: StepId) => setExpandedStep(expandedStep === id ? null : id);
 
   /* ── Step definitions ── */
-  const steps: {
+  // Hide "Sync Local Grants" when no profile targets ds:local — the step
+  // would iterate zero rows anyway, so surfacing it only adds decision noise.
+  const hasLocalProfiles = lifecycle.phases.deployment.has_local_profiles;
+  const rawSteps: {
     id: StepId;
-    num: number;
     title: string;
     desc: string;
     optional?: boolean;
     status: 'pending' | 'done' | 'warning';
     statusText: string;
   }[] = [
-    {
-      id: 'local-grants',
-      num: 1,
+    ...(hasLocalProfiles ? [{
+      id: 'local-grants' as StepId,
       title: 'Sync Local Grants',
       desc: 'Create PG roles and apply GRANT/REVOKE inside the AuthZ database.',
-      status: grantResult ? 'done' : 'pending',
+      status: (grantResult ? 'done' : 'pending') as 'pending' | 'done' | 'warning',
       statusText: grantResult ? `${grantResult.length} actions applied` : 'Not run this session',
-    },
+    }] : []),
     {
       id: 'ext-sync',
-      num: 2,
       title: 'Sync Grants to Remote DB',
       desc: 'Push roles, passwords, GRANT/REVOKE to the external data source.',
       status: extActions ? (extActions.some(a => a.status === 'error') ? 'warning' : 'done') : lastSync ? 'done' : 'pending',
@@ -137,7 +137,6 @@ export function DeploymentPhase({ dsId, lifecycle, onMutate }: { dsId: string; l
     },
     {
       id: 'drift',
-      num: 3,
       title: 'Check Drift',
       desc: 'Compare remote DB state with SSOT to detect manual changes.',
       optional: true,
@@ -148,13 +147,13 @@ export function DeploymentPhase({ dsId, lifecycle, onMutate }: { dsId: string; l
     },
     {
       id: 'pgbouncer',
-      num: 4,
       title: 'Apply PgBouncer Config',
       desc: 'Generate pgbouncer.ini from SSOT and reload the connection pooler.',
       status: pgbouncerApplyResult ? 'done' : 'pending',
       statusText: pgbouncerApplyResult ? 'Config applied & reloaded' : 'Not applied this session',
     },
   ];
+  const steps = rawSteps.map((s, i) => ({ ...s, num: i + 1 }));
 
   return (
     <div className="space-y-3">
@@ -164,7 +163,7 @@ export function DeploymentPhase({ dsId, lifecycle, onMutate }: { dsId: string; l
         <span className="text-slate-500">Last external sync:</span>
         <RelativeTime iso={lastSync} />
         <span className="text-slate-300 mx-1">|</span>
-        <span className="text-slate-500">Follow steps 1→4 in order for a clean deployment.</span>
+        <span className="text-slate-500">Follow steps 1→{steps.length} in order for a clean deployment.</span>
       </div>
 
       {/* Ordered steps */}

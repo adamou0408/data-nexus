@@ -994,14 +994,21 @@ datasourceRouter.get('/:id/lifecycle', async (req, res) => {
         FROM authz_db_pool_profile dp
         LEFT JOIN authz_pool_credentials pc ON pc.pg_role = dp.pg_role AND pc.is_active = TRUE
         WHERE dp.data_source_id = $1 AND dp.is_active = TRUE
+      ),
+      local_profiles AS (
+        SELECT count(*) AS total
+        FROM authz_db_pool_profile
+        WHERE is_active = TRUE
+          AND (data_source_id IS NULL OR data_source_id = 'ds:local')
       )
       SELECT ds.source_id, ds.display_name, ds.db_type, ds.host, ds.port,
              ds.database_name, ds.is_active, ds.last_synced_at,
              t.total AS tables, t.table_count, t.view_count, t.mapped, t.unmapped,
              c.total AS columns, f.total AS functions,
              p.total AS profile_count, p.ids AS profile_ids,
-             cs.credentialed, cs.uncredentialed, cs.next_rotation
-      FROM authz_data_source ds, tables t, columns c, functions f, profiles p, cred_status cs
+             cs.credentialed, cs.uncredentialed, cs.next_rotation,
+             lp.total AS local_profile_count
+      FROM authz_data_source ds, tables t, columns c, functions f, profiles p, cred_status cs, local_profiles lp
       WHERE ds.source_id = $1
     `, [req.params.id]);
 
@@ -1025,9 +1032,12 @@ datasourceRouter.get('/:id/lifecycle', async (req, res) => {
 
     const connectionStatus: PhaseStatus = r.is_active ? 'done' : 'not_started';
     const discoveryStatus: PhaseStatus = totalObjects > 0 ? 'done' : 'not_started';
+    // Lenient: only nag when user hasn't started mapping. Once at least one
+    // table is bound to a module we consider organization "engaged" and let
+    // the mapped/unmapped stat speak for itself.
     const organizationStatus: PhaseStatus =
       tables === 0 ? 'not_started' :
-      unmapped > 0 ? 'action_needed' : 'done';
+      mapped === 0 ? 'action_needed' : 'done';
     const profilesStatus: PhaseStatus = profileCount > 0 ? 'done' : 'not_started';
     const credentialsStatus: PhaseStatus =
       profileCount === 0 ? 'not_started' :
@@ -1048,7 +1058,7 @@ datasourceRouter.get('/:id/lifecycle', async (req, res) => {
         organization: { status: organizationStatus, mapped, unmapped },
         profiles:     { status: profilesStatus, count: profileCount, profile_ids: r.profile_ids || [] },
         credentials:  { status: credentialsStatus, credentialed, uncredentialed, next_rotation: r.next_rotation },
-        deployment:   { status: deploymentStatus, last_sync: r.last_synced_at },
+        deployment:   { status: deploymentStatus, last_sync: r.last_synced_at, has_local_profiles: Number(r.local_profile_count) > 0 },
       },
     });
   } catch (err) {

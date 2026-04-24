@@ -325,7 +325,6 @@ export async function syncRemoteCredential(pgRole: string, passwordHash: string,
 }
 
 // ── Drift Detection ──
-
 export async function detectRemoteDrift(sourceId: string): Promise<DriftReport> {
   const items: DriftItem[] = [];
   // Oracle sources: drift detection runs on local nexus_data (CDC schema)
@@ -343,7 +342,7 @@ export async function detectRemoteDrift(sourceId: string): Promise<DriftReport> 
     for (const profile of profiles) {
       // Check if role exists on remote
       const roleCheck = await client.query(
-        'SELECT rolname, rolcanlogin, rolbypassrls FROM pg_roles WHERE rolname = $1',
+        'SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname = $1',
         [profile.pg_role]
       );
 
@@ -352,9 +351,20 @@ export async function detectRemoteDrift(sourceId: string): Promise<DriftReport> 
         continue;
       }
 
-      const remoteRole = roleCheck.rows[0];
-      if (profile.rls_applies && remoteRole.rolbypassrls) {
-        items.push({ pg_role: profile.pg_role, type: 'role_extra_privilege', detail: `Role has BYPASSRLS but profile requires NOBYPASSRLS` });
+      // BYPASSRLS column only exists on PG 9.5+. Query defensively so drift
+      // detection still works on older PG or PG-compatible engines (Redshift).
+      if (profile.rls_applies) {
+        try {
+          const rlsCheck = await client.query(
+            'SELECT rolbypassrls FROM pg_roles WHERE rolname = $1',
+            [profile.pg_role]
+          );
+          if (rlsCheck.rows[0]?.rolbypassrls) {
+            items.push({ pg_role: profile.pg_role, type: 'role_extra_privilege', detail: `Role has BYPASSRLS but profile requires NOBYPASSRLS` });
+          }
+        } catch {
+          // rolbypassrls unavailable on this engine — skip the check
+        }
       }
 
       // Check table grants

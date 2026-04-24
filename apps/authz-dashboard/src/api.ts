@@ -776,7 +776,7 @@ export type LifecyclePhases = {
   organization: { status: PhaseStatus; mapped: number; unmapped: number };
   profiles:     { status: PhaseStatus; count: number; profile_ids: string[] };
   credentials:  { status: PhaseStatus; credentialed: number; uncredentialed: number; next_rotation: string | null };
-  deployment:   { status: PhaseStatus; last_sync: string | null };
+  deployment:   { status: PhaseStatus; last_sync: string | null; has_local_profiles: boolean };
 };
 
 export type LifecycleResponse = {
