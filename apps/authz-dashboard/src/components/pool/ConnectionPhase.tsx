@@ -84,12 +84,16 @@ export function ConnectionPhase({ dsId, lifecycle, onMutate, onPurged }: { dsId:
   const handlePurge = () => {
     setDangerConfirm({
       title: `Permanently Delete "${dsId}"`,
-      message: 'This will permanently remove the data source, all discovered resources (tables/columns), linked pool profiles, and their assignments. This action cannot be undone.',
+      message: 'This will permanently remove the data source, all discovered resources (tables/columns/views/functions), generated UI pages and their descriptors, role permissions on those resources, and linked pool profiles. This action cannot be undone.',
       impact: 'All configuration for this data source will be lost. Credentials for linked PG roles will remain but become orphaned.',
       onConfirm: async () => {
         try {
-          const result = await api.datasourcePurge(dsId);
-          toast.success(`Purged "${dsId}": ${result.tables_deleted} tables, ${result.columns_deleted} columns, ${result.profiles_deleted} profiles deleted.`);
+          const r = await api.datasourcePurge(dsId);
+          toast.success(
+            `Purged "${dsId}": ${r.tables_deleted} tables, ${r.columns_deleted} columns, ` +
+            `${r.pages_deleted} pages, ${r.descriptors_deleted} descriptors, ` +
+            `${r.permissions_deleted} permissions, ${r.profiles_deleted} profiles.`
+          );
           onPurged();
         } catch (err) { toast.error(String(err)); }
       },

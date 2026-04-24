@@ -330,6 +330,52 @@ datasourceRouter.delete('/:id/purge', async (req, res) => {
 
     await client.query('BEGIN');
 
+    // ── Cascade cleanup (DS-CASCADE-01) ──
+    // FK refs into authz_resource have no ON DELETE CASCADE (V002, V022, V035), so
+    // we must clear dependents in dependency order before the resource DELETE.
+    // Dependent chain:
+    //   authz_ui_descriptor.page_id  → authz_ui_page.page_id
+    //   authz_ui_page.resource_id    → authz_resource.resource_id
+    //   authz_role_permission.resource_id → authz_resource.resource_id
+    // Subquery scope = resources tagged with this data_source_id (covers tables
+    // AND columns AND views AND functions, since /generate-app + Discover write
+    // attributes->>'data_source_id' on all of them).
+
+    // 0a. Drop descriptors of pages tied to this DS's resources
+    const descResult = await client.query(
+      `DELETE FROM authz_ui_descriptor
+        WHERE page_id IN (
+          SELECT page_id FROM authz_ui_page
+           WHERE resource_id IN (
+             SELECT resource_id FROM authz_resource
+              WHERE attributes->>'data_source_id' = $1
+           )
+        )`,
+      [req.params.id]
+    );
+
+    // 0b. Drop UI pages tied to this DS's resources (auto:* pages from /generate-app
+    //     and any hand-bound pages whose resource_id points at this source)
+    const pageResult = await client.query(
+      `DELETE FROM authz_ui_page
+        WHERE resource_id IN (
+          SELECT resource_id FROM authz_resource
+           WHERE attributes->>'data_source_id' = $1
+        )`,
+      [req.params.id]
+    );
+
+    // 0c. Drop role permissions on this DS's resources (table-level + column-level
+    //     allow/deny). Without this, step 1/2 raises FK violation.
+    const permResult = await client.query(
+      `DELETE FROM authz_role_permission
+        WHERE resource_id IN (
+          SELECT resource_id FROM authz_resource
+           WHERE attributes->>'data_source_id' = $1
+        )`,
+      [req.params.id]
+    );
+
     // 1. Delete discovered column resources
     const colResult = await client.query(
       `DELETE FROM authz_resource
@@ -346,7 +392,7 @@ datasourceRouter.delete('/:id/purge', async (req, res) => {
 
     // 3. Delete pool profile assignments for this DS's profiles
     await client.query(
-      `DELETE FROM authz_pool_assignment
+      `DELETE FROM authz_db_pool_assignment
        WHERE profile_id IN (
          SELECT profile_id FROM authz_db_pool_profile WHERE data_source_id = $1
        )`,
@@ -368,23 +414,25 @@ datasourceRouter.delete('/:id/purge', async (req, res) => {
     await client.query('COMMIT');
 
     evictDataSourcePool(req.params.id);
+    const purgeContext = {
+      descriptors_deleted: descResult.rowCount,
+      pages_deleted: pageResult.rowCount,
+      permissions_deleted: permResult.rowCount,
+      columns_deleted: colResult.rowCount,
+      tables_deleted: tblResult.rowCount,
+      profiles_deleted: profResult.rowCount,
+    };
     audit({
       access_path: 'B', subject_id: getUserId(req),
       action_id: 'datasource_purge', resource_id: req.params.id,
       decision: 'allow',
-      context: {
-        columns_deleted: colResult.rowCount,
-        tables_deleted: tblResult.rowCount,
-        profiles_deleted: profResult.rowCount,
-      },
+      context: purgeContext,
     });
-    logAdminAction(authzPool, { userId: getUserId(req), action: 'PURGE_DATASOURCE', resourceType: 'data_source', resourceId: req.params.id, details: { columns_deleted: colResult.rowCount, tables_deleted: tblResult.rowCount, profiles_deleted: profResult.rowCount }, ip: getClientIp(req) });
+    logAdminAction(authzPool, { userId: getUserId(req), action: 'PURGE_DATASOURCE', resourceType: 'data_source', resourceId: req.params.id, details: purgeContext, ip: getClientIp(req) });
 
     res.json({
       purged: req.params.id,
-      columns_deleted: colResult.rowCount,
-      tables_deleted: tblResult.rowCount,
-      profiles_deleted: profResult.rowCount,
+      ...purgeContext,
     });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
