@@ -20,6 +20,13 @@
 | **M4 production-ready** | SEC-06 secrets / Helm chart / Keycloak SSO / LDAP CronJob / Redis cache — Q3 2026 上線，go-live 條件滿足 |
 | **Constitution 修訂** | 直接修訂 `docs/constitution.md` 加入 AI Agent 章節（不開 sister doc） |
 | **Path A 辦死** | Config-SM 遺表項目、Pool 生命週期頁、Modules tab 轉 Tier 2 `admin 表單模式`。**One-way door，受 G2 gate 管制**（見 §6.2）：Tier 2 admin 表單 Q4 2026 alpha 必須跑過 3-5 個 pilot ≥ 2 週主動使用，gate 通過才能開 migration |
+
+> **Path A 辦死 ↔ schema-driven UI 引擎的關係**（2026-04-24 補註）：
+> BU-04..08 完成的 bottom-up schema-driven UI loop（Discover → sensitive scan → mask policy → 一鍵 generate UI，見 `docs/design-schema-driven-ui.md`）
+> 不是「在 Path A 加新功能」，而是 **Tier 2 admin 表單模式的後端引擎**。
+> 「Path A 辦死」指的是手刻 Config-SM JSON 的 author workflow 廢除（admin 不再寫 SQL seed），
+> 改由 schema-driven 自動生成 baseline + admin override（Phase 4）。
+> 既有手刻 page (modules_home 等) 平行存活；新表進來走 auto-generate 路徑。
 | **BI Tier 1** | 業務 dashboard（自建，連基本引擎都自己寫） |
 | **BI Tier 2 雙模式** | 分析 wizard（拖拉 → 視覺化）+ admin 表單 wizard（拖拉 → CRUD UI 與審核流程） |
 | **BI Tier 3** | Query Tool（SQL 高手自由查詢，含 AI 輔助、歷史記錄） |
@@ -204,6 +211,7 @@ Data Nexus 不持有 GPU / LLM ops，但用 SLO 契約約束品質：
 | Path A migration 漏掉使用中的頁面 | 中 | 某些 admin 工作流斷掉 | 先 inventory 現有 Path A 頁面（Q3 2026）→ Q1 2027 migration → Q2 2027 壓測 |
 | business_term DBA 成 bottleneck | 中 | semantic layer 成長停滯 | 觀察 Phase 1 實際 ticket 量；Phase 2 評估是否鬆綁 |
 | 資料 PII 洩漏到 LLM log | 低 | 法務/合規事故 | authz_check inheritance + hash-only prompt log；定期抽查 |
+| **Tier 1 demo evidence 集中在最後一季**（2026-04-24 新增） | 高 | Q2 2027 demo 主軸缺實證 dashboard，整個演示退化成 Tier 2 拼出的近似 | Tier 1 自建引擎 prototype **提前到 Q1 2027 跟 AI 並行啟動**（不等 G3 完成），Q1 末至少有 1 個業務 dashboard skeleton 可 render；fallback：Tier 1 改用 Tier 2 嵌入式拼裝，正式自建引擎延到 Phase 2 |
 
 ---
 

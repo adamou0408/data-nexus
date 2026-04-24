@@ -527,6 +527,10 @@ CREATE TABLE authz_approval_record (
 
 ### 當前開發焦點（2026-04-14 決定）
 
+> **⚠️ 歷史快照（2026-04-24 標註）**：本節為 2026-04-14 決策快照，已被 **`docs/plan-v3-phase-1.md`**（2026-04-22 鎖定的 v3 Phase 1 BI + AI 路線）取代。
+> 三焦點中：Admin 連線管理 / Metabase BI 已併入 M4 Done（見 PROGRESS.md），Data Mining 模組進 Phase 2 評估。
+> 當前 active 計畫請以 `plan-v3-phase-1.md` 為準。本節保留為歷史脈絡。
+
 > **SSOT**: 所有目標和進度追蹤在 `docs/PROGRESS.md`。本節為 feature 層面的細節說明。
 
 以下三項為目前優先推進的功能方向，其餘項目暫緩：
