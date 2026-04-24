@@ -7,8 +7,26 @@ import { encrypt, decrypt } from '../lib/crypto';
 import { logAdminAction } from '../lib/admin-audit';
 import { getUserId, getClientIp, handleApiError } from '../lib/request-helpers';
 import { extractFunctionMetadata, classifyType } from '../lib/function-metadata';
+import { runDiscoveryRules } from '../lib/discovery-rule-engine';
 
 export const datasourceRouter = Router();
+
+// Lightweight list for non-admin consumers (Flow Composer, Data Query, etc.)
+// Returns only catalog identity — no host/port/credentials/connector fields.
+// Mounted separately in index.ts behind requireAuth (not requireRole).
+export async function listDataSourcesLite(_req: any, res: any) {
+  try {
+    const result = await authzPool.query(`
+      SELECT source_id, display_name, db_type
+      FROM authz_data_source
+      WHERE is_active = TRUE
+      ORDER BY display_name
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    handleApiError(res, err);
+  }
+}
 
 // ─── List all data sources ───
 datasourceRouter.get('/', async (_req, res) => {
@@ -778,8 +796,27 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
       const viewCount = tables.filter((t: any) => t.table_type === 'VIEW').length;
       const tableCount = tables.length - viewCount;
       const totalResources = tblIds.length + colIds.length + fnIds.length;
-      audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_discover', resource_id: ds.source_id, decision: 'allow', context: { tables_found: tableCount, views_found: viewCount, functions_found: fnIds.length, resources_created: created.length } });
-      logAdminAction(authzPool, { userId: getUserId(req), action: 'DISCOVER_DATASOURCE', resourceType: 'data_source', resourceId: ds.source_id, details: { tables_found: tableCount, views_found: viewCount, functions_found: fnIds.length, resources_created: created.length }, ip: getClientIp(req) });
+
+      // ── Phase 4: Auto-suggest masks/filters/classifications for the just-created resources.
+      // Runs against authz_discovery_rule (V046). Failures here are non-fatal — the scan
+      // already committed; we only log the engine error and move on.
+      let suggestionResult: Awaited<ReturnType<typeof runDiscoveryRules>> | null = null;
+      let suggestionError: string | null = null;
+      if (created.length > 0) {
+        try {
+          suggestionResult = await runDiscoveryRules({
+            pool: authzPool,
+            resourceIds: created,
+            createdBy: getUserId(req) ?? 'discover-engine',
+          });
+        } catch (sugErr) {
+          suggestionError = (sugErr as Error).message;
+          console.warn(`Discovery rule engine failed for ${ds.source_id}:`, sugErr);
+        }
+      }
+
+      audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_discover', resource_id: ds.source_id, decision: 'allow', context: { tables_found: tableCount, views_found: viewCount, functions_found: fnIds.length, resources_created: created.length, suggestions: suggestionResult ?? undefined } });
+      logAdminAction(authzPool, { userId: getUserId(req), action: 'DISCOVER_DATASOURCE', resourceType: 'data_source', resourceId: ds.source_id, details: { tables_found: tableCount, views_found: viewCount, functions_found: fnIds.length, resources_created: created.length, suggestions: suggestionResult ?? undefined, suggestion_error: suggestionError ?? undefined }, ip: getClientIp(req) });
 
       res.json({
         source_id: ds.source_id,
@@ -790,6 +827,8 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
         resources_created: created.length,
         resources_updated: totalResources - created.length,
         created,
+        suggestions: suggestionResult,
+        suggestion_error: suggestionError,
       });
     } finally {
       await dsPool.end();

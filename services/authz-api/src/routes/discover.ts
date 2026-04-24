@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { pool as authzPool } from '../db';
 import { getUserId, handleApiError } from '../lib/request-helpers';
 import { logAdminAction } from '../lib/admin-audit';
+import { runDiscoveryRules } from '../lib/discovery-rule-engine';
 
 export const discoverRouter = Router();
 
@@ -593,5 +594,141 @@ discoverRouter.post('/bulk', async (req, res) => {
     handleApiError(res, err);
   } finally {
     client.release();
+  }
+});
+
+// ─── Bottom-up: re-run discovery rule engine across resources ───
+// Useful when admin adds/edits rules in authz_discovery_rule and wants to
+// back-fill suggestions across already-discovered resources.
+//
+// Body: { data_source_id?: string }  // optional scope; omit = all sources
+discoverRouter.post('/run-rules', async (req, res) => {
+  try {
+    const dataSourceId = (req.body?.data_source_id as string | undefined)?.trim() || undefined;
+    const result = await runDiscoveryRules({
+      pool: authzPool,
+      dataSourceId,
+      createdBy: getUserId(req) ?? 'discover-engine',
+    });
+    logAdminAction(authzPool, {
+      userId: getUserId(req),
+      action: 'RUN_DISCOVERY_RULES',
+      resourceType: dataSourceId ? 'data_source' : 'system',
+      resourceId: dataSourceId ?? 'all',
+      details: result,
+      ip: undefined,
+    });
+    res.json(result);
+  } catch (err) {
+    handleApiError(res, err);
+  }
+});
+
+// ─── Bottom-up: list suggested (pending_review) policies for review UI ───
+// Powers the Discover Pending Review tab. Filters: data_source_id, rule_type.
+discoverRouter.get('/suggestions', async (req, res) => {
+  try {
+    const dataSourceId = String(req.query.data_source_id || '').trim() || null;
+    const ruleType = String(req.query.rule_type || '').trim() || null; // 'column_mask'|'row_filter'|null
+
+    const sql = `
+      SELECT
+        p.policy_id,
+        p.policy_name,
+        p.description,
+        p.column_mask_rules,
+        p.rls_expression,
+        p.suggested_by_rule,
+        p.suggested_at,
+        p.suggested_reason,
+        p.status,
+        p.resource_condition,
+        r.rule_type,
+        r.suggested_label,
+        r.match_pattern,
+        -- pull the first targeted resource for display
+        (p.resource_condition->'resource_ids'->>0) AS target_resource_id,
+        tgt.display_name                            AS target_display_name,
+        tgt.resource_type                           AS target_resource_type,
+        tgt.attributes->>'data_source_id'           AS target_data_source_id,
+        ds.display_name                             AS target_data_source_name
+      FROM authz_policy p
+      LEFT JOIN authz_discovery_rule r ON r.rule_id = p.suggested_by_rule
+      LEFT JOIN authz_resource tgt
+             ON tgt.resource_id = (p.resource_condition->'resource_ids'->>0)
+      LEFT JOIN authz_data_source ds
+             ON ds.source_id = tgt.attributes->>'data_source_id'
+     WHERE p.status = 'pending_review'
+       AND p.suggested_by_rule IS NOT NULL
+       AND ($1::text IS NULL OR tgt.attributes->>'data_source_id' = $1)
+       AND ($2::text IS NULL OR r.rule_type = $2)
+     ORDER BY p.suggested_at DESC NULLS LAST, p.policy_id DESC
+     LIMIT 500`;
+
+    const result = await authzPool.query(sql, [dataSourceId, ruleType]);
+    res.json(result.rows);
+  } catch (err) {
+    handleApiError(res, err);
+  }
+});
+
+// ─── Bottom-up: approve or reject a suggested policy ───
+// PATCH /api/discover/suggestions/:policy_id  body: { action: 'approve'|'reject',
+//   subject_condition?: object }
+discoverRouter.patch('/suggestions/:policy_id', async (req, res) => {
+  try {
+    const policyId = Number(req.params.policy_id);
+    if (!Number.isFinite(policyId)) return res.status(400).json({ error: 'invalid policy_id' });
+    const action = String(req.body?.action || '').toLowerCase();
+    if (action !== 'approve' && action !== 'reject') {
+      return res.status(400).json({ error: 'action must be approve or reject' });
+    }
+    const subjectCondition = req.body?.subject_condition;
+
+    if (action === 'approve') {
+      const r = await authzPool.query(
+        `UPDATE authz_policy
+            SET status         = 'active',
+                approved_by    = $2,
+                subject_condition = COALESCE($3::jsonb, subject_condition),
+                updated_at     = now()
+          WHERE policy_id = $1
+            AND status    = 'pending_review'
+          RETURNING policy_id, policy_name, status`,
+        [policyId, getUserId(req), subjectCondition ? JSON.stringify(subjectCondition) : null],
+      );
+      if (r.rowCount === 0) return res.status(404).json({ error: 'policy not found or not pending' });
+      logAdminAction(authzPool, {
+        userId: getUserId(req),
+        action: 'APPROVE_SUGGESTED_POLICY',
+        resourceType: 'policy',
+        resourceId: String(policyId),
+        details: { policy_name: r.rows[0].policy_name },
+        ip: undefined,
+      });
+      res.json(r.rows[0]);
+    } else {
+      const r = await authzPool.query(
+        `UPDATE authz_policy
+            SET status     = 'rejected',
+                updated_at = now()
+          WHERE policy_id = $1
+            AND status    = 'pending_review'
+          RETURNING policy_id, policy_name, status`,
+        [policyId],
+      );
+      if (r.rowCount === 0) return res.status(404).json({ error: 'policy not found or not pending' });
+      logAdminAction(authzPool, {
+        userId: getUserId(req),
+        action: 'REJECT_SUGGESTED_POLICY',
+        resourceType: 'policy',
+        resourceId: String(policyId),
+        details: { policy_name: r.rows[0].policy_name },
+        ip: undefined,
+      });
+      res.json(r.rows[0]);
+    }
+  } catch (err) {
+    handleApiError(res, err);
   }
 });
