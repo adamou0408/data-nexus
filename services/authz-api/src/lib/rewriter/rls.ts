@@ -31,6 +31,14 @@ const USER_VARS: Record<string, (u: UserContext) => string | string[]> = {
  * Resolve template variables in a condition string.
  * Handles both single values and arrays (for IN clauses).
  */
+function renderAttrValue(val: unknown): string {
+  if (Array.isArray(val)) {
+    if (val.length === 0) return "('')";
+    return `(${val.map(v => quoteLiteral(String(v))).join(', ')})`;
+  }
+  return quoteLiteral(String(val));
+}
+
 function resolveTemplate(condition: string, user: UserContext): string {
   return condition.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_match, varName: string) => {
     const resolver = USER_VARS[varName];
@@ -38,7 +46,7 @@ function resolveTemplate(condition: string, user: UserContext): string {
       // Check user.attributes as fallback
       const attrKey = varName.replace('user.', '');
       const attrVal = user.attributes[attrKey];
-      if (attrVal !== undefined) return quoteLiteral(String(attrVal));
+      if (attrVal !== undefined) return renderAttrValue(attrVal);
       return "''"; // empty string fallback
     }
 
@@ -68,7 +76,7 @@ function resolveSubjectTemplate(condition: string, user: UserContext): string {
       return quoteLiteral(String(value));
     }
     const attrVal = user.attributes[attr];
-    if (attrVal !== undefined) return quoteLiteral(String(attrVal));
+    if (attrVal !== undefined) return renderAttrValue(attrVal);
     return "''";
   });
 }

@@ -133,8 +133,20 @@ async function findTableForColumn(client: PoolClient, columnResourceId: string):
     [columnResourceId],
   );
   const row = r.rows[0];
-  if (!row?.parent_id || !row.column_name) return null;
-  return { table_resource_id: row.parent_id, column_name: row.column_name };
+  if (!row?.parent_id) return null;
+  // Prefer explicit attribute, fall back to last segment of resource_id.
+  const colName = row.column_name ?? lastSegment(columnResourceId);
+  if (!colName) return null;
+  return { table_resource_id: row.parent_id, column_name: colName };
+}
+
+// Strip type prefix and schema, returning the bare table name.
+// 'table:public.lot_status' → 'lot_status'; 'table:lot_status' → 'lot_status'
+function bareTableName(resourceId: string): string {
+  const colonIdx = resourceId.indexOf(':');
+  const tail = colonIdx >= 0 ? resourceId.slice(colonIdx + 1) : resourceId;
+  const dotIdx = tail.lastIndexOf('.');
+  return dotIdx >= 0 ? tail.slice(dotIdx + 1) : tail;
 }
 
 export async function runDiscoveryRules(opts: {
@@ -205,14 +217,23 @@ export async function runDiscoveryRules(opts: {
 
         if (rule.rule_type === 'column_mask') {
           if (!rule.suggested_mask_fn) continue;
-          // column_mask_rules JSONB shape: { "<column_name>": "<mask_fn_name>" }
-          const columnName = (r.attributes.column_name as string) ?? r.display_name ?? subject;
-          const maskRules = JSON.stringify({ [columnName]: rule.suggested_mask_fn });
+          // Use the matched subject (e.g. 'cost'), NOT display_name (which is human text like "Cost (internal)").
+          const columnName = (r.attributes.column_name as string) ?? subject;
           // Resource the policy targets is the parent table (mask is table-scoped, column-keyed).
-          const targetTable = r.parent_id ?? r.resource_id;
-          const resourceCondition = JSON.stringify({ resource_ids: [targetTable] });
+          const targetTableResourceId = r.parent_id ?? r.resource_id;
+          const tableName = bareTableName(targetTableResourceId);
+          // Evaluator (policy-evaluator.ts) expects:
+          //   resource_condition  = { table: '<bare_table_name>' }
+          //   column_mask_rules   = { '<table>.<col>': { function: 'fn_mask_*', mask_type: '<label>' } }
+          const resourceCondition = JSON.stringify({ table: tableName });
+          const maskRules = JSON.stringify({
+            [`${tableName}.${columnName}`]: {
+              function: rule.suggested_mask_fn,
+              mask_type: rule.suggested_label ?? 'sensitive',
+            },
+          });
 
-          const ins = await client.query(
+          const ins = await client.query<{ inserted: boolean }>(
             `INSERT INTO authz_policy
                (policy_name, description, granularity, priority, effect, status,
                 applicable_paths, subject_condition, resource_condition,
@@ -224,13 +245,25 @@ export async function runDiscoveryRules(opts: {
                      '{}'::jsonb, '{}'::jsonb,
                      $4::jsonb, $5,
                      $6, now(), $7)
-             ON CONFLICT (policy_name) DO NOTHING
-             RETURNING policy_id`,
+             ON CONFLICT (policy_name) DO UPDATE SET
+                 column_mask_rules  = EXCLUDED.column_mask_rules,
+                 resource_condition = EXCLUDED.resource_condition,
+                 suggested_at       = EXCLUDED.suggested_at,
+                 suggested_reason   = EXCLUDED.suggested_reason
+               WHERE authz_policy.status = 'pending_review'
+             RETURNING (xmax = 0) AS inserted`,
             [policyName, rule.description ?? `Auto-suggested mask for ${columnName}`,
              resourceCondition, maskRules, createdBy, rule.rule_id, reason],
           );
-          if (ins.rowCount && ins.rowCount > 0) result.policies_created++;
-          else result.policies_skipped++;
+          if (!ins.rowCount) {
+            // Conflict but DO UPDATE skipped — already 'active' (admin-approved).
+            result.policies_skipped++;
+          } else if (ins.rows[0]?.inserted) {
+            result.policies_created++;
+          } else {
+            // Re-shaped an in-flight pending_review row (engine output shape changed).
+            result.policies_skipped++;
+          }
 
         } else if (rule.rule_type === 'row_filter') {
           if (!rule.suggested_filter_template) continue;
@@ -248,9 +281,10 @@ export async function runDiscoveryRules(opts: {
             continue;
           }
           const rlsExpression = renderFilterTemplate(rule.suggested_filter_template, columnName);
-          const resourceCondition = JSON.stringify({ resource_ids: [tableId] });
+          const tableName = bareTableName(tableId);
+          const resourceCondition = JSON.stringify({ table: tableName });
 
-          const ins = await client.query(
+          const ins = await client.query<{ inserted: boolean }>(
             `INSERT INTO authz_policy
                (policy_name, description, granularity, priority, effect, status,
                 applicable_paths, subject_condition, resource_condition,
@@ -262,13 +296,23 @@ export async function runDiscoveryRules(opts: {
                      '{}'::jsonb, '{}'::jsonb,
                      $4, $5,
                      $6, now(), $7)
-             ON CONFLICT (policy_name) DO NOTHING
-             RETURNING policy_id`,
+             ON CONFLICT (policy_name) DO UPDATE SET
+                 rls_expression     = EXCLUDED.rls_expression,
+                 resource_condition = EXCLUDED.resource_condition,
+                 suggested_at       = EXCLUDED.suggested_at,
+                 suggested_reason   = EXCLUDED.suggested_reason
+               WHERE authz_policy.status = 'pending_review'
+             RETURNING (xmax = 0) AS inserted`,
             [policyName, rule.description ?? `Auto-suggested row filter for ${columnName}`,
              resourceCondition, rlsExpression, createdBy, rule.rule_id, reason],
           );
-          if (ins.rowCount && ins.rowCount > 0) result.policies_created++;
-          else result.policies_skipped++;
+          if (!ins.rowCount) {
+            result.policies_skipped++;
+          } else if (ins.rows[0]?.inserted) {
+            result.policies_created++;
+          } else {
+            result.policies_skipped++;
+          }
 
         } else if (rule.rule_type === 'classification') {
           if (!rule.suggested_label) continue;
