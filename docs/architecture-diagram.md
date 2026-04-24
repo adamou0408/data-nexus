@@ -314,3 +314,129 @@ module:analytics                   Analytics & BI
  Migrations: V001-V024 (sequential SQL, Flyway-compatible)
  Seed: dev-seed.sql (authz data) + ui-config-seed.sql (UI pages)
 ```
+
+---
+
+## Sidebar & Onboarding Flow
+
+> Source of truth for sidebar groups: `apps/authz-dashboard/src/components/Layout.tsx` (`navGroups`).
+> Tabs marked 🔒 are `adminOnly` (filtered at `Layout.tsx:161` against `isAdmin` from `AuthzContext`).
+
+### Sidebar Groups
+
+```mermaid
+flowchart LR
+  subgraph G0[" "]
+    OV[Overview]
+  end
+  subgraph G1[My Access]
+    MP[My Permissions]
+    MX[Permission Matrix]
+  end
+  subgraph G2[Data]
+    DE[Data Explorer]
+    QT[Query Tool]
+    FC[Flow Composer]
+    BI[Metabase BI]
+  end
+  subgraph G3[AuthZ Tools 🔒]
+    PT[Permission Tester]
+    RS[RLS Simulator]
+    RT[Raw Tables]
+  end
+  subgraph G4[Data Policy]
+    MD[Modules]
+    DC[Discover 🔒]
+    RES[Resources 🔒]
+    POL[Policies 🔒]
+    DSP[DS &amp; Pools 🔒]
+  end
+  subgraph G5[Identity &amp; Access 🔒]
+    SUB[Subjects]
+    ROL[Roles]
+    ACT[Actions]
+    AUD[Audit Log]
+    CFG[Config Tools]
+  end
+```
+
+### Data Dependency (who must exist before what)
+
+```mermaid
+flowchart TD
+  DS[DS &amp; Pools] --> DC[Discover]
+  DC --> RES[Resources]
+  RES --> MOD[Modules]
+  RES --> POL[Policies]
+  MOD --> POL
+  SUB[Subjects<br/>LDAP sync] --> SR[Subject-Role bind]
+  ROL[Roles] --> SR
+  ACT[Actions] --> POL
+  SR --> POL
+  POL --> RESOLVE[/api/resolve<br/>= My Permissions/]
+  RESOLVE --> DATA[Data Explorer / Query / Flow / BI]
+  POL -.audit.-> AUD[Audit Log]
+  classDef central fill:#1d4ed8,color:#fff,stroke:#1e3a8a;
+  class POL central;
+```
+
+> **Policies 是中央表**：把 Subject/Role × Action × Resource 黏在一起。沒它，Data 區所有東西都查不到。
+
+### Admin Bootstrap Sequence
+
+```mermaid
+flowchart TD
+  S1["1. 接 DB<br/>DS &amp; Pools"] --> S2["2. Discover 掃 schema"]
+  S2 --> S3["3. Modules 編業務樹"]
+  S2 --> S4["4. Resources 補手動 page/column"]
+  S5["5. LDAP sync<br/>Subjects 進來"] --> S6["6. 設計 Roles"]
+  S7["7. Actions<br/>(通常已 seed)"] --> S8
+  S3 --> S8["8. 寫 Policies<br/>(中央表)"]
+  S4 --> S8
+  S6 --> S8
+  S8 --> S9["9. Permission Tester 驗"]
+  S9 --> S10["10. Audit Log 看實際使用"]
+```
+
+### End-User Flow
+
+```mermaid
+flowchart LR
+  U1[左下選自己<br/>X-User-Id 模擬登入] --> U2[Overview]
+  U2 --> U3[My Permissions<br/>看 L0-L3 設定]
+  U3 --> U4[Permission Matrix<br/>看資源 × Action]
+  U4 --> U5{有權限?}
+  U5 -- 是 --> U6[Data Explorer / Query Tool /<br/>Flow Composer / Metabase BI]
+  U5 -- 否 --> U7[回頭找 Admin<br/>在 Policies 補規則]
+```
+
+### Two-Actor Timeline (誰先做什麼)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant A as Admin
+  participant Sys as Data Nexus
+  participant U as End User
+
+  A->>Sys: DS &amp; Pools 接 DB
+  A->>Sys: Discover 掃 schema → Resources
+  A->>Sys: Modules 編業務樹
+  par Identity 線
+    A->>Sys: LDAP sync → Subjects
+    A->>Sys: 定 Roles / Actions
+  end
+  A->>Sys: 寫 Policies (中央黏合)
+  A->>Sys: Permission Tester 驗
+  Note over A,Sys: ✅ 全綠後通知使用者開工
+  U->>Sys: 選自己登入
+  U->>Sys: 看 My Permissions
+  alt 有權限
+    U->>Sys: 進 Data Explorer / Query / Flow / BI
+  else 沒權限
+    U->>A: 回報缺哪條 Policy
+    A->>Sys: 在 Policies 補
+  end
+  Sys-->>A: Audit Log 顯示實際使用
+```
+
