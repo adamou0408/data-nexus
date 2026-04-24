@@ -6,6 +6,7 @@ import {
   Layers, ArrowRight, CheckCircle2, XCircle, Circle,
   Lock, Eye, Search, AlertTriangle, Clock,
   Code2, BarChart3, Workflow,
+  Inbox, Zap, Activity, ChevronDown, ChevronRight,
 } from 'lucide-react';
 
 type Stats = {
@@ -24,20 +25,30 @@ type ChecklistItem = {
   cta: { label: string; tab: string };
 };
 
+type InboxData = {
+  arrival: { suggestions: number; resources: number; mappedRatio: number | null };
+  attention: { uncred: number; actionItems: number };
+  health: { dsTotal: number; dsConnected: number };
+};
+
 export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
   const { user, config, isAdmin } = useAuthz();
   const [stats, setStats] = useState<Stats | null>(null);
   const [actionItems, setActionItems] = useState<ActionItem[]>([]);
   const [checklist, setChecklist] = useState<ChecklistItem[] | null>(null);
+  const [inbox, setInbox] = useState<InboxData | null>(null);
+  const [showSetupHelp, setShowSetupHelp] = useState(false);
 
   useEffect(() => {
-    if (!isAdmin) { setStats(null); setChecklist(null); return; }
+    if (!isAdmin) { setStats(null); setChecklist(null); setInbox(null); return; }
     Promise.all([
       api.subjects(), api.roles(), api.resources(), api.policies(),
       api.datasourceLifecycleSummary().catch(() => [] as any[]),
       api.discoverStats().catch(() => null),
       api.adminAuditLogs({ limit: 1 }).catch(() => [] as Record<string, unknown>[]),
-    ]).then(([s, r, res, p, lifecycle, discover, audit]) => {
+      api.discoverSuggestions({}).catch(() => [] as any[]),
+      api.poolUncredentialedRoles().catch(() => [] as any[]),
+    ]).then(([s, r, res, p, lifecycle, discover, audit, suggestions, uncred]) => {
       setStats({ subjects: s.length, roles: r.length, resources: res.length, policies: p.length });
 
       const dsCount = lifecycle.length;
@@ -45,6 +56,22 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
       const discoveredTables = discover ? (discover.table?.total ?? 0) : 0;
       const mappedTables = discover ? (discover.table?.mapped ?? 0) : 0;
       const auditUsed = audit.length > 0;
+
+      setInbox({
+        arrival: {
+          suggestions: suggestions.length,
+          resources: discoveredTables,
+          mappedRatio: discoveredTables > 0 ? mappedTables / discoveredTables : null,
+        },
+        attention: {
+          uncred: uncred.length,
+          actionItems: 0, // populated by separate effect below
+        },
+        health: {
+          dsTotal: dsCount,
+          dsConnected,
+        },
+      });
 
       setChecklist([
         {
@@ -97,8 +124,14 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
     api.actionItems(user?.id, isAdmin).then(setActionItems).catch(() => {});
   }, [user?.id, isAdmin]);
 
+  // Sync action item count into inbox once both arrive.
+  useEffect(() => {
+    setInbox(prev => prev ? { ...prev, attention: { ...prev.attention, actionItems: actionItems.length } } : prev);
+  }, [actionItems.length]);
+
   const checklistDone = checklist ? checklist.filter(c => c.done).length : 0;
   const checklistTotal = checklist?.length ?? 0;
+  const inSetupMode = checklist !== null && checklistDone < 4;
 
   return (
     <div className="space-y-6">
@@ -130,46 +163,118 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void 
         </div>
       )}
 
-      {/* Setup Checklist — admin only */}
+      {/* Inbox — bottom-up arrival / attention / health cards (admin only) */}
+      {isAdmin && inbox && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <InboxCard
+            tone="blue"
+            icon={<Inbox size={18} />}
+            title="新到貨 Arrival"
+            primary={inbox.arrival.suggestions}
+            primaryLabel={inbox.arrival.suggestions === 1 ? 'pending suggestion' : 'pending suggestions'}
+            lines={[
+              inbox.arrival.resources > 0
+                ? `${inbox.arrival.resources} resources discovered${
+                    inbox.arrival.mappedRatio !== null
+                      ? ` · ${Math.round(inbox.arrival.mappedRatio * 100)}% mapped`
+                      : ''
+                  }`
+                : 'No resources discovered yet',
+            ]}
+            cta={{
+              label: inbox.arrival.suggestions > 0 ? 'Review suggestions' : 'Open Discover',
+              onClick: () => {
+                if (inbox.arrival.suggestions > 0) sessionStorage.setItem('discover.subTab', 'pending');
+                onNavigate('discover');
+              },
+            }}
+            empty={inbox.arrival.suggestions === 0 && inbox.arrival.resources === 0}
+          />
+          <InboxCard
+            tone={inbox.attention.uncred + inbox.attention.actionItems > 0 ? 'amber' : 'slate'}
+            icon={<Zap size={18} />}
+            title="待處理 Attention"
+            primary={inbox.attention.uncred + inbox.attention.actionItems}
+            primaryLabel={inbox.attention.uncred + inbox.attention.actionItems === 1 ? 'item needs you' : 'items need you'}
+            lines={[
+              inbox.attention.actionItems > 0 && `${inbox.attention.actionItems} action item${inbox.attention.actionItems === 1 ? '' : 's'} (SSOT / credential / role)`,
+              inbox.attention.uncred > 0 && `${inbox.attention.uncred} Path-C role${inbox.attention.uncred === 1 ? '' : 's'} without credential`,
+            ].filter(Boolean) as string[]}
+            cta={{
+              label: inbox.attention.uncred > 0 ? 'Open Sources' : 'View action items',
+              onClick: () => onNavigate(inbox.attention.uncred > 0 ? 'pool' : 'audit'),
+            }}
+            empty={inbox.attention.uncred + inbox.attention.actionItems === 0}
+          />
+          <InboxCard
+            tone={inbox.health.dsTotal === 0 ? 'slate' : inbox.health.dsConnected === inbox.health.dsTotal ? 'emerald' : 'amber'}
+            icon={<Activity size={18} />}
+            title="體檢 Health"
+            primary={`${inbox.health.dsConnected}/${inbox.health.dsTotal}`}
+            primaryLabel="data sources connected"
+            lines={[
+              inbox.health.dsTotal === 0
+                ? 'No data sources registered'
+                : inbox.health.dsConnected === inbox.health.dsTotal
+                  ? 'All sources reachable'
+                  : `${inbox.health.dsTotal - inbox.health.dsConnected} source${inbox.health.dsTotal - inbox.health.dsConnected === 1 ? '' : 's'} not yet connected`,
+            ]}
+            cta={{
+              label: 'Open Sources',
+              onClick: () => onNavigate('pool'),
+            }}
+            empty={inbox.health.dsTotal === 0}
+          />
+        </div>
+      )}
+
+      {/* Setup Checklist — auto-expand when admin is still in setup mode, otherwise hidden behind a disclosure */}
       {isAdmin && checklist && (
         <div className="card">
-          <div className="card-header">
+          <button
+            onClick={() => setShowSetupHelp(s => !s)}
+            className="card-header w-full flex items-center justify-between text-left hover:bg-slate-50 transition-colors"
+          >
             <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              {showSetupHelp || inSetupMode ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
               <CheckCircle2 size={16} className="text-emerald-500" />
               Setup Checklist
+              {inSetupMode && <span className="text-[11px] font-normal text-amber-600">· first-time setup in progress</span>}
             </h2>
             <span className="badge badge-slate">{checklistDone} / {checklistTotal}</span>
-          </div>
-          <div className="card-body">
-            <div className="space-y-2">
-              {checklist.map((c) => (
-                <button
-                  key={c.key}
-                  onClick={() => onNavigate(c.cta.tab)}
-                  className={`w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-colors
-                    ${c.done
-                      ? 'border-emerald-200 bg-emerald-50/50 hover:bg-emerald-50'
-                      : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}
-                >
-                  <div className="shrink-0">
-                    {c.done
-                      ? <CheckCircle2 size={18} className="text-emerald-500" />
-                      : <Circle size={18} className="text-slate-300" />}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className={`text-sm font-medium ${c.done ? 'text-slate-700' : 'text-slate-900'}`}>{c.label}</div>
-                    <div className="text-xs text-slate-500">{c.detail}</div>
-                  </div>
-                  {typeof c.count === 'number' && c.count > 0 && (
-                    <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">{c.count}</span>
-                  )}
-                  <span className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 shrink-0">
-                    {c.cta.label} <ArrowRight size={12} />
-                  </span>
-                </button>
-              ))}
+          </button>
+          {(showSetupHelp || inSetupMode) && (
+            <div className="card-body">
+              <div className="space-y-2">
+                {checklist.map((c) => (
+                  <button
+                    key={c.key}
+                    onClick={() => onNavigate(c.cta.tab)}
+                    className={`w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-colors
+                      ${c.done
+                        ? 'border-emerald-200 bg-emerald-50/50 hover:bg-emerald-50'
+                        : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}
+                  >
+                    <div className="shrink-0">
+                      {c.done
+                        ? <CheckCircle2 size={18} className="text-emerald-500" />
+                        : <Circle size={18} className="text-slate-300" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className={`text-sm font-medium ${c.done ? 'text-slate-700' : 'text-slate-900'}`}>{c.label}</div>
+                      <div className="text-xs text-slate-500">{c.detail}</div>
+                    </div>
+                    {typeof c.count === 'number' && c.count > 0 && (
+                      <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">{c.count}</span>
+                    )}
+                    <span className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 shrink-0">
+                      {c.cta.label} <ArrowRight size={12} />
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -556,6 +661,49 @@ function PrimaryCta({ title, desc, icon, color, onClick }: {
         </div>
       </div>
     </button>
+  );
+}
+
+function InboxCard({
+  tone, icon, title, primary, primaryLabel, lines, cta, empty,
+}: {
+  tone: 'blue' | 'amber' | 'emerald' | 'slate';
+  icon: ReactNode;
+  title: string;
+  primary: string | number;
+  primaryLabel: string;
+  lines: string[];
+  cta: { label: string; onClick: () => void };
+  empty?: boolean;
+}) {
+  const tones = {
+    blue:    { ring: 'border-blue-200',    iconWrap: 'bg-blue-50 text-blue-600',       value: 'text-blue-700',    cta: 'text-blue-600 hover:text-blue-800' },
+    amber:   { ring: 'border-amber-300',   iconWrap: 'bg-amber-50 text-amber-600',     value: 'text-amber-700',   cta: 'text-amber-700 hover:text-amber-900' },
+    emerald: { ring: 'border-emerald-200', iconWrap: 'bg-emerald-50 text-emerald-600', value: 'text-emerald-700', cta: 'text-emerald-700 hover:text-emerald-900' },
+    slate:   { ring: 'border-slate-200',   iconWrap: 'bg-slate-100 text-slate-500',    value: 'text-slate-600',   cta: 'text-slate-600 hover:text-slate-900' },
+  };
+  const t = tones[tone];
+  return (
+    <div className={`rounded-xl border ${t.ring} bg-white p-4 flex flex-col gap-3 ${empty ? 'opacity-80' : ''}`}>
+      <div className="flex items-center gap-2">
+        <div className={`w-9 h-9 rounded-lg ${t.iconWrap} flex items-center justify-center`}>{icon}</div>
+        <div className="text-sm font-semibold text-slate-900">{title}</div>
+      </div>
+      <div>
+        <div className={`text-3xl font-bold leading-none ${t.value}`}>{primary}</div>
+        <div className="text-xs text-slate-500 mt-1">{primaryLabel}</div>
+      </div>
+      {lines.length > 0 && (
+        <ul className="space-y-1 text-xs text-slate-600">
+          {lines.map((l, i) => <li key={i}>• {l}</li>)}
+        </ul>
+      )}
+      <div className="mt-auto pt-1">
+        <button onClick={cta.onClick} className={`text-xs font-medium inline-flex items-center gap-1 ${t.cta}`}>
+          {cta.label} <ArrowRight size={12} />
+        </button>
+      </div>
+    </div>
   );
 }
 
