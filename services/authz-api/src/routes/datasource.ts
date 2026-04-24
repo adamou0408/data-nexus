@@ -376,6 +376,17 @@ datasourceRouter.delete('/:id/purge', async (req, res) => {
       [req.params.id]
     );
 
+    // 0d. Drop composite actions whose target_resource is in this DS scope.
+    //     FK has no ON DELETE CASCADE → without this, step 1/2 raises FK violation.
+    const compResult = await client.query(
+      `DELETE FROM authz_composite_action
+        WHERE target_resource IN (
+          SELECT resource_id FROM authz_resource
+           WHERE attributes->>'data_source_id' = $1
+        )`,
+      [req.params.id]
+    );
+
     // 1. Delete discovered column resources
     const colResult = await client.query(
       `DELETE FROM authz_resource
@@ -399,9 +410,26 @@ datasourceRouter.delete('/:id/purge', async (req, res) => {
       [req.params.id]
     );
 
+    // 3a. Delete pool credentials for this DS's pg_roles. authz_pool_credentials.pg_role
+    //     → authz_db_pool_profile.pg_role with no CASCADE, and pg_role is UNIQUE on
+    //     pool_profile, so each pg_role belongs to exactly one profile. Safe to wipe.
+    const credResult = await client.query(
+      `DELETE FROM authz_pool_credentials
+        WHERE pg_role IN (
+          SELECT pg_role FROM authz_db_pool_profile WHERE data_source_id = $1
+        )`,
+      [req.params.id]
+    );
+
     // 4. Delete pool profiles linked to this DS
     const profResult = await client.query(
       'DELETE FROM authz_db_pool_profile WHERE data_source_id = $1',
+      [req.params.id]
+    );
+
+    // 4a. Delete sync_log rows for this DS (FK to authz_data_source, no CASCADE).
+    const syncResult = await client.query(
+      'DELETE FROM authz_sync_log WHERE data_source_id = $1',
       [req.params.id]
     );
 
@@ -418,9 +446,12 @@ datasourceRouter.delete('/:id/purge', async (req, res) => {
       descriptors_deleted: descResult.rowCount,
       pages_deleted: pageResult.rowCount,
       permissions_deleted: permResult.rowCount,
+      composite_actions_deleted: compResult.rowCount,
       columns_deleted: colResult.rowCount,
       tables_deleted: tblResult.rowCount,
+      credentials_deleted: credResult.rowCount,
       profiles_deleted: profResult.rowCount,
+      sync_logs_deleted: syncResult.rowCount,
     };
     audit({
       access_path: 'B', subject_id: getUserId(req),

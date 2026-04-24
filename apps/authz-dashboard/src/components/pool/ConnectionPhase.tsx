@@ -84,15 +84,16 @@ export function ConnectionPhase({ dsId, lifecycle, onMutate, onPurged }: { dsId:
   const handlePurge = () => {
     setDangerConfirm({
       title: `Permanently Delete "${dsId}"`,
-      message: 'This will permanently remove the data source, all discovered resources (tables/columns/views/functions), generated UI pages and their descriptors, role permissions on those resources, and linked pool profiles. This action cannot be undone.',
-      impact: 'All configuration for this data source will be lost. Credentials for linked PG roles will remain but become orphaned.',
+      message: 'This will permanently remove the data source, all discovered resources (tables/columns/views/functions), generated UI pages and their descriptors, role permissions and composite actions on those resources, linked pool profiles and their credentials, and sync logs. This action cannot be undone.',
+      impact: 'All configuration for this data source will be lost. The PostgreSQL roles themselves are NOT dropped from the database — only their credential records in authz are removed.',
       onConfirm: async () => {
         try {
           const r = await api.datasourcePurge(dsId);
           toast.success(
             `Purged "${dsId}": ${r.tables_deleted} tables, ${r.columns_deleted} columns, ` +
             `${r.pages_deleted} pages, ${r.descriptors_deleted} descriptors, ` +
-            `${r.permissions_deleted} permissions, ${r.profiles_deleted} profiles.`
+            `${r.permissions_deleted} permissions, ${r.composite_actions_deleted ?? 0} composite actions, ` +
+            `${r.profiles_deleted} profiles, ${r.credentials_deleted ?? 0} credentials, ${r.sync_logs_deleted ?? 0} sync logs.`
           );
           onPurged();
         } catch (err) { toast.error(String(err)); }

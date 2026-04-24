@@ -247,7 +247,7 @@ export const api = {
   datasourceDelete: (id: string) =>
     request(`/datasources/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   datasourcePurge: (id: string) =>
-    request<{ purged: string; descriptors_deleted: number; pages_deleted: number; permissions_deleted: number; columns_deleted: number; tables_deleted: number; profiles_deleted: number }>(
+    request<{ purged: string; descriptors_deleted: number; pages_deleted: number; permissions_deleted: number; composite_actions_deleted: number; columns_deleted: number; tables_deleted: number; credentials_deleted: number; profiles_deleted: number; sync_logs_deleted: number }>(
       `/datasources/${encodeURIComponent(id)}/purge`, { method: 'DELETE' }),
   datasourceTest: (id: string) =>
     request<{ status: string; version?: string; error?: string; pg_replica?: string; oracle?: string; details?: Record<string, any> }>(
