@@ -31,6 +31,9 @@ type NavGroup = {
   items: NavItem[];
 };
 
+// Sidebar IA follows the bottom-up data-flow:
+//   Ingest (data lands) → Catalog (auto-organized) → Govern (humans + policies) → Consume (users) → Observe (audit)
+// Each stage is a stage in the pipeline, NOT a role. Admin and user navigate the same map.
 const navGroups: NavGroup[] = [
   {
     label: '',
@@ -39,38 +42,43 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: 'My Access',
+    label: 'Ingest',
     items: [
-      { id: 'permissions', label: 'Permissions', icon: <Shield size={18} />, shortcut: 'g p' },
+      { id: 'pool',     label: 'Sources',  icon: <Server size={18} />, adminOnly: true, shortcut: 'g s' },
+      { id: 'discover', label: 'Discover', icon: <Search size={18} />, adminOnly: true, shortcut: 'g d' },
     ],
   },
   {
-    label: 'Data',
+    label: 'Catalog',
     items: [
-      { id: 'modules',       label: 'Modules',       icon: <Boxes size={18} />,    shortcut: 'g m' },
-      { id: 'tables',        label: 'Data Explorer', icon: <Layers size={18} />,   shortcut: 'g e' },
-      { id: 'data-query',    label: 'Query Tool',    icon: <Code2 size={18} />,    shortcut: 'g q' },
-      { id: 'flow-composer', label: 'Flow Composer', icon: <Workflow size={18} />, shortcut: 'g f' },
-      { id: 'metabase',      label: 'Metabase BI',   icon: <BarChart3 size={18} />, shortcut: 'g b' },
+      { id: 'access-resources', label: 'Resources',  icon: <FolderTree size={18} />, adminOnly: true, countKey: 'resources' },
+      { id: 'modules',          label: 'Modules',    icon: <Boxes size={18} />,      shortcut: 'g m' },
+      { id: 'raw-tables',       label: 'Raw Tables', icon: <Table2 size={18} />,     adminOnly: true },
     ],
   },
   {
-    label: 'Authoring',
+    label: 'Govern',
     items: [
-      { id: 'discover',          label: 'Discover',  icon: <Search size={18} />,      adminOnly: true, shortcut: 'g d' },
-      { id: 'access-resources',  label: 'Resources', icon: <FolderTree size={18} />,  adminOnly: true, countKey: 'resources' },
-      { id: 'access-policies',   label: 'Policies',  icon: <ShieldCheck size={18} />, adminOnly: true, countKey: 'policies' },
-      { id: 'pool',              label: 'Sources',   icon: <Server size={18} />,      adminOnly: true, shortcut: 'g s' },
-      { id: 'raw-tables',        label: 'Raw Tables', icon: <Table2 size={18} />,     adminOnly: true },
+      { id: 'access-subjects', label: 'Subjects', icon: <Users size={18} />,       adminOnly: true, countKey: 'subjects' },
+      { id: 'access-roles',    label: 'Roles',    icon: <KeyRound size={18} />,    adminOnly: true, countKey: 'roles' },
+      { id: 'access-actions',  label: 'Actions',  icon: <Zap size={18} />,         adminOnly: true },
+      { id: 'access-policies', label: 'Policies', icon: <ShieldCheck size={18} />, adminOnly: true, countKey: 'policies' },
     ],
   },
   {
-    label: 'Identity',
+    label: 'Consume',
     items: [
-      { id: 'access-subjects', label: 'Subjects', icon: <Users size={18} />,    adminOnly: true, countKey: 'subjects' },
-      { id: 'access-roles',    label: 'Roles',    icon: <KeyRound size={18} />, adminOnly: true, countKey: 'roles' },
-      { id: 'access-actions',  label: 'Actions',  icon: <Zap size={18} />,      adminOnly: true },
-      { id: 'audit',           label: 'Audit Log', icon: <FileText size={18} />, adminOnly: true, alertKey: 'audit' },
+      { id: 'permissions',   label: 'My Permissions', icon: <Shield size={18} />,    shortcut: 'g p' },
+      { id: 'tables',        label: 'Data Explorer',  icon: <Layers size={18} />,    shortcut: 'g e' },
+      { id: 'data-query',    label: 'Query Tool',     icon: <Code2 size={18} />,     shortcut: 'g q' },
+      { id: 'flow-composer', label: 'Flow Composer',  icon: <Workflow size={18} />,  shortcut: 'g f' },
+      { id: 'metabase',      label: 'Metabase BI',    icon: <BarChart3 size={18} />, shortcut: 'g b' },
+    ],
+  },
+  {
+    label: 'Observe',
+    items: [
+      { id: 'audit', label: 'Audit Log', icon: <FileText size={18} />, adminOnly: true, alertKey: 'audit' },
     ],
   },
 ];
