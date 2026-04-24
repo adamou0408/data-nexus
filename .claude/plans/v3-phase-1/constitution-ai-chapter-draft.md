@@ -1,10 +1,15 @@
 > **DRAFT — Article 8 Amendment Proposal, requires human approval**
 >
-> **Status**: Proposed (2026-04-22)
+> **Status**: Proposed (2026-04-22)，2026-04-24 修訂（去除 cross-team ghost path）
 > **Target document**: `docs/constitution.md`
 > **Amendment vehicle**: Article 8 procedure (per-article human sign-off)
-> **Proposed insertion point**: New Article 11, between Article 10 and existing Appendix A
+> **Proposed insertion point**: New Article 11, between Article 7 and existing Article 8 (Appendix A reorders accordingly)
 > **Source of record**: `docs/plan-v3-phase-1.md` §2.4 / §2.5 / §2.6 / §2.7 / §2.8
+>
+> 本草稿正文（§11.1–§11.8）為要併入 constitution 的條文，**不受純軟體開發 context
+> 影響**（Article 11 的責任歸屬皆為 AI 代理 vs. Adam，不引入外部 team）。
+> 下方 Migration Path / Rollout Timeline 是給 Adam 看的執行筆記，已於 2026-04-24
+> 改寫為單人純軟體開發模式（無 DBA / backend / frontend / PM / LLM team 角色）。
 >
 > This file is a draft. Nothing here is binding until the user approves each
 > sub-article individually and the content is merged into `docs/constitution.md`
@@ -152,23 +157,25 @@ LLM team 不得挑舊版 eval set 以利其結果。
 
 ### 既有 code / agent 遵循路徑 (Migration Path)
 
-| 現況 | 合規動作 | Owner |
-|------|----------|-------|
-| Claude Code 目前可直接 UPDATE `authz_resource` | 加 sandbox schema + diff preview + 人類核可 UI；Claude Code prompt 追加 §11.3 強制條款 | backend + Adam |
-| `authz_audit` 表無 `actor_type` / `agent_id` / `model_id` 欄位 | 新 migration V0xx 加欄位 + backfill 舊 row 為 `actor_type='human'` | DBA |
-| LLM adapter 尚未建置 | 於 Q1 2027 建置時直接內建 §11.2 authz 注入與 §11.6 hash-only log | backend |
-| Retrieval index 無 authz 分片 | 建置前即依 authz subject 分片；不追溯既有 index（Phase 1 前無 prod index） | backend |
-| Suggestion card UI 尚未建置 | Q1 2027 設計階段即依 §11.5 實作，禁止 auto-apply 與 nagging | frontend |
-| Eval set 未成形 | 2026-08 交付 DBA 100 + 業務 100，與 §11.8 model swap 流程同步上線 | DBA + PM |
+Phase 1 是單人純軟體開發，所有 owner 皆為 Adam。
+
+| 現況 | 合規動作 |
+|------|----------|
+| Claude Code 目前可直接 UPDATE `authz_resource` | 加 sandbox schema + diff preview + 人類核可 UI；Claude Code prompt 追加 §11.3 強制條款 |
+| `authz_audit` 表無 `actor_type` / `agent_id` / `model_id` 欄位 | 新 migration V0xx 加欄位 + backfill 舊 row 為 `actor_type='human'` |
+| LLM adapter 尚未建置 | 於 Q1 2027 建置時直接內建 §11.2 authz 注入與 §11.6 hash-only log |
+| Retrieval index 無 authz 分片 | 建置前即依 authz subject 分片；不追溯既有 index（Phase 1 前無 prod index） |
+| Suggestion card UI 尚未建置 | Q1 2027 設計階段即依 §11.5 實作，禁止 auto-apply 與 nagging |
+| Eval set 未成形 | 2026-08 前 Adam 自蒐 200 筆（query log + 既有文件），與 §11.8 model swap 流程同步上線 |
 
 ### Rollout Timeline（對齊 plan-v3-phase-1.md §3）
 
 | 階段 | 動作 |
 |------|------|
 | **2026-04-22 → 2026-05-06**（Week 1–2）| 本草案走 Article 8 逐條審議；通過條文併入 `docs/constitution.md` v2.0 |
-| **Q3 2026** | `authz_audit` migration 上線；LLM adapter commitment 文件納入 §11.6 / §11.8 條款 |
+| **Q3 2026** | `authz_audit` migration 上線；LLM adapter 設計時即內建 §11.6 / §11.8 約束（無外部契約） |
 | **Q4 2026** | Design system 導入 suggestion card 原型（非 AI，先打 UX 模式）；eval set 完成 200 筆 |
-| **Q1 2027（AI 上線）** | §11.2 / §11.3 / §11.4 / §11.5 於 AI 側欄與 Tier 2/3 wizard 首發同步生效；§11.8 model swap 契約於 G3 gate 驗收 |
+| **Q1 2027（AI 上線）** | §11.2 / §11.3 / §11.4 / §11.5 於 AI 側欄與 Tier 2/3 wizard 首發同步生效；§11.8 model swap 流程於 G3 gate 自我驗收 |
 | **Q2 2027 Demo** | Article 11 全面 enforce；demo path 不依賴繞過規則的功能 |
 | **Phase 2（2027 下半）** | 評估是否放寬 §11.3（高信賴度 auto-apply）或 §11.4（AI 可作為 draft owner）；任何放寬 **MUST** 重走 Article 8 |
 
