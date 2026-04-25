@@ -10,6 +10,7 @@ import { browseReadRouter } from './routes/browse-read';
 import { browseAdminRouter } from './routes/browse-admin';
 import { poolRouter } from './routes/pool';
 import { datasourceRouter, listDataSourcesLite } from './routes/datasource';
+import { aiProviderRouter, listAIProvidersLite } from './routes/ai-provider';
 import { oracleExecRouter } from './routes/oracle-exec';
 import { dataQueryRouter } from './routes/data-query';
 import { dagRouter } from './routes/dag';
@@ -84,6 +85,10 @@ app.use('/api/pool', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), poolRouter);
 // Must be registered BEFORE the admin-gated mount so Express matches it first.
 app.get('/api/datasources/list', requireAuth, listDataSourcesLite);
 app.use('/api/datasources', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), datasourceRouter);
+// AI providers lite list — any authenticated user (sidebar copilot needs to pick a provider).
+// Registered BEFORE the admin-gated mount so Express matches it first.
+app.get('/api/ai-providers/list', requireAuth, listAIProvidersLite);
+app.use('/api/ai-providers', requireRole('ADMIN', 'AUTHZ_ADMIN'), aiProviderRouter);
 // Modules: read open to all authenticated users (per-resource authz_check inside),
 // write operations (DELETE) protected by requireRole inside the router
 app.use('/api/modules', requireAuth, modulesRouter);

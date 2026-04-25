@@ -635,6 +635,41 @@ export const api = {
     request<BulkApplyResult>('/config/bulk', {
       method: 'POST', body: JSON.stringify(payload),
     }),
+
+  // ── AI Provider Registry (Constitution §9.1) ──
+  aiProviders: () =>
+    request<AIProvider[]>('/ai-providers?include_inactive=true'),
+  aiProvidersLite: () =>
+    request<{ provider_id: string; display_name: string; purpose_tags: string[]; default_model: string | null; is_active: boolean; is_fallback: boolean }[]>(
+      '/ai-providers/list'),
+  aiProvider: (id: string) =>
+    request<AIProvider>(`/ai-providers/${encodeURIComponent(id)}`),
+  aiProviderCreate: (data: Partial<AIProvider> & { api_key?: string }) =>
+    request<{ provider_id: string; display_name: string; provider_kind: string; is_active: boolean; created_at: string }>(
+      '/ai-providers', { method: 'POST', body: JSON.stringify(data) }),
+  aiProviderUpdate: (id: string, data: Partial<AIProvider>) =>
+    request<{ provider_id: string; display_name: string; is_active: boolean; updated_at: string }>(
+      `/ai-providers/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  aiProviderRotateKey: (id: string, api_key: string) =>
+    request<{ provider_id: string; api_key_last4: string; api_key_rotated_at: string }>(
+      `/ai-providers/${encodeURIComponent(id)}/key`, { method: 'PATCH', body: JSON.stringify({ api_key }) }),
+  aiProviderDelete: (id: string) =>
+    request<{ deactivated: string }>(`/ai-providers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  aiProviderReactivate: (id: string) =>
+    request<{ reactivated: string }>(`/ai-providers/${encodeURIComponent(id)}/reactivate`, { method: 'POST' }),
+  aiProviderTestUnsaved: (data: { base_url: string; api_key?: string; default_model?: string; timeout_ms?: number; run_chat_probe?: boolean }) =>
+    request<AIProviderTestResult>('/ai-providers/_test', { method: 'POST', body: JSON.stringify(data) }),
+  aiProviderTest: (id: string, run_chat_probe = false) =>
+    request<AIProviderTestResult>(`/ai-providers/${encodeURIComponent(id)}/test`, {
+      method: 'POST', body: JSON.stringify({ run_chat_probe }),
+    }),
+  aiProviderRefreshModels: (id: string) =>
+    request<{ status: string; model_count: number; available_models: string[] }>(
+      `/ai-providers/${encodeURIComponent(id)}/refresh-models`, { method: 'POST' }),
+  aiProviderUsage: (id: string, period: '24h' | '7d' | '30d' = '30d') =>
+    request<AIProviderUsage>(`/ai-providers/${encodeURIComponent(id)}/usage?period=${period}`),
+  aiProviderAudit: (id: string) =>
+    request<AIProviderAuditEntry[]>(`/ai-providers/${encodeURIComponent(id)}/audit`),
 };
 
 export type UserProfile = {
@@ -852,6 +887,83 @@ export type ModuleTreeNode = {
   table_count: number;
   column_count: number;
   user_actions: string[]; // actions the current user can perform (e.g. ['read','write'])
+};
+
+export type AIProviderPricing = Record<string, { input: number; output: number }>;
+
+export type AIProvider = {
+  provider_id: string;
+  display_name: string;
+  description: string | null;
+  provider_kind: 'openai' | 'azure_openai' | 'vllm' | 'ollama' | 'openrouter' | 'custom_oai';
+  base_url: string;
+  api_key_last4: string | null;
+  api_key_rotated_at: string | null;
+  api_key_set: boolean;
+  default_model: string | null;
+  available_models: string[];
+  default_temperature: number;
+  default_max_tokens: number;
+  timeout_ms: number;
+  pricing: AIProviderPricing;
+  purpose_tags: string[];
+  is_fallback: boolean;
+  monthly_budget_usd: number | null;
+  rate_limit_rpm: number | null;
+  last_tested_at: string | null;
+  last_test_status: string | null;
+  last_test_detail: string | null;
+  is_active: boolean;
+  owner_subject: string | null;
+  registered_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AIProviderTestResult = {
+  status: 'ok' | 'partial' | 'failed';
+  layer?: 'models' | 'chat';
+  reason?: string;
+  message?: string;
+  http_status?: number;
+  models_reachable?: boolean;
+  model_count?: number;
+  models_sample?: string[];
+  chat_probe?: {
+    ok: boolean;
+    model: string;
+    sample?: string;
+    latency_ms?: number;
+    reason?: string;
+    message?: string;
+  };
+};
+
+export type AIProviderUsage = {
+  period: string;
+  summary: {
+    call_count: string;
+    ok_count: string;
+    error_count: string;
+    prompt_tokens_total: string;
+    completion_tokens_total: string;
+    cost_usd_total: string;
+    avg_latency_ms: number | null;
+  };
+  by_feature: { feature_tag: string | null; calls: string; cost_usd: string }[];
+  cost_usd_month_to_date: string;
+};
+
+export type AIProviderAuditEntry = {
+  id: string;
+  timestamp: string;
+  user_id: string;
+  action: string;
+  details: Record<string, unknown>;
+  actor_type: 'human' | 'ai_agent' | 'system';
+  agent_id: string | null;
+  model_id: string | null;
+  consent_given: string;
 };
 
 export type ModuleDetails = {
