@@ -26,6 +26,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | [`path-a-inventory.md`](./path-a-inventory.md) | Path A surviving screens/descriptors inventory *(owned by another agent — see file for status)* |
 | [`constitution-ai-chapter-draft.md`](./constitution-ai-chapter-draft.md) | Constitution AI chapter draft (Article 8 revision) *(owned by another agent — see file for status)* |
 | [`two-tier-platform-model.md`](./two-tier-platform-model.md) | Tier A (平台) vs Tier B (應用) 切分 + 4 platform primitive backlog (help_text / saved_view / feedback / subscription) |
+| [`permission-default-allow-pilot-plan.md`](./permission-default-allow-pilot-plan.md) | L0 default-allow + deny-list pilot — onboarding 摩擦 5-10 天 → 0.5-1 天 (Q3 2026 pilot) |
 | [`migration-drafts/`](./migration-drafts/) | V045 `resource_cascade_policy` draft pending self-review *(V044 promoted 2026-04-26)* |
 | [`m4-go-live-runbook.md`](./m4-go-live-runbook.md) | Gate G1 cutover runbook + rollback procedure (2026-09 go-live) |
 | [`g2-pilot-recruitment.md`](./g2-pilot-recruitment.md) | Gate G2 pilot recruitment funnel + exit criteria (3-5 pilots × 2 weeks) |
@@ -52,6 +53,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | path-a-inventory | Explore agent → Adam to validate | ready-for-review | input to Q4 2026 / Q1 2027 |
 | constitution-ai-chapter-draft | Drafting agent → Adam | ready-for-review (Article 8 amendment) | merge before Q1 2027 |
 | two-tier-platform-model | Adam | draft (2026-04-26) | foundation — gates UI 提案 Q3 2026 起 |
+| permission-default-allow-pilot-plan | Adam (planner) → Claude executor session | **IN-PROGRESS** (2026-04-26 Phase 0 開工) — Q1=all-objects, Q2=SOX (retention ≥7y), Q3=BI-sandbox | Phase 0+1+2 = 4 週 pilot, Q3 2026 |
 | migration-drafts/V044 (business_term) | Adam | **applied 2026-04-26** (self-reviewed: owner_subject_id rename + blessed_fields_check loosened; smoke-tested lifecycle/unique/invariant constraints) | done |
 | migration-drafts/V045 (resource_cascade_policy) | Drafting agent → DBA | ready-for-DBA (drafted 2026-04-23, authz_audit_log reuse) | apply Q3 2026 after V044 |
 | m4-go-live-runbook | SRE | STUB | 2026-09 (G1) |
@@ -79,3 +81,4 @@ This directory holds the implementation sub-plans that decompose the master Phas
 - Every sub-plan starts with: Title / Owner / Status / Linked from / STUB-to-be-filled section.
 - Sub-plan updates should bump the status table in this README in the same commit.
 - Acceptance criteria must map back to master plan success metrics (§6.1) where possible.
+- **New sub-plans:** copy [`_TEMPLATE.md`](./_TEMPLATE.md) — supports the two-session (Planner / Executor) workflow with explicit Status lifecycle, AC section, and Handoff Log.
