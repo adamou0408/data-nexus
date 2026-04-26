@@ -11,8 +11,17 @@ import { logAdminAction } from '../lib/admin-audit';
 import { getUserId, getClientIp, handleApiError } from '../lib/request-helpers';
 import { parseFunctionArgs } from '../lib/function-metadata';
 import { validateDag, DagDoc } from '../lib/dag-validate';
+import { requireRole } from '../middleware/authz';
 
 export const dagRouter = Router();
+
+// L0 functional gates for write operations (FC-AUTHZ-01).
+// Authoring a DAG = mutating authz_resource (resource_type='dag'); same blast
+// radius as datasource/discover writes, so mirror their role set.
+const requireDagAuthor = requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA');
+// save-as-page writes to authz_ui_page, the Tier A platform metadata table —
+// gate it the same way config/snapshot is gated.
+const requirePageAuthor = requireRole('ADMIN', 'AUTHZ_ADMIN');
 
 const MAX_ROWS = 1000;
 
@@ -76,7 +85,7 @@ dagRouter.get('/:id', async (req, res) => {
 });
 
 // ─── Save (create or update) ───
-dagRouter.post('/save', async (req, res) => {
+dagRouter.post('/save', requireDagAuthor, async (req, res) => {
   const { resource_id, display_name, data_source_id, nodes, edges, description } = req.body as {
     resource_id?: string;
     display_name: string;
@@ -89,6 +98,18 @@ dagRouter.post('/save', async (req, res) => {
 
   if (!display_name || !data_source_id || !Array.isArray(nodes) || !Array.isArray(edges)) {
     return res.status(400).json({ error: 'display_name, data_source_id, nodes[], edges[] required' });
+  }
+
+  // FC-VALIDATE-01: refuse to persist structurally invalid DAGs (cycle,
+  // type_mismatch, missing_input, unknown_handle). Frontend already calls
+  // /validate, but server is SSOT — never trust the client.
+  const validation = validateDag({ nodes, edges });
+  const errors = validation.issues.filter((i) => i.severity === 'error');
+  if (errors.length > 0) {
+    return res.status(400).json({
+      error: 'DAG validation failed',
+      issues: errors,
+    });
   }
 
   const rid = resource_id && resource_id.startsWith('dag:') ? resource_id : `dag:${slugify(display_name)}`;
@@ -127,7 +148,7 @@ dagRouter.post('/save', async (req, res) => {
 });
 
 // ─── Delete ───
-dagRouter.delete('/:id', async (req, res) => {
+dagRouter.delete('/:id', requireDagAuthor, async (req, res) => {
   const userId = getUserId(req);
   try {
     const result = await authzPool.query(
@@ -350,7 +371,7 @@ const RENDER_BY_SEMANTIC: Record<string, string> = {
   gate: 'gate_badge',
 };
 
-dagRouter.post('/save-as-page', async (req, res) => {
+dagRouter.post('/save-as-page', requirePageAuthor, async (req, res) => {
   const {
     page_id, title, parent_page_id, description,
     dag_id, node_id, bound_params,
