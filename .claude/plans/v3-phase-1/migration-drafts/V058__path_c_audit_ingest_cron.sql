@@ -121,6 +121,9 @@ BEGIN
         SELECT
             log_time, user_name, database_name, session_id,
             connection_from, application_name,
+            -- Quote-naive split: a quoted identifier like public."weird,name"
+            -- would land a comma inside field 7. Not present in this codebase,
+            -- but worth knowing if pgaudit ever logs against such an object.
             string_to_array(
                 substring(message FROM '^AUDIT: (.*)$'),
                 ','
@@ -155,6 +158,14 @@ DECLARE
     v_target  TEXT;
     v_inserted BIGINT;
 BEGIN
+    -- Single-run guard: if the previous tick is still ingesting (busy
+    -- days, large file), bail out instead of doubling up on COPY.
+    -- Idempotency-via-state-table would catch the double-insert, but
+    -- this avoids the wasted I/O. Lock auto-releases at txn end.
+    IF NOT pg_try_advisory_xact_lock(hashtext('pgaudit_csvlog_ingest')) THEN
+        RETURN;
+    END IF;
+
     -- Latest file is still being written — skip it until next rotation.
     SELECT name INTO v_latest
     FROM pg_ls_dir(v_log_dir) AS t(name)
