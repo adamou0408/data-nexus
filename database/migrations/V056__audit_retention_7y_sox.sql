@@ -14,13 +14,19 @@
 -- both the dashboard query and the SOX export query
 -- (GET /api/browse/audit-logs?subject=&start_time=&end_time=).
 --
--- Capacity headroom check (planner notes):
---   Current ≈ 645 audit rows total in dev. Production estimate from
---   plan §3.3 = read volume +30-100% post-default-allow pilot.
---   With 30d compression at the documented 5-10× ratio + 7y window,
---   estimated cold-storage footprint ≈ <10 GB even at 1M reads/day.
---   P0-F benchmark will replace this estimate with measured numbers
---   before Phase 1 lands.
+-- Capacity headroom (measured by P0-F benchmark 2026-04-27):
+--   Per-row size with 4 indexes: 359 B uncompressed, 28 B compressed.
+--   Combined compression ratio = 12.71× (better than the 5-10× the
+--   pre-benchmark estimate assumed).
+--   7-year storage extrapolation (30d hot uncompressed + 2525d cold):
+--     100k reads/day → ~7.8 GB total
+--     500k reads/day → ~39 GB
+--     1M reads/day   → ~78 GB
+--   The earlier "<10 GB at 1M reads/day" speculation was wrong by 8× —
+--   storage budget is operationally fine but plan capacity around the
+--   measured numbers, not the optimistic ones.
+--   See `.claude/plans/v3-phase-1/migration-drafts/_p0f_bench_setup.sql`
+--   to reproduce the measurement.
 -- ============================================================
 
 -- ─── 1. Replace retention policy: 2y → 7y ───
