@@ -6,31 +6,42 @@
 > All sessions should read this file first and update it when completing work.
 > For feature requests detail: `docs/wishlist-features.md`
 > For tech debt detail: `docs/backlog-tech-debt.md`
-> Last updated: 2026-04-22
+> Last updated: 2026-04-26
 
 ---
 
-## Phase 1 Active — Weekly Tracker (2026-04-22 → 2027-05)
+## Phase 1 Active — Weekly Tracker (2026-04-26 → 2027-05)
 
 **Demo target:** Q2 2027 · **Master plan:** `docs/plan-v3-phase-1.md`
+**Mode:** 純軟體開發 — no hiring / cross-team / 訪談 paths in scope（見 memory `project_pure_software_dev.md`）
 
-### This week (2026-04-22 → 2026-04-28)
+### This week (2026-04-26 → 2026-05-03)
 
-- [ ] Send Tier 2 sub-PM A & B JDs to HR (critical path; onboard 2026-08) — Adam
-- [ ] Schedule walk-through of Phase 1 plan with SRE / DBA / LLM team owners — Adam
-- [ ] Review constitution AI chapter draft (`.claude/plans/v3-phase-1/constitution-ai-chapter-draft.md`) and start Article 8 amendment — Adam
-- [ ] Review V044 migration draft (`.claude/plans/v3-phase-1/migration-drafts/V044__authz_resource_business_term.sql`) — Adam + DBA
-- [ ] Kickoff meetings: eval set DBA collection + business PM interviews — Adam
-- [x] **Deploy ARCH-01 to dev** — 2026-04-23 驗證 postgres 容器 nexus_authz + nexus_data 兩 DB 齊備,pgbouncer 路由正確,`make verify` 通過,清掉 legacy 表。一個 app-layer bug fix (rls-simulate.ts) 已就位,其他 FU 進 backlog ARCH-01-FU-2/3。
-- [ ] **Restart authz-api** 套用 rls-simulate.ts ARCH-01-FU-1 fix + 確認 `POST /api/rls/simulate {table:'lot_status'}` 回傳真的業務資料 — Adam (很快,但要 Ctrl+C / `make dev-api`)
+**新近完成（本 session 落地）:**
+- [x] **PLATFORM-MODEL-01** — Two-Tier Platform Model framework 寫入 plan + standards (`.claude/plans/v3-phase-1/two-tier-platform-model.md` + `docs/standards/metadata-driven-ui.md`,master plan §2.1 鎖定為 4th architectural decision)
+- [x] **AUDIT-AI-01** — Constitution §9.7 admin-audit columns(actor_type / agent_id / model_id / consent_given)落地 (V049 + admin-audit lib,commit dac27d6)
+- [x] **Constitution v2.0** — Article 9 (AI Agent Operations) ratified (commit 82c6790)
+- [x] **Plan §2.6/§5/§6 cross-team ghost paths 剔除** — commit d13618c
+- [x] **DS-CASCADE-02** — fix /purge FK gaps (composite_actions + pool_credentials + sync_log,commit 50921ab)
 
-### Phase 1 milestone gates
+**進行中(this week,可獨立完成):**
+- [x] **V044 self-review & promote** — semantic layer columns 落地 `database/migrations/V044__authz_resource_business_term.sql`(2026-04-26)。修改:owner_user_id → owner_subject_id 對齊 V020;blessed_fields_check 鬆綁讓 deprecated 保留 audit history。Smoke-tested:lifecycle (draft→blessed→deprecated)、unique on blessed business_term、blessing invariants 全部通過。
+- [ ] **V045 self-review & promote** — `.claude/plans/v3-phase-1/migration-drafts/V045__resource_cascade_policy.sql` 同上模式 (depends on V044) (Adam,~2h)
+- [ ] **ARCH-01-FU-1 verify** — restart authz-api,確認 `POST /api/rls/simulate {table:'lot_status'}` 回傳業務資料 (Adam,~10min)
+
+**下一個 sprint 候選**(not commit yet,待 V044 落地後決定):
+- A) ICON_MAP / STATUS_COLORS 動態化 (Tier A,半天)
+- B) `help_text` primitive (Tier A,1-2 天)
+- C) business_term-driven column mask 自動化 (Tier A,depends on V044,1 週)
+- D) default-by-convention permission preset (Tier A,1-2 週)
+
+### Phase 1 milestone gates(純軟體版本 — pilot / SLO 由 Adam 自評)
 
 | Gate | Date | Exit criteria | Status |
 |------|------|---------------|--------|
 | **G1** | 2026-09 | M4 prod-ready 上線 (SEC-06 / Helm / Keycloak / LDAP Cron / Redis) | 🟡 planning |
-| **G2** | 2026-12 | Tier 2 admin 表單 alpha 跑過 3-5 個 pilot ≥ 2 週主動使用 | ⏳ blocked on sub-PM B hire |
-| **G3** | 2027-03 | LLM SLO 簽契約達成 (text-to-SQL ≥85%, recall@10 ≥0.90) | ⏳ eval set in collection |
+| **G2** | 2026-12 | Tier 2 admin 表單 alpha 自跑端到端 ≥ 1 個業務場景(取代 pilot) | ⏳ not started |
+| **G3** | 2027-03 | LLM eval set 200 筆 + Adam 自評 text-to-SQL ≥85%, recall@10 ≥0.90 | ⏳ eval set 待開工 |
 | **G4** | 2027-04 | Tier 1 自建引擎 render 1 個業務 dashboard 端到端 | ⏳ not started |
 
 ### Phase 1 quarterly snapshot
@@ -38,14 +49,14 @@
 | Track | Q3 2026 | Q4 2026 | Q1 2027 | Q2 2027 |
 |-------|---------|---------|---------|---------|
 | M4 prod-ready | 🟡 kickoff | target 100% (G1 by 09/2026) | — | — |
-| Tier 2 sub-PM hiring | 🟡 JD this week | 🎯 onboarded by 08/2026 | — | — |
+| Tier A primitive (help_text / saved_view / feedback / subscription) | 🟡 help_text | saved_view + feedback | subscription | — |
 | Tier 2 分析 wizard | — | alpha target | expand | demo-ready |
-| Tier 2 admin 表單 | — | 🚧 alpha (G2 pilots) | Path A migration | done |
+| Tier 2 admin 表單 | — | 🚧 alpha (G2 self-test) | Path A migration | done |
 | AI 側欄 | — | — | 🚧 build | polish |
 | Tier 3 Query Tool | — | — | — | 🚧 build |
 | Tier 1 dashboard | — | — | — | 🚧 build (G4) |
-| eval set 200 筆 | 🟡 collecting (100) | 🎯 200 complete | SLO sign-off | quarterly +20 |
-| business_term | 🟡 V044 migration | ≥20 blessed | ≥50 | ≥100 |
+| eval set 200 筆 | 🟡 self-collect | 🎯 200 complete | SLO self-eval | quarterly +20 |
+| business_term | 🟡 V044 migration self-review | ≥20 blessed | ≥50 | ≥100 |
 
 > **Legend:** 🟢 done · 🟡 in progress · 🚧 building · 🎯 milestone · ⏳ pending · 🔴 at risk
 
@@ -251,6 +262,10 @@ Phase 2: AI Agent Integration (Smart Analyst 2.0)  ⏳ Blocked on M4
 | V028 | Phase 5 seed data (policy assignments, role clearance, column classifications) | Done |
 | V029 | Fix fn_ui_root: remove card_grid layout exclusion | Done |
 | V030 | TimescaleDB audit hypertable (7-day chunks, 30-day compression, 2-year retention) + continuous aggregates | Done |
+| V049 | AUDIT-AI-01: admin-audit columns (actor_type/agent_id/model_id/consent_given) for Constitution §9.7 | Done (commit dac27d6) |
+| V050 | audit_home_handler — staged for `audit_home` Tier B page | Untracked (in tree) |
+| V044 | Semantic layer: business_term/definition/formula/owner_subject_id/status/blessed_at/by on authz_resource | Done (2026-04-26, self-reviewed promote) |
+| V045 (draft) | resource_cascade_policy table (stateless_auto vs stateful_sandbox_30d) | Drafted 2026-04-23, awaiting self-review + promote (depends on V044) |
 | data/V003 | 6 remaining business tables migrated to nexus_data | Done |
 | data/V004 | Path C RLS: remove current_setting(), add identity-only pg_has_role | Done |
 | data/V006 | TimescaleDB business hypertables (lot_status_history, yield_events) + triggers + continuous aggregates | Done |

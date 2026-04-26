@@ -1,7 +1,13 @@
 # V044 Semantic Layer Migration — Design Notes
 
-**Status:** READY-FOR-DBA — open Qs resolved 2026-04-23, awaiting DBA sign-off to move into `database/migrations/`.
-**Companion SQL:** `V044__authz_resource_business_term.sql`
+**Status:** **PROMOTED 2026-04-26** — moved to `database/migrations/V044__authz_resource_business_term.sql`, applied to dev DB, smoke-tested. This file remains as historical design rationale.
+
+**Self-review changes from draft (2026-04-26):**
+- `owner_user_id` → **`owner_subject_id`** (consistency with V020 owner_subject)
+- `blessed_fields_check` **loosened**: deprecated rows now preserve blessed_at + blessed_by for audit history (drafter's own reservation honored)
+- Audit trigger deferred to app layer (`authz_audit_log` with `action='semantic_term_*'`)
+
+**Companion SQL (now applied):** `database/migrations/V044__authz_resource_business_term.sql`
 **Plan reference:** `docs/plan-v3-phase-1.md` §2.7 "Semantic layer 生命週期"
 **Date drafted:** 2026-04-22 · **Reviewed:** 2026-04-23 (Adam)
 

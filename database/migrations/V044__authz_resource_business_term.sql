@@ -3,10 +3,18 @@
 --       (business_term / definition / formula / owner /
 --        status lifecycle / blessing metadata)
 --
--- *** DRAFT — NOT YET APPLIED ***
--- *** Requires human review before being placed into
---     database/migrations/ and executed. Do NOT run this from
---     the drafts folder. ***
+-- Self-reviewed and promoted 2026-04-26 (Adam, pure-software-dev
+-- mode — no separate DBA counter-sign role exists in Phase 1).
+--
+-- V-number rationale:
+--   Latest applied migration at promote time = V052. V044/V045 are
+--   gap slots (V046-V052 already taken). Filling V044 is safe
+--   because (a) Makefile db-migrate iterates V*.sql alphabetically
+--   so on fresh db-reset V044 runs before V046+ which is fine
+--   (purely additive on V002's authz_resource), (b) on the live
+--   dev DB this V044 is applied manually now since V046-V052 are
+--   already in place. Pre-existing V030 collision tracked as
+--   MIG-01 / ARCH-01-FU-3, not a V044 blocker.
 --
 -- Context:
 --   v3 Phase 1 plan (docs/plan-v3-phase-1.md §2.7) — Semantic
@@ -15,20 +23,14 @@
 --   status='blessed'; personal sandbox may view 'draft' /
 --   'under_review'.
 --
--- V-number:
---   Latest committed migration at draft time = V043. The next
---   operator MUST re-verify the latest V-number before moving this
---   file into database/migrations/ and bump if needed. A pre-
---   existing V030 collision (V030__timescaledb_audit_hypertable
---   vs V030__view_function_discovery) is tracked separately as
---   MIG-01 / ARCH-01-FU-3 and is NOT a V044 blocker.
---
--- Open questions resolved 2026-04-23 (see companion notes):
---   1. owner_user_id = TEXT (confirmed, overrides BIGINT brief)
---   2. V030 collision = out of scope for V044
---   3. Deprecated rows must clear blessed_at/by — kept strict for
---      v1; audit history lives in authz_audit_log, not on row.
---   Awaiting DBA counter-sign before promotion to migrations/.
+-- Self-review decisions (2026-04-26):
+--   1. owner_subject_id = TEXT (renamed from owner_user_id for
+--      consistency with V020 owner_subject; FK target unchanged)
+--   2. blessed_fields_check loosened: deprecated rows preserve
+--      blessed_at + blessed_by for audit history (drafter's own
+--      reservation about strictness honored)
+--   3. Audit trigger deferred to app layer (authz_audit_log
+--      pipeline with action='semantic_term_*')
 -- ============================================================
 
 -- ─── 1. Add semantic-layer columns ───
@@ -41,12 +43,9 @@ ALTER TABLE authz_resource
     ADD COLUMN definition      TEXT,
     ADD COLUMN formula         TEXT,
     -- Subject FKs are TEXT throughout (see V002, V004, V018, V020).
-    -- TEXT was confirmed as the right choice on 2026-04-23; the
-    -- earlier "BIGINT" instruction in the drafting brief was an
-    -- error and is overridden here. Do not change without also
-    -- migrating authz_subject_role.subject_id, authz_data_source.
-    -- owner_subject, authz_group_member.user_id, etc.
-    ADD COLUMN owner_user_id   TEXT REFERENCES authz_subject(subject_id),
+    -- Naming aligned with V020 owner_subject (was owner_user_id in
+    -- earlier draft; renamed 2026-04-26 for consistency).
+    ADD COLUMN owner_subject_id   TEXT REFERENCES authz_subject(subject_id),
     ADD COLUMN status          TEXT,
     ADD COLUMN blessed_at      TIMESTAMPTZ,
     ADD COLUMN blessed_by      TEXT REFERENCES authz_subject(subject_id);
@@ -71,16 +70,19 @@ ALTER TABLE authz_resource
     ));
 
 -- ─── 3. Blessing invariants ───
--- If status='blessed' we require blessed_at AND blessed_by to be
--- set. If status is anything else they must be NULL. Keeping this
--- as a separate CHECK makes it easy to relax if the review flow
--- changes.
+-- Loosened 2026-04-26: deprecated rows MAY retain blessed_at and
+-- blessed_by so the row itself preserves audit history of who/when
+-- last blessed it. Only draft / under_review / NULL must have
+-- bless fields cleared. status='blessed' still requires both set.
 ALTER TABLE authz_resource
     ADD CONSTRAINT authz_resource_blessed_fields_check
     CHECK (
         (status = 'blessed' AND blessed_at IS NOT NULL AND blessed_by IS NOT NULL)
         OR
-        (status IS DISTINCT FROM 'blessed' AND blessed_at IS NULL AND blessed_by IS NULL)
+        (status = 'deprecated')
+        OR
+        (status IS DISTINCT FROM 'blessed' AND status IS DISTINCT FROM 'deprecated'
+            AND blessed_at IS NULL AND blessed_by IS NULL)
     );
 
 -- ─── 4. Indexes ───
@@ -104,9 +106,9 @@ CREATE INDEX idx_authz_resource_status
     WHERE status IS NOT NULL;
 
 -- d) Owner-based queries (my terms, ownership transfers).
-CREATE INDEX idx_authz_resource_owner_user
-    ON authz_resource (owner_user_id)
-    WHERE owner_user_id IS NOT NULL;
+CREATE INDEX idx_authz_resource_owner_subject
+    ON authz_resource (owner_subject_id)
+    WHERE owner_subject_id IS NOT NULL;
 
 -- ─── 5. Comments ───
 COMMENT ON COLUMN authz_resource.business_term IS
@@ -115,14 +117,14 @@ COMMENT ON COLUMN authz_resource.definition IS
     'Plain-language definition of the business term. Shown in wizard tooltip.';
 COMMENT ON COLUMN authz_resource.formula IS
     'SQL or textual formula for computed terms. Resolved server-side; not trusted input.';
-COMMENT ON COLUMN authz_resource.owner_user_id IS
+COMMENT ON COLUMN authz_resource.owner_subject_id IS
     'Subject (FK to authz_subject) responsible for this term. Ownership grant is separate from AuthZ grants.';
 COMMENT ON COLUMN authz_resource.status IS
     'Semantic layer lifecycle: draft -> under_review -> blessed -> deprecated. NULL = resource is not a semantic-layer term.';
 COMMENT ON COLUMN authz_resource.blessed_at IS
-    'Timestamp of last bless event. NULL until status=blessed.';
+    'Timestamp of last bless event. NULL for draft/under_review/non-semantic rows. Preserved for status=deprecated as audit history.';
 COMMENT ON COLUMN authz_resource.blessed_by IS
-    'Subject who blessed this term. NULL until status=blessed.';
+    'Subject who blessed this term. NULL for draft/under_review/non-semantic rows. Preserved for status=deprecated as audit history.';
 
 -- ─── 6. Audit trigger ───
 -- NOTE: the project does not currently have a generic audit
