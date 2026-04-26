@@ -6,7 +6,7 @@
 - **Linked from:** [`docs/plan-v3-phase-1.md`](../../../docs/plan-v3-phase-1.md) §基座（Q3 2026）— onboarding 摩擦降低，配合 Tier 2 wizard 解鎖
 - **Target:** Pilot 完成於 Q3 2026（先 Phase 0+1+2 = 4 週驗證）
 - **Created:** 2026-04-26
-- **Last updated:** 2026-04-26
+- **Last updated:** 2026-04-27
 
 ---
 
@@ -139,8 +139,10 @@ L0 (functional access) 從 default-deny 改為 **per-data-source 可選 default-
 
 - [ ] **AC-0.1:** Path A/B 的 SELECT 動作確認寫入 `authz_audit_log`（抽樣 100 個 read 動作，100% 可追溯）
   - 已知 gap: `routes/config-exec.ts` 不寫 audit;`middleware/authz.ts` 401/403 拒絕不寫 audit。需補。
+  - **Scope (2026-04-27 Adam 決議):** 只涵蓋「真的回 dataset 的資料讀取 endpoint」(config-exec `/run`、dag、data-query)。管理用 GET (列 datasource、列 user、audit-log 自身) **不在** AC-0.1 範圍。理由:稽核要的是「誰看了什麼業務資料」,管理頁本身查詢有 noise 且容易 recursive。
 - [ ] **AC-0.2:** Path C 啟用 `pgaudit` extension，read 動作寫入 audit pipeline
   - Pipeline 選定:**pgaudit → log_destination=csvlog → pg_cron + COPY FROM** → 新 hypertable `authz_audit_log_path_c`(理由:Phison PG-heavy,零新增 service,維運成本最低)
+  - **Image bundle (2026-04-27 Adam 決議):** 目前 docker-compose 用的 `timescale/timescaledb` image 不含 pgaudit / pg_cron。改 base image 為 `timescale/timescaledb-ha:pg16`(官方 HA image,bundle pgaudit + pg_cron + 其他常見 ext),不自建 Dockerfile。Trade-off: image size ~1.5GB (vs 400MB),所有 dev `docker compose pull` 一次。
 - [ ] **AC-0.3:** Audit volume benchmark — 模擬讀取量 +100%，V030 hypertable 壓縮 / retention 策略可承受 **≥7 年**(per Q2 SOX,原本 ≥6 個月升級)
   - 現況 V030 retention 2y → 需 V0XX 升級至 7y;壓縮 segmentby 重排
 - [ ] **AC-0.4:** Audit query API：給定 `(subject_id, time_range)` 可在 ≤2s 內列出該 user 訪問過的所有 resource
@@ -204,8 +206,8 @@ L0 (functional access) 從 default-deny 改為 **per-data-source 可選 default-
 | P0-D | 跑 100 reads × 三 path,SQL 查 audit_log → 100% 可追溯驗證 | 0.1 | 1h | A,B 完成 |
 | P0-E | `database/migrations/V056__audit_retention_7y.sql` — V030 retention policy 2y → 7y + 壓縮 segmentby 重排 | 0.3 | 1h | 無 |
 | P0-F | Synthetic load benchmark — pgbench 模擬 1M reads/day × 7d,量壓縮率 + 儲存成長 (開 7 年情境推估) | 0.3 / Q4 | 4-8h | E 完成 |
-| P0-G | docker-compose 加 pgaudit 設定;新 migration `V057__pgaudit_path_c.sql` (CREATE EXTENSION + log csv config 提示 + `authz_audit_log_path_c` hypertable) | 0.2 | 2-4h | 無 |
-| P0-H | pg_cron job + state table 把 csvlog 收進 `authz_audit_log_path_c`(SQL function + cron schedule) | 0.2 | 3h | G 完成 |
+| P0-G | docker-compose 切 base image → `timescale/timescaledb-ha:pg16`(bundle pgaudit + pg_cron);新 migration `V057__pgaudit_path_c.sql` (CREATE EXTENSION pgaudit + pg_cron + `authz_audit_log_path_c` hypertable);postgresql.conf 加 shared_preload_libraries / pgaudit.log = 'read' / log_destination=csvlog | 0.2 | 2-4h | 無 |
+| P0-H | pg_cron job + state table (last_processed_filename + offset) 把 csvlog 收進 `authz_audit_log_path_c`(parser SQL function + filter:只收 `pgaudit_log` row + 排除 `authz_audit_log_path_c` 自身查詢避免 recursive) | 0.2 | 4-6h (LOC ~100-200) | G 完成 |
 | P0-I | EXPLAIN ANALYZE on 1M-row hypertable: `subject_id + 30d range` ≤2s SLA 驗證 | 0.4 | 1h | C,F 完成 |
 
 ### Files touched (預估)
@@ -224,8 +226,8 @@ L0 (functional access) 從 default-deny 改為 **per-data-source 可選 default-
 
 - **編號**:已 land V055 (semantic_color);本 phase 用 V056 / V057 / V058
 - **V056** 注意:TimescaleDB `remove_retention_policy` 後 `add_retention_policy` 才能改參數
-- **V057** 注意:`shared_preload_libraries` 改完要重啟 PG,docker-compose 改完跑 `docker compose down && up -d`
-- **V058 / pg_cron**:需先確認 image 帶 pg_cron extension(timescale/timescaledb-ha:pg16 是否預設帶要查)
+- **V057** 注意:`shared_preload_libraries` 改完要重啟 PG,docker-compose 改完跑 `docker compose down && up -d`;**base image 同 commit 換到 `timescale/timescaledb-ha:pg16`** (2026-04-27 拍板,含 pgaudit + pg_cron),所有 dev 要 `docker compose pull`(image ~1.5GB)
+- **V058 / pg_cron**:已確認 timescaledb-ha image bundle pg_cron;cron schedule 跑 `every 1 minute` 收 csvlog
 - **回滾**:每個 V0XX 都附 down migration(V030 retention 還原 / drop pgaudit extension / drop ingest cron job)
 
 ---
@@ -259,6 +261,7 @@ L0 (functional access) 從 default-deny 改為 **per-data-source 可選 default-
 | 2026-04-26 | Planner | → DRAFT | 起草；以 advisor 評估後的量化分析為基礎 |
 | 2026-04-26 | Adam (via executor session AskUserQuestion) | DRAFT → IN-PROGRESS | Q1=all-objects, Q2=SOX, Q3=BI-sandbox;走捷徑跳過 READY-FOR-IMPLEMENTATION (executor 同 session 收答案直接開工);AC-0.3/0.4/1.5/1.6/2.7 已對應更新 |
 | 2026-04-26 | Executor | → IN-PROGRESS | Phase 0 開工,P0-A 起跑 |
+| 2026-04-27 | Adam (via executor session AskUserQuestion) | (no status change) | 拍板兩個 blocker:(1) AC-0.1 scope 縮窄為「只算資料讀取 endpoint」,管理 GET 不算;(2) AC-0.2 image 走 `timescale/timescaledb-ha:pg16` swap 路線(不自建 Dockerfile、不走 fluent-bit),最小改動最低運維成本 |
 | TBD | Executor → Planner | IN-PROGRESS → READY-FOR-REVIEW | Phase 0 全部 AC pass 後 review,Planner 決定是否進 Phase 1 |
 | TBD | Executor → Planner | IN-PROGRESS → READY-FOR-REVIEW | Phase 2 pilot 結果出來後 |
 | TBD | Planner | → DONE | Pilot 通過 + PROGRESS.md 更新 |
