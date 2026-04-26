@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, ReactNode, useMemo, ComponentType } from 'react';
 import { useAuthz } from '../AuthzContext';
+import { useRenderTokens, RenderTokens } from '../RenderTokensContext';
 import { api } from '../api';
 import {
   Home, ChevronRight, ArrowLeft, Loader2, AlertTriangle,
   Package, ShoppingCart, ShieldCheck, FlaskConical, Undo2,
   DollarSign, ClipboardCheck, Layers, Database, Boxes,
+  LucideIcon,
 } from 'lucide-react';
 import { ModulesTab } from './modules/ModulesTab';
 import { AuditTab } from './AuditTab';
@@ -79,21 +81,26 @@ type StackEntry = {
 };
 
 // ============================================================
-// Icon registry — maps icon name from DB to lucide component
+// Icon catalog (Tier A platform)
+//
+// Maps the PascalCase lucide name (stored in authz_ui_render_token.value
+// for category='icon') to the actual React component import. Curator-side
+// kebab-case → PascalCase mapping lives in the DB (V053). To add a brand-
+// new lucide icon, add a one-line import above + a row to this catalog +
+// a row to authz_ui_render_token.
 // ============================================================
 
-const ICON_MAP: Record<string, ReactNode> = {
-  'package':         <Package size={24} />,
-  'shopping-cart':   <ShoppingCart size={24} />,
-  'shield-check':    <ShieldCheck size={24} />,
-  'flask-conical':   <FlaskConical size={24} />,
-  'undo-2':          <Undo2 size={24} />,
-  'dollar-sign':     <DollarSign size={24} />,
-  'clipboard-check': <ClipboardCheck size={24} />,
-  'layers':          <Layers size={24} />,
-  'database':        <Database size={24} />,
-  'boxes':           <Boxes size={24} />,
+const LUCIDE_ICON_CATALOG: Record<string, LucideIcon> = {
+  Package, ShoppingCart, ShieldCheck, FlaskConical, Undo2,
+  DollarSign, ClipboardCheck, Layers, Database, Boxes,
 };
+
+function resolveIcon(iconKey: string | undefined, tokens: RenderTokens, size = 24): ReactNode {
+  if (!iconKey) return <Database size={size} />;
+  const lucideName = tokens.icon[iconKey];
+  const Component = lucideName ? LUCIDE_ICON_CATALOG[lucideName] : undefined;
+  return Component ? <Component size={size} /> : <Database size={size} />;
+}
 
 // ============================================================
 // Handler registry — L4 Config-SM dispatch
@@ -114,63 +121,11 @@ const HANDLER_REGISTRY: Record<string, ComponentType<HandlerProps>> = {
 };
 
 // ============================================================
-// Cell Renderers — SSOT: render type comes from config
+// Cell Renderers — SSOT: render type comes from config.
+// Color tokens come from authz_ui_render_token (V053) via RenderTokensContext.
 // ============================================================
 
-const STATUS_COLORS: Record<string, string> = {
-  active: 'bg-emerald-100 text-emerald-700',
-  in_progress: 'bg-blue-100 text-blue-700',
-  completed: 'bg-emerald-100 text-emerald-700',
-  pending: 'bg-amber-100 text-amber-700',
-  confirmed: 'bg-blue-100 text-blue-700',
-  shipped: 'bg-indigo-100 text-indigo-700',
-  closed: 'bg-slate-100 text-slate-600',
-  hold: 'bg-amber-100 text-amber-700',
-  on_hold: 'bg-amber-100 text-amber-700',
-  scrapped: 'bg-red-100 text-red-700',
-  failed: 'bg-red-100 text-red-700',
-  passed: 'bg-emerald-100 text-emerald-700',
-  waived: 'bg-purple-100 text-purple-700',
-  open: 'bg-amber-100 text-amber-700',
-  analyzing: 'bg-blue-100 text-blue-700',
-  resolved: 'bg-emerald-100 text-emerald-700',
-  'A+': 'bg-emerald-100 text-emerald-700',
-  'A': 'bg-green-100 text-green-700',
-  'B': 'bg-amber-100 text-amber-700',
-  'C': 'bg-orange-100 text-orange-700',
-  'Reject': 'bg-red-100 text-red-700',
-  tier1: 'bg-emerald-100 text-emerald-700',
-  tier2: 'bg-blue-100 text-blue-700',
-  tier3: 'bg-amber-100 text-amber-700',
-  distributor: 'bg-purple-100 text-purple-700',
-};
-
-const PHASE_COLORS: Record<string, string> = {
-  wafer_prep: 'bg-slate-100 text-slate-700',
-  die_attach: 'bg-blue-100 text-blue-700',
-  wire_bond: 'bg-indigo-100 text-indigo-700',
-  molding: 'bg-purple-100 text-purple-700',
-  cp_test: 'bg-cyan-100 text-cyan-700',
-  ft_test: 'bg-teal-100 text-teal-700',
-  packing: 'bg-emerald-100 text-emerald-700',
-  CP: 'bg-cyan-100 text-cyan-700',
-  FT: 'bg-teal-100 text-teal-700',
-  HTOL: 'bg-red-100 text-red-700',
-  TC: 'bg-orange-100 text-orange-700',
-  UHAST: 'bg-amber-100 text-amber-700',
-  ESD: 'bg-yellow-100 text-yellow-700',
-  'Latch-up': 'bg-pink-100 text-pink-700',
-};
-
-const GATE_COLORS: Record<string, string> = {
-  G0_concept: 'bg-slate-100 text-slate-700',
-  G1_feasibility: 'bg-blue-100 text-blue-700',
-  G2_dev: 'bg-indigo-100 text-indigo-700',
-  G3_qualification: 'bg-purple-100 text-purple-700',
-  G4_mass_production: 'bg-emerald-100 text-emerald-700',
-};
-
-function renderCell(value: unknown, render?: string): ReactNode {
+function renderCell(value: unknown, render: string | undefined, tokens: RenderTokens): ReactNode {
   if (value === null || value === undefined) return <span className="text-slate-300">—</span>;
   const str = String(value);
 
@@ -182,15 +137,15 @@ function renderCell(value: unknown, render?: string): ReactNode {
 
   switch (render) {
     case 'status_badge': {
-      const color = STATUS_COLORS[str] || 'bg-slate-100 text-slate-600';
+      const color = tokens.status_color[str] || 'bg-slate-100 text-slate-600';
       return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${color}`}>{str}</span>;
     }
     case 'phase_tag': {
-      const color = PHASE_COLORS[str] || 'bg-blue-100 text-blue-700';
+      const color = tokens.phase_color[str] || 'bg-blue-100 text-blue-700';
       return <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${color}`}>{str}</span>;
     }
     case 'gate_badge': {
-      const color = GATE_COLORS[str] || 'bg-slate-100 text-slate-700';
+      const color = tokens.gate_color[str] || 'bg-slate-100 text-slate-700';
       const label = str.replace(/_/g, ' ').replace(/^G(\d)/, 'G$1:');
       return <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${color}`}>{label}</span>;
     }
@@ -289,6 +244,7 @@ function DataTable({
   meta?: PageMeta;
   onRowClick?: (row: Record<string, unknown>) => void;
 }) {
+  const tokens = useRenderTokens();
   const [sortKey, setSortKey] = useState<string>('');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [filterValues, setFilterValues] = useState<Record<string, string>>({});
@@ -390,7 +346,7 @@ function DataTable({
                       key={col.key}
                       className={`px-3 py-2 ${col.align === 'right' ? 'text-right' : ''}`}
                     >
-                      {renderCell(row[col.key], col.render)}
+                      {renderCell(row[col.key], col.render, tokens)}
                     </td>
                   ))}
                 </tr>
@@ -414,6 +370,7 @@ function CardGrid({
   components: CardComponent[];
   onCardClick: (pageId: string) => void;
 }) {
+  const tokens = useRenderTokens();
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {components.map((card) => (
@@ -426,7 +383,7 @@ function CardGrid({
           <div className="flex items-start gap-4">
             <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0
                             group-hover:bg-blue-100 transition-colors">
-              {ICON_MAP[card.icon || ''] || <Database size={24} />}
+              {resolveIcon(card.icon, tokens)}
             </div>
             <div className="min-w-0">
               <div className="font-semibold text-slate-900 text-sm">{card.label}</div>

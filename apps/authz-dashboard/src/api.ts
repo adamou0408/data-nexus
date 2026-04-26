@@ -627,6 +627,11 @@ export const api = {
   uiDescriptors: (pageId: string) =>
     request<UIDescriptor[]>(`/ui/descriptors/${encodeURIComponent(pageId)}`),
 
+  // Render-token registry (V053) — { icon, status_color, phase_color, gate_color }
+  renderTokens: () =>
+    request<Record<'icon' | 'status_color' | 'phase_color' | 'gate_color', Record<string, string>>>(
+      '/ui/render-tokens'),
+
   // Config snapshot & bulk import
   configSnapshot: (sections?: string[]) =>
     request<ConfigSnapshot>(`/config/snapshot${sections ? `?sections=${sections.join(',')}` : ''}`),

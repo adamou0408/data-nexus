@@ -1,8 +1,11 @@
 ---
 paths:
   - "apps/authz-dashboard/src/components/ConfigEngine.tsx"
+  - "apps/authz-dashboard/src/RenderTokensContext.tsx"
   - "services/authz-api/src/routes/config-exec.ts"
+  - "services/authz-api/src/routes/ui.ts"
   - "database/migrations/V022__config_ui_engine.sql"
+  - "database/migrations/V053__ui_render_token.sql"
   - "database/migrations/V0**__*ui*.sql"
 ---
 
@@ -102,7 +105,23 @@ const WIDGETS = { card_grid: CardGrid, table: DataTable, detail: DetailView, ...
 
 ### Icon(`config.icon`)
 
-寫死在 `ICON_MAP`(待動態化,見 §7)。目前可用:`package`, `shopping-cart`, `shield-check`, `flask-conical`, `undo-2`, `dollar-sign`, `clipboard-check`, `layers`, `database`, `boxes`(完整看檔案)。
+從 `authz_ui_render_token` (V053) 取,Tier B Curator 可自由 INSERT。Tier A platform 維護 `LUCIDE_ICON_CATALOG` (ConfigEngine.tsx 的 lucide imports) 作為 PascalCase → React component 的對照。Curator 寫進 metadata 的是 kebab-case `token_key` (e.g. `package`),DB 對到 PascalCase `value` (`Package`),前端解析到 catalog 拿 component。
+
+**新增一個 icon (Curator):**
+```sql
+INSERT INTO authz_ui_render_token (category, token_key, value)
+VALUES ('icon', 'wrench', 'Wrench');
+```
+若 `Wrench` 已在 `LUCIDE_ICON_CATALOG`,立即可用;若還沒,前端 fallback 為 `Database` 圖示,Tier A 補一行 import 即生效(零 schema 改動)。
+
+### Status / Phase / Gate color (`render: 'status_badge' | 'phase_tag' | 'gate_badge'`)
+
+也來自 `authz_ui_render_token` (V053),`category` 分別是 `status_color` / `phase_color` / `gate_color`,`value` 直接是 tailwind class string。Curator 可自由 INSERT 新 status / 新顏色,**沒有任何 React bundle 限制**(不像 icon 需要 component import)。
+
+```sql
+INSERT INTO authz_ui_render_token (category, token_key, value)
+VALUES ('status_color', 'cancelled', 'bg-rose-100 text-rose-700');
+```
 
 ---
 
@@ -182,8 +201,8 @@ const WIDGETS = { card_grid: CardGrid, table: DataTable, detail: DetailView, ...
 
 ## 7. 已知 gap(進 Tier A backlog)
 
-- `ICON_MAP` 寫死 → 動態化(Phase 1)
-- `STATUS_COLORS` 寫死 → 動態化(同上)
+- ~~`ICON_MAP` 寫死~~ ✅ 動態化 2026-04-26 (V053 + RenderTokensContext, RENDER-TOKEN-01)
+- ~~`STATUS_COLORS` 寫死~~ ✅ 同上;`PHASE_COLORS` / `GATE_COLORS` 一併動態化
 - 沒有 `timeline` / `ai_report` / `agg_table` widget → 排程加入
 - 沒有「Curator 改 metadata 即時預覽」的 UI(BU-08 是相關但不完整)
 - Widget catalog 沒有自動 doc → 補 `/api/widget-catalog` endpoint 給 LLM 用

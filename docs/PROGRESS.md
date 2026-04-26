@@ -23,14 +23,16 @@
 - [x] **Constitution v2.0** — Article 9 (AI Agent Operations) ratified (commit 82c6790)
 - [x] **Plan §2.6/§5/§6 cross-team ghost paths 剔除** — commit d13618c
 - [x] **DS-CASCADE-02** — fix /purge FK gaps (composite_actions + pool_credentials + sync_log,commit 50921ab)
+- [x] **SEMANTIC-01** — V044 semantic-layer columns on authz_resource(business_term/definition/formula/owner_subject_id/status lifecycle/blessed_at/by);self-reviewed promote 2026-04-26
+- [x] **RENDER-TOKEN-01** — ICON_MAP / STATUS_COLORS / PHASE_COLORS / GATE_COLORS 從 hardcoded 搬進 `authz_ui_render_token` (V053);新增 `RenderTokensContext` + `/api/ui/render-tokens` endpoint;Curator INSERT 新 token 零 React 改動(2026-04-26)
 
 **進行中(this week,可獨立完成):**
 - [x] **V044 self-review & promote** — semantic layer columns 落地 `database/migrations/V044__authz_resource_business_term.sql`(2026-04-26)。修改:owner_user_id → owner_subject_id 對齊 V020;blessed_fields_check 鬆綁讓 deprecated 保留 audit history。Smoke-tested:lifecycle (draft→blessed→deprecated)、unique on blessed business_term、blessing invariants 全部通過。
 - [ ] **V045 self-review & promote** — `.claude/plans/v3-phase-1/migration-drafts/V045__resource_cascade_policy.sql` 同上模式 (depends on V044) (Adam,~2h)
 - [ ] **ARCH-01-FU-1 verify** — restart authz-api,確認 `POST /api/rls/simulate {table:'lot_status'}` 回傳業務資料 (Adam,~10min)
 
-**下一個 sprint 候選**(not commit yet,待 V044 落地後決定):
-- A) ICON_MAP / STATUS_COLORS 動態化 (Tier A,半天)
+**下一個 sprint 候選**(not commit yet):
+- ~~A) ICON_MAP / STATUS_COLORS 動態化~~ ✅ done (RENDER-TOKEN-01, 2026-04-26)
 - B) `help_text` primitive (Tier A,1-2 天)
 - C) business_term-driven column mask 自動化 (Tier A,depends on V044,1 週)
 - D) default-by-convention permission preset (Tier A,1-2 週)
@@ -265,6 +267,7 @@ Phase 2: AI Agent Integration (Smart Analyst 2.0)  ⏳ Blocked on M4
 | V049 | AUDIT-AI-01: admin-audit columns (actor_type/agent_id/model_id/consent_given) for Constitution §9.7 | Done (commit dac27d6) |
 | V050 | audit_home_handler — staged for `audit_home` Tier B page | Untracked (in tree) |
 | V044 | Semantic layer: business_term/definition/formula/owner_subject_id/status/blessed_at/by on authz_resource | Done (2026-04-26, self-reviewed promote) |
+| V053 | UI render-token registry (icon / status_color / phase_color / gate_color) — RENDER-TOKEN-01 | Done (2026-04-26) |
 | V045 (draft) | resource_cascade_policy table (stateless_auto vs stateful_sandbox_30d) | Drafted 2026-04-23, awaiting self-review + promote (depends on V044) |
 | data/V003 | 6 remaining business tables migrated to nexus_data | Done |
 | data/V004 | Path C RLS: remove current_setting(), add identity-only pg_has_role | Done |
