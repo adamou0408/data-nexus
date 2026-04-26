@@ -56,6 +56,7 @@
 - **v3 主線** + M4 minimal freeze（M4 只做 prod-readiness，不加 feature）
 - **資料主權：** 資料不上 GCP / AWS 等公有雲；內網 LLM team 的 log 可接受（不含 raw prompt，只 hash）
 - **Language：** UX 中文；AI 內部 prompt / retrieval 英文（text-to-SQL 準確率在英文 prompt 高 5-10%）
+- **Two-Tier Platform Model：** Nexus 切成 **Tier A（平台：renderer + widget registry + AuthZ + 4 個 primitive）** 與 **Tier B（應用：Curator 用 metadata 配出來的業務 page，不寫 React code）**。每個 UI 提案 merge 前必須標 tier。詳見 [`.claude/plans/v3-phase-1/two-tier-platform-model.md`](../.claude/plans/v3-phase-1/two-tier-platform-model.md)；機制與 widget catalog 見 [`docs/standards/metadata-driven-ui.md`](standards/metadata-driven-ui.md)
 
 ### 2.2 BI Tier 產品哲學
 

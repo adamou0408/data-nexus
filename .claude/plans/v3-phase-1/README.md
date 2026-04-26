@@ -25,6 +25,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | [`dependency-cascade-plan.md`](./dependency-cascade-plan.md) | 依賴清查級聯 schema (`resource_cascade_policy`) + 30-day sandbox workflow |
 | [`path-a-inventory.md`](./path-a-inventory.md) | Path A surviving screens/descriptors inventory *(owned by another agent — see file for status)* |
 | [`constitution-ai-chapter-draft.md`](./constitution-ai-chapter-draft.md) | Constitution AI chapter draft (Article 8 revision) *(owned by another agent — see file for status)* |
+| [`two-tier-platform-model.md`](./two-tier-platform-model.md) | Tier A (平台) vs Tier B (應用) 切分 + 4 platform primitive backlog (help_text / saved_view / feedback / subscription) |
 | [`migration-drafts/`](./migration-drafts/) | V044 `authz_resource` semantic layer + V045 `resource_cascade_policy` migration SQL drafts *(ready-for-DBA, 2026-04-23)* |
 | [`m4-go-live-runbook.md`](./m4-go-live-runbook.md) | Gate G1 cutover runbook + rollback procedure (2026-09 go-live) |
 | [`g2-pilot-recruitment.md`](./g2-pilot-recruitment.md) | Gate G2 pilot recruitment funnel + exit criteria (3-5 pilots × 2 weeks) |
@@ -50,6 +51,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | dependency-cascade-plan | TBD (backend) | schema-draft-ready (V045 SQL + plan; DBA review) | Q3 2026 |
 | path-a-inventory | Explore agent → Adam to validate | ready-for-review | input to Q4 2026 / Q1 2027 |
 | constitution-ai-chapter-draft | Drafting agent → Adam | ready-for-review (Article 8 amendment) | merge before Q1 2027 |
+| two-tier-platform-model | Adam | draft (2026-04-26) | foundation — gates UI 提案 Q3 2026 起 |
 | migration-drafts/V044 (business_term) | Drafting agent → DBA | ready-for-DBA (open Qs resolved 2026-04-23: TEXT confirmed, V030 collision out-of-scope) | apply Q3 2026 |
 | migration-drafts/V045 (resource_cascade_policy) | Drafting agent → DBA | ready-for-DBA (drafted 2026-04-23, authz_audit_log reuse) | apply Q3 2026 after V044 |
 | m4-go-live-runbook | SRE | STUB | 2026-09 (G1) |
