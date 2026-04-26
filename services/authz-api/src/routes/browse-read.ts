@@ -603,7 +603,10 @@ browseReadRouter.get('/audit-logs', async (req, res) => {
       const cols = ['audit_id', 'timestamp', 'access_path', 'subject_id', 'action_id', 'resource_id', 'decision', 'policy_ids', 'context', 'duration_ms'];
       const escape = (v: unknown): string => {
         if (v === null || v === undefined) return '';
-        const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+        let s: string;
+        if (v instanceof Date) s = v.toISOString();
+        else if (typeof v === 'object') s = JSON.stringify(v);
+        else s = String(v);
         return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
       };
       const lines = [cols.join(',')];

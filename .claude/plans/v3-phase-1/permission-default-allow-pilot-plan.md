@@ -262,6 +262,7 @@ L0 (functional access) 從 default-deny 改為 **per-data-source 可選 default-
 | 2026-04-26 | Adam (via executor session AskUserQuestion) | DRAFT → IN-PROGRESS | Q1=all-objects, Q2=SOX, Q3=BI-sandbox;走捷徑跳過 READY-FOR-IMPLEMENTATION (executor 同 session 收答案直接開工);AC-0.3/0.4/1.5/1.6/2.7 已對應更新 |
 | 2026-04-26 | Executor | → IN-PROGRESS | Phase 0 開工,P0-A 起跑 |
 | 2026-04-27 | Adam (via executor session AskUserQuestion) | (no status change) | 拍板兩個 blocker:(1) AC-0.1 scope 縮窄為「只算資料讀取 endpoint」,管理 GET 不算;(2) AC-0.2 image 走 `timescale/timescaledb-ha:pg16` swap 路線(不自建 Dockerfile、不走 fluent-bit),最小改動最低運維成本 |
+| 2026-04-27 | Executor | (no status change) | Phase 0 work batch 1 landed: P0-A/B/C/D/E 完成。P0-A/B/C audit hooks 9c5454a;P0-D smoke 30/30 deny audits 進入 hypertable in <1.5s flush(allow path code-reviewed,等真實 data_table page 後 runtime 補驗證);P0-E V056 retention 7y migration 已 apply 到 dev,sanity check 通過 7 years。剩 P0-G(V057 + compose swap)draft 進 `migration-drafts/`,待 Adam 同意 image swap 後一起跑;P0-F benchmark 與 P0-H/I 排在 G 之後。 |
 | TBD | Executor → Planner | IN-PROGRESS → READY-FOR-REVIEW | Phase 0 全部 AC pass 後 review,Planner 決定是否進 Phase 1 |
 | TBD | Executor → Planner | IN-PROGRESS → READY-FOR-REVIEW | Phase 2 pilot 結果出來後 |
 | TBD | Planner | → DONE | Pilot 通過 + PROGRESS.md 更新 |
