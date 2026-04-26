@@ -22,6 +22,13 @@ function unauthSubject(req: Request): string {
   return (typeof raw === 'string' && raw.length > 0) ? raw : 'anonymous';
 }
 
+// req.path is router-relative (Express trims the mount prefix), so a middleware
+// mounted under /api/browse sees req.path === '/' for /api/browse/audit-logs.
+// Use req.originalUrl to keep the full path; strip query string to avoid PII.
+function auditRoute(req: Request): string {
+  return req.originalUrl.split('?')[0];
+}
+
 export interface AuthzUser {
   user_id: string;
   groups: string[];
@@ -81,7 +88,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       access_path: 'B',
       subject_id: unauthSubject(req),
       action_id: methodToAction(req.method),
-      resource_id: `route:${req.path}`,
+      resource_id: `route:${auditRoute(req)}`,
       decision: 'deny',
       context: { reason: 'unauthenticated', method: req.method },
     });
@@ -102,7 +109,7 @@ export function requirePermission(action: string, resource: string) {
         action_id: action,
         resource_id: resource,
         decision: 'deny',
-        context: { reason: 'unauthenticated', method: req.method, route: req.path },
+        context: { reason: 'unauthenticated', method: req.method, route: auditRoute(req) },
       });
       return res.status(401).json({ error: 'Missing X-User-Id header' });
     }
@@ -119,7 +126,7 @@ export function requirePermission(action: string, resource: string) {
           action_id: action,
           resource_id: resource,
           decision: 'deny',
-          context: { reason: 'authz_check_failed', method: req.method, route: req.path },
+          context: { reason: 'authz_check_failed', method: req.method, route: auditRoute(req) },
         });
         return res.status(403).json({
           error: 'Forbidden',
@@ -143,7 +150,7 @@ export function requireRole(...roles: string[]) {
         access_path: 'B',
         subject_id: unauthSubject(req),
         action_id: methodToAction(req.method),
-        resource_id: `route:${req.path}`,
+        resource_id: `route:${auditRoute(req)}`,
         decision: 'deny',
         context: { reason: 'unauthenticated', required_roles: roles, method: req.method },
       });
@@ -162,7 +169,7 @@ export function requireRole(...roles: string[]) {
           access_path: 'B',
           subject_id: resolved.user_id,
           action_id: methodToAction(req.method),
-          resource_id: `route:${req.path}`,
+          resource_id: `route:${auditRoute(req)}`,
           decision: 'deny',
           context: { reason: 'role_check_failed', required_roles: roles, user_roles: userRoles, method: req.method },
         });
