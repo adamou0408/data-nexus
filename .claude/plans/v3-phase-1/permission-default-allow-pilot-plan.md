@@ -220,7 +220,7 @@ L0 (functional access) 從 default-deny 改為 **per-data-source 可選 default-
 - `database/migrations/V058__path_c_audit_ingest_cron.sql` (P0-H,可能合進 V057)
 - `deploy/docker-compose/docker-compose.yml` (P0-G,加 pgaudit shared_preload + log_destination=csvlog)
 - `deploy/docker-compose/postgresql.conf` (新建,pgaudit 設定)
-- `tests/audit/audit-coverage.test.ts` (P0-D 自動化)
+- ~~`tests/audit/audit-coverage.test.ts` (P0-D 自動化)~~ — DROPPED 2026-04-27;authz-api 沒有 test runner setup,加 runner 違反 task scope。Coverage 由 runtime smoke + `migration-drafts/_p0d_{setup,teardown}.sql` reproducer 取代 (Handoff 2026-04-27)
 
 ### Migration / DB notes
 

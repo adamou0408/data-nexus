@@ -33,6 +33,10 @@ COMMENT ON TABLE authz_audit_log IS
     'TimescaleDB hypertable: authorization audit log. 7-day chunks, 30-day compression, 7-year retention (SOX).';
 
 -- ─── 3. Sanity: confirm new policy is registered ───
+-- TimescaleDB internals: `proc_name = 'policy_retention'` is the job name in
+-- TimescaleDB 2.x (verified on 2.26.3 in dev 2026-04-27). If a future TSDB
+-- upgrade renames the proc, this DO block will RAISE EXCEPTION with NULL
+-- interval — that's the right failure mode (forces a deliberate fix).
 DO $$
 DECLARE
     v_interval INTERVAL;
