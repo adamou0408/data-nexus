@@ -558,11 +558,20 @@ browseReadRouter.get('/resources/functions', async (req, res) => {
 });
 
 browseReadRouter.get('/audit-logs', async (req, res) => {
-  const limit = Math.min(parseInt(req.query.limit as string) || 50, 500);
+  const format = (req.query.format as string | undefined)?.toLowerCase();
+  const isCsv = format === 'csv';
+  // CSV export bumps the cap to 50k rows for SOX auditor pulls; JSON keeps the
+  // 500-row paged cap to protect the dashboard from accidentally large fetches.
+  const limit = isCsv
+    ? Math.min(parseInt(req.query.limit as string) || 10000, 50000)
+    : Math.min(parseInt(req.query.limit as string) || 50, 500);
   const offset = parseInt(req.query.offset as string) || 0;
   const subject = req.query.subject as string | undefined;
   const action = req.query.action as string | undefined;
   const path = req.query.path as string | undefined;
+  const startTime = req.query.start_time as string | undefined;
+  const endTime = req.query.end_time as string | undefined;
+  const isIsoTimestamp = (s: string) => !Number.isNaN(Date.parse(s));
   try {
     let query = 'SELECT * FROM authz_audit_log WHERE 1=1';
     const params: (string | number)[] = [];
@@ -579,9 +588,32 @@ browseReadRouter.get('/audit-logs', async (req, res) => {
       query += ` AND access_path = $${idx++}`;
       params.push(path);
     }
+    if (startTime && isIsoTimestamp(startTime)) {
+      query += ` AND timestamp >= $${idx++}`;
+      params.push(startTime);
+    }
+    if (endTime && isIsoTimestamp(endTime)) {
+      query += ` AND timestamp < $${idx++}`;
+      params.push(endTime);
+    }
     query += ` ORDER BY timestamp DESC LIMIT $${idx++} OFFSET $${idx++}`;
     params.push(limit, offset);
     const result = await pool.query(query, params);
+    if (isCsv) {
+      const cols = ['audit_id', 'timestamp', 'access_path', 'subject_id', 'action_id', 'resource_id', 'decision', 'policy_ids', 'context', 'duration_ms'];
+      const escape = (v: unknown): string => {
+        if (v === null || v === undefined) return '';
+        const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+        return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const lines = [cols.join(',')];
+      for (const row of result.rows) {
+        lines.push(cols.map(c => escape(row[c])).join(','));
+      }
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="audit-logs-${Date.now()}.csv"`);
+      return res.send(lines.join('\n'));
+    }
     res.json(result.rows);
   } catch (err) {
     handleApiError(res, err);

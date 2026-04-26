@@ -1,6 +1,26 @@
 import { Request, Response, NextFunction } from 'express';
 import { pool } from '../db';
 import type { JWTClaims } from './jwt';
+import { audit } from '../audit';
+
+// Map HTTP method → action_id for audit logging on middleware denials.
+function methodToAction(method: string): string {
+  switch (method.toUpperCase()) {
+    case 'GET': return 'read';
+    case 'POST': return 'write';
+    case 'PUT':
+    case 'PATCH': return 'update';
+    case 'DELETE': return 'delete';
+    default: return method.toLowerCase();
+  }
+}
+
+// Normalize the unauth subject id. Use the raw header if present so attempts
+// with bogus headers are still attributable; otherwise fall back to a constant.
+function unauthSubject(req: Request): string {
+  const raw = req.headers['x-user-id'];
+  return (typeof raw === 'string' && raw.length > 0) ? raw : 'anonymous';
+}
 
 export interface AuthzUser {
   user_id: string;
@@ -57,6 +77,14 @@ async function resolveUserGroups(user: { user_id: string; groups: string[] }): P
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const user = extractUser(req);
   if (!user) {
+    audit({
+      access_path: 'B',
+      subject_id: unauthSubject(req),
+      action_id: methodToAction(req.method),
+      resource_id: `route:${req.path}`,
+      decision: 'deny',
+      context: { reason: 'unauthenticated', method: req.method },
+    });
     return res.status(401).json({ error: 'Missing X-User-Id header' });
   }
   (req as any).authzUser = await resolveUserGroups(user);
@@ -68,6 +96,14 @@ export function requirePermission(action: string, resource: string) {
   return async (req: Request, res: Response, next: NextFunction) => {
     const user = extractUser(req);
     if (!user) {
+      audit({
+        access_path: 'B',
+        subject_id: unauthSubject(req),
+        action_id: action,
+        resource_id: resource,
+        decision: 'deny',
+        context: { reason: 'unauthenticated', method: req.method, route: req.path },
+      });
       return res.status(401).json({ error: 'Missing X-User-Id header' });
     }
     try {
@@ -77,6 +113,14 @@ export function requirePermission(action: string, resource: string) {
         [resolved.user_id, resolved.groups, action, resource]
       );
       if (!result.rows[0].allowed) {
+        audit({
+          access_path: 'B',
+          subject_id: resolved.user_id,
+          action_id: action,
+          resource_id: resource,
+          decision: 'deny',
+          context: { reason: 'authz_check_failed', method: req.method, route: req.path },
+        });
         return res.status(403).json({
           error: 'Forbidden',
           detail: `${resolved.user_id} lacks ${action} on ${resource}`,
@@ -95,6 +139,14 @@ export function requireRole(...roles: string[]) {
   return async (req: Request, res: Response, next: NextFunction) => {
     const user = extractUser(req);
     if (!user) {
+      audit({
+        access_path: 'B',
+        subject_id: unauthSubject(req),
+        action_id: methodToAction(req.method),
+        resource_id: `route:${req.path}`,
+        decision: 'deny',
+        context: { reason: 'unauthenticated', required_roles: roles, method: req.method },
+      });
       return res.status(401).json({ error: 'Missing X-User-Id header' });
     }
     try {
@@ -106,6 +158,14 @@ export function requireRole(...roles: string[]) {
       const userRoles: string[] = result.rows[0].roles || [];
       const hasRole = roles.some(r => userRoles.includes(r));
       if (!hasRole) {
+        audit({
+          access_path: 'B',
+          subject_id: resolved.user_id,
+          action_id: methodToAction(req.method),
+          resource_id: `route:${req.path}`,
+          decision: 'deny',
+          context: { reason: 'role_check_failed', required_roles: roles, user_roles: userRoles, method: req.method },
+        });
         return res.status(403).json({
           error: 'Forbidden',
           detail: `Requires role: ${roles.join(' or ')}`,

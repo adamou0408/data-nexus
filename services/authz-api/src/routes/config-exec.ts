@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { pool, getDataSourcePool, resolveDataSource, getLocalDataPool } from '../db';
 import { buildMaskedSelect, ColumnDef } from '../lib/masked-query';
 import { handleApiError } from '../lib/request-helpers';
+import { audit } from '../audit';
 
 export const configExecRouter = Router();
 
@@ -76,6 +77,14 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
         [user.user_id, user.groups, 'read', config.resource_id]
       );
       if (!checkResult.rows[0].allowed) {
+        audit({
+          access_path: 'A',
+          subject_id: user.user_id,
+          action_id: 'read',
+          resource_id: config.resource_id,
+          decision: 'deny',
+          context: { page_id, reason: 'authz_check_failed' },
+        });
         return res.status(403).json({
           error: 'Forbidden',
           detail: `${user.user_id} lacks read access to ${config.resource_id}`,
@@ -91,6 +100,14 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
     // re-apply masks per viewer.
     if (config.snapshot_data) {
       const snap = config.snapshot_data;
+      audit({
+        access_path: 'A',
+        subject_id: user.user_id,
+        action_id: 'read',
+        resource_id: config.resource_id || `page:${page_id}`,
+        decision: 'allow',
+        context: { page_id, source: 'snapshot', row_count: (snap.rows || []).length },
+      });
       return res.json({
         config: { ...config, columns: snap.columns || [] },
         data: snap.rows || [],
@@ -157,6 +174,22 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
     // Step 8: Merge into config and return
     config.columns = queryResult.columns;
     config.filters = filtersWithOptions;
+
+    audit({
+      access_path: 'A',
+      subject_id: user.user_id,
+      action_id: 'read',
+      resource_id: config.resource_id || `table:${table}`,
+      decision: 'allow',
+      context: {
+        page_id,
+        table,
+        source_id: sourceId,
+        row_count: queryResult.rows.length,
+        filtered_count: queryResult.filteredCount,
+        total_count: queryResult.totalCount,
+      },
+    });
 
     res.json({
       config,
