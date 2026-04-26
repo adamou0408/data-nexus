@@ -3,9 +3,11 @@ paths:
   - "apps/authz-dashboard/src/components/ConfigEngine.tsx"
   - "apps/authz-dashboard/src/RenderTokensContext.tsx"
   - "services/authz-api/src/routes/config-exec.ts"
+  - "services/authz-api/src/routes/dag.ts"
   - "services/authz-api/src/routes/ui.ts"
   - "database/migrations/V022__config_ui_engine.sql"
   - "database/migrations/V053__ui_render_token.sql"
+  - "database/migrations/V054__authz_ui_page_snapshot.sql"
   - "database/migrations/V0**__*ui*.sql"
 ---
 
@@ -196,6 +198,28 @@ VALUES ('status_color', 'cancelled', 'bg-rose-100 text-rose-700');
 - **Column mask 自動套:** `buildMaskedSelect` 讀 `authz_resolve` 的 mask 結果,Curator 不需在 metadata 寫 mask 邏輯
 - **AI agent 可生 metadata:** JSON 受 widget catalog 約束 → LLM 輸出可驗證 → Constitution §9 同意流可審
 - **改 widget 一次,所有 page 受惠:** 反之每個 page 寫死 = 改一處要動 N 處
+
+---
+
+## 6.5 Snapshot pages (DAG → Tier B page, Path A)
+
+V054 加 `authz_ui_page.snapshot_data jsonb`,讓 DAG 任一 node 的 result 可凍存成 Tier B 頁面。Curator workflow loop:run DAG → 「Save as page」按鈕 → page 立刻可看。
+
+**Shape:**
+```jsonc
+snapshot_data = {
+  "columns": [{"key","label","data_type","render"?,"semantic_type"?}],
+  "rows":    [...],
+  "origin":  {"kind":"dag","dag_id":"dag:...","node_id":"n3",
+              "bound_params":{...},"captured_by":"user:...","captured_at":"..."}
+}
+```
+
+**Renderer:** `config-exec.ts` step 3a — `snapshot_data` 非空時 short-circuit,直接回 cached rows + columns(跳過 information_schema scan、跳過 buildMaskedSelect)。
+
+**Endpoint:** `POST /api/dag/save-as-page`(`dag.ts`),body 含 `page_id` / `title` / `parent_page_id` / `dag_id` / `node_id` / `bound_params` / `columns` / `rows` / `overwrite?`。
+
+**未來 Path B:** live re-execution(每次開頁都 re-run DAG,每位 viewer 重新套 mask)。需在 `config-exec.ts` 對 `data_source` 加 `dag:` 前綴 dispatch。Path A 是純 snapshot — 結果是 captured_by 那一刻的 view,後續 viewer 看到的是同一份。
 
 ---
 

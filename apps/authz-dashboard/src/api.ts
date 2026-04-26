@@ -424,6 +424,22 @@ export const api = {
       elapsed_ms: number; lineage: Array<{ input: string; source: string }>;
     }>('/dag/execute-node', { method: 'POST', body: JSON.stringify(payload) }),
 
+  dagSaveAsPage: (payload: {
+    page_id: string;
+    title: string;
+    parent_page_id?: string;
+    description?: string;
+    dag_id: string;
+    node_id: string;
+    bound_params?: Record<string, unknown>;
+    columns: Array<{ name: string; semantic_type?: string; dataTypeID?: number }>;
+    rows: Record<string, unknown>[];
+    overwrite?: boolean;
+  }) =>
+    request<{ status: string; page_id: string; row_count: number; column_count: number }>(
+      '/dag/save-as-page', { method: 'POST', body: JSON.stringify(payload) }
+    ),
+
   discover: (params: { type?: 'table' | 'view' | 'function' | 'all'; unmapped_only?: boolean; q?: string; data_source_id?: string }) => {
     const qs = new URLSearchParams();
     if (params.type && params.type !== 'all') qs.set('type', params.type);

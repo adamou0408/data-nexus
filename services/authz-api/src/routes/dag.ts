@@ -323,3 +323,144 @@ dagRouter.post('/execute-node', async (req, res) => {
     return res.status(400).json({ error: 'Node execution failed', detail: err.message });
   }
 });
+
+// ─── Save a node's last_result as a Tier B snapshot page ───
+// Path A from .claude/plans/v3-phase-1/two-tier-platform-model.md §Q4.
+// Cheapest end-to-end Curator loop: run DAG → click button → page exists.
+// Live re-execution (Path B) requires config-exec dispatch on dag: prefix
+// and is intentionally deferred.
+//
+// Body:
+//   {
+//     page_id:        'mat_360_n3_snapshot',     // ^[a-z][a-z0-9_]*$
+//     title:          'Material 360 — Full trace',
+//     parent_page_id: 'modules_home',            // optional, must exist
+//     description?:   string,
+//     dag_id:         'dag:material_360_trace',
+//     node_id:        'n3',
+//     bound_params:   { p_material_no: 'M001' },
+//     columns: [{ name, semantic_type?, dataTypeID? }],
+//     rows:    [{ ... }, ...],
+//     overwrite?:     boolean
+//   }
+const PAGE_ID_RE = /^[a-z][a-z0-9_]*$/;
+const RENDER_BY_SEMANTIC: Record<string, string> = {
+  status: 'status_badge',
+  phase: 'phase_tag',
+  gate: 'gate_badge',
+};
+
+dagRouter.post('/save-as-page', async (req, res) => {
+  const {
+    page_id, title, parent_page_id, description,
+    dag_id, node_id, bound_params,
+    columns, rows, overwrite,
+  } = req.body as {
+    page_id: string;
+    title: string;
+    parent_page_id?: string;
+    description?: string;
+    dag_id: string;
+    node_id: string;
+    bound_params?: Record<string, unknown>;
+    columns: Array<{ name: string; semantic_type?: string; dataTypeID?: number }>;
+    rows: Record<string, unknown>[];
+    overwrite?: boolean;
+  };
+  const userId = getUserId(req);
+
+  if (!page_id || !PAGE_ID_RE.test(page_id)) {
+    return res.status(400).json({ error: 'page_id must match ^[a-z][a-z0-9_]*$' });
+  }
+  if (!title || !dag_id || !node_id || !Array.isArray(columns) || !Array.isArray(rows)) {
+    return res.status(400).json({ error: 'title, dag_id, node_id, columns[], rows[] required' });
+  }
+  if (!dag_id.startsWith('dag:')) {
+    return res.status(400).json({ error: 'dag_id must start with "dag:"' });
+  }
+
+  try {
+    if (parent_page_id) {
+      const pCheck = await authzPool.query(
+        `SELECT 1 FROM authz_ui_page WHERE page_id = $1`,
+        [parent_page_id]
+      );
+      if (pCheck.rowCount === 0) {
+        return res.status(400).json({ error: `parent_page_id not found: ${parent_page_id}` });
+      }
+    }
+
+    const exists = await authzPool.query(
+      `SELECT 1 FROM authz_ui_page WHERE page_id = $1`,
+      [page_id]
+    );
+    if (exists.rowCount && !overwrite) {
+      return res.status(409).json({
+        error: 'page_id already exists',
+        hint: 'Pass overwrite:true to replace the existing snapshot.',
+      });
+    }
+
+    // Normalize columns to ColumnDef shape (key/label/data_type/render).
+    // Default render is picked by semantic_type when we have a known mapping.
+    const normalizedColumns = columns.map((c) => ({
+      key: c.name,
+      label: c.name,
+      data_type: 'text',
+      render: c.semantic_type ? RENDER_BY_SEMANTIC[c.semantic_type] : undefined,
+      semantic_type: c.semantic_type,
+    }));
+
+    const snapshotData = {
+      columns: normalizedColumns,
+      rows,
+      origin: {
+        kind: 'dag',
+        dag_id,
+        node_id,
+        bound_params: bound_params || {},
+        captured_by: userId,
+        captured_at: new Date().toISOString(),
+      },
+    };
+
+    if (exists.rowCount && overwrite) {
+      await authzPool.query(
+        `UPDATE authz_ui_page
+            SET title = $2,
+                parent_page_id = $3,
+                description = $4,
+                snapshot_data = $5::jsonb,
+                is_active = TRUE
+          WHERE page_id = $1`,
+        [page_id, title, parent_page_id || null, description || null, JSON.stringify(snapshotData)]
+      );
+    } else {
+      await authzPool.query(
+        `INSERT INTO authz_ui_page
+           (page_id, title, layout, parent_page_id, description, icon,
+            snapshot_data, is_active)
+         VALUES ($1, $2, 'table', $3, $4, 'database', $5::jsonb, TRUE)`,
+        [page_id, title, parent_page_id || null, description || null, JSON.stringify(snapshotData)]
+      );
+    }
+
+    logAdminAction(authzPool, {
+      userId,
+      action: overwrite && exists.rowCount ? 'DAG_SAVE_AS_PAGE_OVERWRITE' : 'DAG_SAVE_AS_PAGE',
+      resourceType: 'ui_page',
+      resourceId: page_id,
+      details: { dag_id, node_id, row_count: rows.length, column_count: columns.length },
+      ip: getClientIp(req),
+    });
+
+    res.status(exists.rowCount ? 200 : 201).json({
+      status: 'ok',
+      page_id,
+      row_count: rows.length,
+      column_count: columns.length,
+    });
+  } catch (err) {
+    handleApiError(res, err);
+  }
+});

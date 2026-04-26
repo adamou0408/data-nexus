@@ -16,6 +16,7 @@ import {
   Workflow, Save, Trash2, Play, Plus, Search, CheckCircle2, AlertCircle,
   Loader2, Database, Sparkles, FileText, Undo2, Redo2, X,
   PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen,
+  FileOutput,
 } from 'lucide-react';
 
 // ── Types ──
@@ -241,6 +242,7 @@ export function DagTab() {
   const [issues, setIssues] = useState<Array<{ severity: string; code: string; message: string; node_id?: string; edge_id?: string }>>([]);
   const [running, setRunning] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savePageOpenFor, setSavePageOpenFor] = useState<string | null>(null);
   const nextIdRef = useRef(1);
 
   // ── Layout Tier 4 (FC-01b): collapsible Palette/Inspector + viewport-tall canvas ──
@@ -867,6 +869,28 @@ export function DagTab() {
           </div>
         </div>
 
+        {savePageOpenFor && (() => {
+          const node = nodes.find((n) => n.id === savePageOpenFor);
+          if (!node || !node.data.last_result || !currentDagId) return null;
+          return (
+            <SaveAsPageDialog
+              dagId={currentDagId}
+              node={node}
+              onClose={() => setSavePageOpenFor(null)}
+              onSaved={(pid) => {
+                setSavePageOpenFor(null);
+                showToast(`Saved as page "${pid}". Opening it now…`, 'success');
+                // Re-use the BU-08 auto-page slot to land on the new page
+                // immediately. ModulesTab walks the resource tree, not
+                // authz_ui_page.parent_page_id, so a hand-attached snapshot
+                // is not yet auto-listed there. Auto-page tab is the
+                // cleanest existing surface for "open arbitrary page_id".
+                window.dispatchEvent(new CustomEvent('open-auto-page', { detail: { page_id: pid } }));
+              }}
+            />
+          );
+        })()}
+
         {/* ── Right: Inspector ── */}
         {inspectorCollapsed ? (
           <div className="bg-white border border-slate-200 rounded-lg p-2 flex flex-col items-center gap-2 shrink-0" style={{ width: 44 }}>
@@ -979,6 +1003,18 @@ export function DagTab() {
                       <pre>{JSON.stringify(selected.data.last_result.rows[0], null, 2)}</pre>
                     </div>
                   )}
+                  {currentDagId ? (
+                    <button
+                      data-testid={`save-as-page-${selected.id}`}
+                      onClick={() => setSavePageOpenFor(selected.id)}
+                      className="w-full btn-secondary text-xs flex items-center justify-center gap-1"
+                      title="Snapshot these rows as a Tier B page (Curator can find it under Modules)"
+                    >
+                      <FileOutput size={12} /> Save as page
+                    </button>
+                  ) : (
+                    <div className="text-[10px] text-slate-400 italic">Save the DAG first to enable snapshot pages.</div>
+                  )}
                 </div>
               )}
             </div>
@@ -986,6 +1022,169 @@ export function DagTab() {
           </div>
         </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Save-as-page dialog (DAG-SAVE-PAGE-01 Path A) ──
+// Snapshots the selected node's last_result into authz_ui_page so a
+// Curator can browse it under Modules without writing React. Live
+// re-execution is Path B (config-exec dispatch on dag: prefix), deferred.
+function SaveAsPageDialog({
+  dagId, node, onClose, onSaved,
+}: {
+  dagId: string;
+  node: Node<NodeData>;
+  onClose: () => void;
+  onSaved: (pageId: string) => void;
+}) {
+  const result = node.data.last_result!;
+  const defaultPageId = `${dagId.replace(/^dag:/, '')}__${node.id}_snapshot`
+    .toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  const defaultTitle = `${node.data.label} — snapshot`;
+  const [pageId, setPageId] = useState(defaultPageId);
+  const [title, setTitle] = useState(defaultTitle);
+  const [parentPageId, setParentPageId] = useState('modules_home');
+  const [description, setDescription] = useState(`DAG snapshot from ${dagId} node ${node.id}`);
+  const [overwrite, setOverwrite] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setError(null);
+    if (!/^[a-z][a-z0-9_]*$/.test(pageId)) {
+      setError('page_id must start with a lowercase letter and contain only lowercase letters, digits, underscores.');
+      return;
+    }
+    if (!title.trim()) {
+      setError('title is required.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const r = await api.dagSaveAsPage({
+        page_id: pageId,
+        title: title.trim(),
+        parent_page_id: parentPageId.trim() || undefined,
+        description: description.trim() || undefined,
+        dag_id: dagId,
+        node_id: node.id,
+        bound_params: node.data.bound_params,
+        columns: result.columns,
+        rows: result.rows,
+        overwrite,
+      });
+      onSaved(r.page_id);
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      if (msg.includes('already exists')) {
+        setError('Page already exists. Tick "Overwrite existing" to replace it.');
+      } else {
+        setError(msg);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/40" />
+      <div
+        className="relative w-full max-w-md bg-white rounded-lg shadow-xl border border-slate-200 flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+        data-testid="save-as-page-dialog"
+      >
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200">
+          <h3 className="text-sm font-semibold text-slate-900">Save snapshot as Tier B page</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X size={16} /></button>
+        </div>
+
+        <div className="px-4 py-3 space-y-3 text-xs">
+          <div className="bg-slate-50 rounded p-2 text-slate-600">
+            From DAG <span className="font-mono">{dagId}</span> node <span className="font-mono">{node.id}</span> ({node.data.label}) —
+            {' '}<span className="font-medium">{result.row_count} rows</span>, {result.columns.length} columns
+          </div>
+
+          <div>
+            <label className="block text-slate-700 font-medium mb-1">Page ID</label>
+            <input
+              data-testid="save-as-page-id"
+              value={pageId}
+              onChange={(e) => setPageId(e.target.value.toLowerCase())}
+              className="w-full border border-slate-200 rounded px-2 py-1 font-mono"
+            />
+            <div className="text-[10px] text-slate-500 mt-0.5">Lowercase, starts with letter; no spaces.</div>
+          </div>
+
+          <div>
+            <label className="block text-slate-700 font-medium mb-1">Title</label>
+            <input
+              data-testid="save-as-page-title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full border border-slate-200 rounded px-2 py-1"
+            />
+          </div>
+
+          <div>
+            <label className="block text-slate-700 font-medium mb-1">Parent page</label>
+            <input
+              data-testid="save-as-page-parent"
+              value={parentPageId}
+              onChange={(e) => setParentPageId(e.target.value)}
+              className="w-full border border-slate-200 rounded px-2 py-1 font-mono"
+              placeholder="modules_home"
+            />
+            <div className="text-[10px] text-slate-500 mt-0.5">Existing page_id for the card-grid parent.</div>
+          </div>
+
+          <div>
+            <label className="block text-slate-700 font-medium mb-1">Description</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              className="w-full border border-slate-200 rounded px-2 py-1"
+            />
+          </div>
+
+          <label className="flex items-center gap-2 text-slate-700">
+            <input
+              type="checkbox"
+              checked={overwrite}
+              onChange={(e) => setOverwrite(e.target.checked)}
+              data-testid="save-as-page-overwrite"
+            />
+            Overwrite existing page if page_id matches
+          </label>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded p-2 text-red-700 text-xs flex items-start gap-1.5">
+              <AlertCircle size={12} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-slate-200">
+          <button onClick={onClose} className="btn-secondary text-xs">Cancel</button>
+          <button
+            onClick={submit}
+            disabled={submitting}
+            data-testid="save-as-page-submit"
+            className="btn-primary text-xs flex items-center gap-1"
+          >
+            {submitting ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save page
+          </button>
+        </div>
       </div>
     </div>
   );

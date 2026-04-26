@@ -83,6 +83,26 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
       }
     }
 
+    // Step 3a: Snapshot pages (DAG-SAVE-PAGE-01).
+    // When `snapshot_data` is set, the page renders cached rows from a prior
+    // DAG node run. No data_table dispatch, no information_schema scan, no
+    // mask resolution — the snapshot was captured under the saver's identity
+    // at save time; future Path B work will re-execute the DAG live and
+    // re-apply masks per viewer.
+    if (config.snapshot_data) {
+      const snap = config.snapshot_data;
+      return res.json({
+        config: { ...config, columns: snap.columns || [] },
+        data: snap.rows || [],
+        meta: {
+          totalCount: (snap.rows || []).length,
+          filteredCount: (snap.rows || []).length,
+          snapshot: true,
+          origin: snap.origin,
+        },
+      });
+    }
+
     // Step 3: If no data_table, return config only (e.g., card_grid sub-pages)
     if (!config.data_table) {
       // For card_grid pages, populate components from child pages

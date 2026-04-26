@@ -25,6 +25,7 @@
 - [x] **DS-CASCADE-02** — fix /purge FK gaps (composite_actions + pool_credentials + sync_log,commit 50921ab)
 - [x] **SEMANTIC-01** — V044 semantic-layer columns on authz_resource(business_term/definition/formula/owner_subject_id/status lifecycle/blessed_at/by);self-reviewed promote 2026-04-26
 - [x] **RENDER-TOKEN-01** — ICON_MAP / STATUS_COLORS / PHASE_COLORS / GATE_COLORS 從 hardcoded 搬進 `authz_ui_render_token` (V053);新增 `RenderTokensContext` + `/api/ui/render-tokens` endpoint;Curator INSERT 新 token 零 React 改動(2026-04-26)
+- [x] **DAG-SAVE-PAGE-01 (Path A)** — DAG 任一 node 跑完可一鍵存成 Tier B snapshot page;V054 加 `authz_ui_page.snapshot_data` JSONB + 更新 `fn_ui_page`;新 endpoint `POST /api/dag/save-as-page`;config-exec.ts step 3a short-circuit 直接回傳 cached rows + columns;DagTab Inspector 加「Save as page」按鈕 + dialog,save 後自動跳 auto-page tab 看頁(2026-04-26)
 
 **進行中(this week,可獨立完成):**
 - [x] **V044 self-review & promote** — semantic layer columns 落地 `database/migrations/V044__authz_resource_business_term.sql`(2026-04-26)。修改:owner_user_id → owner_subject_id 對齊 V020;blessed_fields_check 鬆綁讓 deprecated 保留 audit history。Smoke-tested:lifecycle (draft→blessed→deprecated)、unique on blessed business_term、blessing invariants 全部通過。
@@ -268,6 +269,7 @@ Phase 2: AI Agent Integration (Smart Analyst 2.0)  ⏳ Blocked on M4
 | V050 | audit_home_handler — staged for `audit_home` Tier B page | Untracked (in tree) |
 | V044 | Semantic layer: business_term/definition/formula/owner_subject_id/status/blessed_at/by on authz_resource | Done (2026-04-26, self-reviewed promote) |
 | V053 | UI render-token registry (icon / status_color / phase_color / gate_color) — RENDER-TOKEN-01 | Done (2026-04-26) |
+| V054 | `authz_ui_page.snapshot_data` JSONB + fn_ui_page refresh — DAG-SAVE-PAGE-01 Path A | Done (2026-04-26) |
 | V045 (draft) | resource_cascade_policy table (stateless_auto vs stateful_sandbox_30d) | Drafted 2026-04-23, awaiting self-review + promote (depends on V044) |
 | data/V003 | 6 remaining business tables migrated to nexus_data | Done |
 | data/V004 | Path C RLS: remove current_setting(), add identity-only pg_has_role | Done |
