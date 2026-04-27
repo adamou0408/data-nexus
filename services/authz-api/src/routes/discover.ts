@@ -631,6 +631,7 @@ discoverRouter.get('/suggestions', async (req, res) => {
   try {
     const dataSourceId = String(req.query.data_source_id || '').trim() || null;
     const ruleType = String(req.query.rule_type || '').trim() || null; // 'column_mask'|'row_filter'|null
+    const effectFilter = String(req.query.effect || '').trim() || null; // 'allow'|'deny'|null
 
     const sql = `
       SELECT
@@ -639,12 +640,15 @@ discoverRouter.get('/suggestions', async (req, res) => {
         p.description,
         p.column_mask_rules,
         p.rls_expression,
+        p.effect                                    AS policy_effect,
+        p.granularity                               AS policy_granularity,
         p.suggested_by_rule,
         p.suggested_at,
         p.suggested_reason,
         p.status,
         p.resource_condition,
         r.rule_type,
+        r.effect                                    AS rule_effect,
         r.suggested_label,
         r.match_pattern,
         -- pull the first targeted resource for display
@@ -663,10 +667,11 @@ discoverRouter.get('/suggestions', async (req, res) => {
        AND p.suggested_by_rule IS NOT NULL
        AND ($1::text IS NULL OR tgt.attributes->>'data_source_id' = $1)
        AND ($2::text IS NULL OR r.rule_type = $2)
+       AND ($3::text IS NULL OR p.effect::text = $3)
      ORDER BY p.suggested_at DESC NULLS LAST, p.policy_id DESC
      LIMIT 500`;
 
-    const result = await authzPool.query(sql, [dataSourceId, ruleType]);
+    const result = await authzPool.query(sql, [dataSourceId, ruleType, effectFilter]);
     res.json(result.rows);
   } catch (err) {
     handleApiError(res, err);

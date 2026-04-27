@@ -104,6 +104,9 @@ verify: ## Run Milestone 1 verification tests
 verify-path-c: ## Run Path C verification (PG roles + RLS + pgbouncer)
 	bash scripts/verify-path-c.sh
 
+verify-phase1: ## Phase 1 default-allow regression (12-cell matrix + L1/L2/L3)
+	bash scripts/verify-phase1-default-allow.sh
+
 # ── Quick Queries (dev convenience) ──────────────────────────
 
 db-sync-grants: ## Run authz_sync_db_grants() to sync PG roles/grants from SSOT

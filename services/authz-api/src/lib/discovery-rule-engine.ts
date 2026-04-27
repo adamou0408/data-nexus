@@ -26,6 +26,7 @@ export type DiscoveryRule = {
   suggested_label: string | null;
   description: string | null;
   priority: number;
+  effect: 'allow' | 'deny';     // V061: rule recommends allow-with-mask vs L0 deny.
 };
 
 export type RunResult = {
@@ -34,6 +35,7 @@ export type RunResult = {
   policies_created: number;
   policies_skipped: number;     // already existed
   classifications_tagged: number;
+  deny_suggestions_created: number;   // V062 deny rules → pending_review L0 deny policies
 };
 
 type ResourceRow = {
@@ -51,6 +53,7 @@ const RESOURCE_TYPES_COLUMN_LIKE = ['column'];
 function policyNameFor(resourceId: string, rule: DiscoveryRule): string {
   const prefix = rule.rule_type === 'column_mask' ? 'auto_mask'
                : rule.rule_type === 'row_filter'  ? 'auto_filter'
+               : rule.effect === 'deny'           ? 'auto_deny'
                : 'auto_class';
   // policy_name has no length cap in V003 (TEXT), but keep it short-ish.
   return `${prefix}:${resourceId}:${rule.rule_id.slice(0, 8)}`;
@@ -163,6 +166,7 @@ export async function runDiscoveryRules(opts: {
     policies_created: 0,
     policies_skipped: 0,
     classifications_tagged: 0,
+    deny_suggestions_created: 0,
   };
 
   const client = await pool.connect();
@@ -171,7 +175,7 @@ export async function runDiscoveryRules(opts: {
     const rulesResult = await client.query<DiscoveryRule>(
       `SELECT rule_id, rule_type, match_target, match_pattern,
               suggested_mask_fn, suggested_filter_template, suggested_label,
-              description, priority
+              description, priority, effect
          FROM authz_discovery_rule
         WHERE enabled = TRUE
         ORDER BY priority DESC, rule_id`,
@@ -333,6 +337,48 @@ export async function runDiscoveryRules(opts: {
             [r.resource_id, rule.suggested_label],
           );
           if (upd.rowCount && upd.rowCount > 0) result.classifications_tagged++;
+
+          // V062 (effect='deny'): also create a pending_review L0 deny policy
+          // so the suggestion appears in the review UI and operators can
+          // promote it to an authz_role_permission(effect='deny') row.
+          // The policy itself does NOT enforce — V060's authz_check only
+          // consults role_permission for the deny override. This row is the
+          // "auto-deny suggestion" that AC-1.5 promised.
+          if (rule.effect === 'deny') {
+            const resourceCondition = JSON.stringify({ resource_ids: [r.resource_id] });
+            const reasonText = `${rule.suggested_label}: matched "${subject}" against /${rule.match_pattern}/ — auto-deny suggestion (Phase 1 §3.4)`;
+            const ins = await client.query<{ inserted: boolean }>(
+              `INSERT INTO authz_policy
+                 (policy_name, description, granularity, priority, effect, status,
+                  applicable_paths, subject_condition, resource_condition,
+                  action_condition, environment_condition,
+                  created_by,
+                  suggested_by_rule, suggested_at, suggested_reason)
+               VALUES ($1, $2, 'L0_functional', $3, 'deny', 'pending_review',
+                       '{A,B,C}', '{}'::jsonb, $4::jsonb,
+                       '{}'::jsonb, '{}'::jsonb,
+                       $5,
+                       $6, now(), $7)
+               ON CONFLICT (policy_name) DO UPDATE SET
+                   resource_condition = EXCLUDED.resource_condition,
+                   suggested_at       = EXCLUDED.suggested_at,
+                   suggested_reason   = EXCLUDED.suggested_reason
+                 WHERE authz_policy.status = 'pending_review'
+               RETURNING (xmax = 0) AS inserted`,
+              [
+                policyNameFor(r.resource_id, rule),
+                rule.description ?? `Auto-deny suggestion for ${r.resource_id}`,
+                rule.priority,
+                resourceCondition,
+                createdBy,
+                rule.rule_id,
+                reasonText,
+              ],
+            );
+            if (ins.rowCount && ins.rows[0]?.inserted) {
+              result.deny_suggestions_created++;
+            }
+          }
         }
       }
     }
