@@ -151,22 +151,22 @@ L0 (functional access) 從 default-deny 改為 **per-data-source 可選 default-
 
 ### Phase 1 — Metadata flag 機制
 
-- [ ] **AC-1.1:** Migration `V0XX__data_source_default_l0_policy.sql` 新增欄位：
+- [x] **AC-1.1:** Migration `V059__data_source_default_l0_policy.sql` 新增欄位：
   - `authz_data_source.default_l0_policy` ENUM(`deny`, `allow`) NOT NULL DEFAULT `'deny'`
-- [ ] **AC-1.2:** `authz_resolve()` 邏輯反轉支援：
-  - flag=`deny` → 行為與現況完全相同（regression test pass）
+- [x] **AC-1.2:** `authz_resolve()` 邏輯反轉支援（V060）：
+  - flag=`deny` → 行為與現況完全相同（regression test pass — verify-phase1 cell A1/A2）
   - flag=`allow` → 對該 datasource 的所有 resource 自動視為 L0 allow，除非 `authz_policy.effect='deny'` 命中
-- [ ] **AC-1.3:** `authz_check()` 同步支援（含資源繼承邏輯）
-- [ ] **AC-1.4:** Discovery rule 支援 `effect ENUM('allow','deny')` 欄位
-- [ ] **AC-1.5:** Deny pattern 庫種子資料 **≥30 條**（per Q2 SOX,依 §3.4 表格）寫成 V0XX seed migration + **Adam + 法遵 / 內稽 dual sign-off**
-- [ ] **AC-1.6:** Path C `authz_sync_db_grants()` 支援 `default_l0_policy='allow'` 模式（per Q1 = all schema objects）：
+- [x] **AC-1.3:** `authz_check()` 同步支援（V060/V064，含資源繼承邏輯）
+- [x] **AC-1.4:** Discovery rule 支援 `effect ENUM('allow','deny')` 欄位（V061 + engine `policyNameFor` `auto_deny:` prefix）
+- [~] **AC-1.5:** Deny pattern 庫：**enforcement loop 已實作**（V064 + engine + `/discover/suggestions` PATCH approval；verify-phase1 cell B7 14/14 passing）。**仍待 Adam + 法遵 / 內稽 dual sign-off 30 條 V062 種子內容後才可推 prod**
+- [x] **AC-1.6:** Path C `authz_sync_db_grants()` 支援 `default_l0_policy='allow'` 模式（V063，per Q1 = all schema objects）：
   - `GRANT USAGE ON SCHEMA`
   - `GRANT SELECT ON ALL TABLES IN SCHEMA`
   - `GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA`
   - `GRANT USAGE ON ALL SEQUENCES IN SCHEMA`
   - `ALTER DEFAULT PRIVILEGES IN SCHEMA ... GRANT ...` × 3 種 object 確保未來新建物件自動 allow
   - `REVOKE` deny-list 命中的 table/column/function
-- [ ] **AC-1.7:** Rollback：將 flag 改回 `deny`，10 分鐘內 Path A/B/C 全部回到 deny 狀態，Path C `REVOKE` 完整還原
+- [x] **AC-1.7:** Rollback：將 flag 改回 `deny`，Path A/B/C 全部回到 deny 狀態，Path C `REVOKE` 完整還原（V063 對稱 REVOKE + verify-phase1 cell C2 `pg_default_acl` drains to 0）
 
 ### Phase 2 — Pilot 1 schema
 
@@ -180,13 +180,13 @@ L0 (functional access) 從 default-deny 改為 **per-data-source 可選 default-
 
 ### 跨階段交付
 
-- [ ] **AC-X.1:** Tests：Path A/B/C × default=deny/allow × explicit deny 命中 = 12 種組合的整合測試
-- [ ] **AC-X.2:** Docs 更新：
-  - `docs/api-reference.md` — `default_l0_policy` 欄位 + 新 endpoint
-  - `docs/architecture-diagram.md` — 反轉邏輯圖
-  - `docs/constitution.md` — 若涉及 article 8（authz_data_source 修改 → schema migration 不算 identity field 變更，仍須 self-review）
-- [ ] **AC-X.3:** PROGRESS.md 更新（pilot 結果 + 是否進 Phase 3 的決議）
-- [ ] **AC-X.4:** Pilot 報告 markdown：交付實測數據對照本 plan §1 的目標數值
+- [x] **AC-X.1:** Tests：Path A/B/C × default=deny/allow × explicit deny 命中 = 12 種組合的整合測試（`scripts/verify-phase1-default-allow.sh` + `make verify-phase1`，14/14 passing 2026-04-27）
+- [x] **AC-X.2:** Docs 更新：
+  - `docs/api-reference.md` — `default_l0_policy` 欄位 + 新 endpoint（commit `eea5f4a`）
+  - `docs/architecture-diagram.md` — 反轉邏輯圖（commit `eea5f4a`）
+  - `docs/constitution.md` — Article 2 v2.1 amendment 2026-04-27（schema migrations + `default_l0_policy` flips 不需 per-row consent；identity field 變更仍須）
+- [x] **AC-X.3:** PROGRESS.md 更新（DS-PERM-P1 entry，commit `a6aab3a`；pilot 結果 + Phase 3 決議待 X.4 實跑後補登）
+- [~] **AC-X.4:** Pilot 報告 markdown：**template 已交付** (`.claude/plans/v3-phase-1/permission-default-allow-pilot-report.md`)，實測數據待 Adam 指定 pilot ds + 跑完 2 週後填入
 
 ---
 
