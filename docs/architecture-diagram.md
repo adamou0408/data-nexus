@@ -141,6 +141,38 @@ L0: Functional Access (RBAC)
 
     If any ancestor has allow + no explicit deny at child = ALLOW
 
+    Default-allow inversion (Phase 1 — V059/V060/V064):
+
+      authz_data_source.default_l0_policy: ENUM('deny' | 'allow')
+                              |
+                  +-----------+-----------+
+                  | 'deny' (legacy)        'allow' (inverted)
+                  v                        v
+       authz_check() returns:    authz_check() returns:
+       explicit allow            TRUE  UNLESS one of:
+         AND NOT explicit deny     - authz_role_permission(effect='deny') [V060]
+                                   - authz_policy(effect='deny',           [V064]
+                                       status='active',
+                                       granularity ∈ {L0_functional,
+                                                      L1_data_domain})
+
+    Resource → datasource binding: authz_resource.attributes->>'data_source_id'.
+    Resources without a data_source_id fall back to legacy semantics regardless
+    of any datasource flag.
+
+    AC-1.5 approval loop:
+      Discover engine emits authz_discovery_rule(effect='deny') match
+        -> INSERT authz_policy(status='pending_review', effect='deny')
+        -> operator approves via PATCH /api/discover/suggestions/:id
+        -> status flips 'active'
+        -> V064 widened deny check enforces on next authz_check().
+
+    Path A (Config-SM cache): NOT inverted at the API layer. Frontend reads
+    default_l0_policy directly and renders accordingly (plan §3.2). Path B
+    enforces via authz_check (inverted). Path C enforces via PG GRANT +
+    pg_default_acl, which authz_sync_db_grants() (V063) maintains symmetric
+    REVOKE for AC-1.7 rollback.
+
 L1: Data Domain Scope (ABAC + RLS)
     "What ROWS can this user see?"
 

@@ -1,7 +1,7 @@
 # API & Dashboard Reference
 
 > Maintained here. CLAUDE.md points to this file.
-> Last updated: 2026-04-14
+> Last updated: 2026-04-27
 
 ## API Endpoints
 
@@ -127,6 +127,29 @@
 | GET | /api/datasources/:id/tables | Tables in data source |
 | GET | /api/datasources/:id/lifecycle | Lifecycle phases detail |
 
+**Datasource fields (Phase 1):** `default_l0_policy ENUM(deny|allow)` — V059. Controls whether
+`authz_check()` / `authz_resolve()` invert at L0 for resources whose
+`attributes->>'data_source_id'` points at this row. `'allow'` = "deny only on explicit
+`authz_role_permission(effect='deny')` OR active `authz_policy(effect='deny', granularity IN
+(L0_functional, L1_data_domain))`" (V060 + V064). `'deny'` = legacy explicit-allow semantics.
+Frontend reads this column directly to decide whether to invert UI cache (cache itself is NOT
+inverted — see plan §3.2). `authz_sync_db_grants()` branches per-profile on this column and
+maintains symmetric `ALTER DEFAULT PRIVILEGES` for AC-1.7 rollback (V063).
+
+### Discovery Engine (requireRole: ADMIN, AUTHZ_ADMIN, DBA)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /api/discover | List discovered resources (with filters) |
+| GET | /api/discover/stats | Discovery summary stats |
+| POST | /api/discover/promote | Promote unmapped resource to module |
+| POST | /api/discover/reparent | Reparent resource in hierarchy |
+| POST | /api/discover/bulk | Bulk classify / promote / reparent |
+| POST | /api/discover/run-rules | Run `authz_discovery_rule` engine — emits column-mask, row-filter, classification policies; rules with `effect='deny'` (V061/V062) also write `authz_policy(status='pending_review', effect='deny')` for the AC-1.5 approval loop |
+| GET | /api/discover/suggestions | List rule-generated suggestions. Filters: `data_source_id`, `rule_type`, `effect=allow\|deny`. Returns `policy_effect`, `policy_granularity`, `rule_effect` columns so the UI can distinguish auto-mask / auto-filter / auto-class / auto-deny suggestions |
+| PATCH | /api/discover/suggestions/:policy_id | Approve (status → `active`) or reject suggestion. Approving a deny suggestion makes it enforce via V064's widened allow-branch deny check |
+| POST | /api/discover/generate-app | Generate Path A scaffold from a discovered table |
+
 Source: `services/authz-api/src/routes/` (10 route files)
 
 ## Route Architecture
@@ -142,7 +165,8 @@ index.ts
 ├── /api/browse         → browse-admin.ts      (requireRole ADMIN/AUTHZ_ADMIN — all mutations)
 ├── /api/config-exec    → config-exec.ts       (requireAuth)
 ├── /api/pool           → pool.ts              (requireRole ADMIN/AUTHZ_ADMIN/DBA)
-└── /api/datasources    → datasource.ts        (requireRole ADMIN/AUTHZ_ADMIN/DBA)
+├── /api/datasources    → datasource.ts        (requireRole ADMIN/AUTHZ_ADMIN/DBA)
+└── /api/discover       → discover.ts          (requireRole ADMIN/AUTHZ_ADMIN/DBA)
 ```
 
 ## Dashboard Tabs
