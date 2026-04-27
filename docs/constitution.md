@@ -1,6 +1,6 @@
 # Agent Constitution — Data Nexus
 
-> **Status**: Active (v2.0 ratified 2026-04-24; v1.0 ratified 2026-04-20)
+> **Status**: Active (v2.1 ratified 2026-04-27; v2.0 ratified 2026-04-24; v1.0 ratified 2026-04-20)
 > **Scope**: Binding on all AI agents operating in this repository
 > **Override**: Only via explicit human instruction *in the same conversation turn*
 
@@ -87,6 +87,8 @@ For **Class A** rows in `authz_data_source`, the following operations require
 | `UPDATE ... SET last_synced_at = ...` | metadata housekeeping |
 | `INSERT` a new row at user's request | user is creating, not mutating |
 | Re-running a migration | idempotent by design |
+| Schema migrations against `authz_data_source` (e.g. `ALTER TABLE ... ADD COLUMN`, V059's `default_l0_policy`) | DDL on the table shape is not an identity-field change to any row. Agent **MUST** still self-review the migration like any production DDL — but no per-row consent is required. |
+| `UPDATE ... SET default_l0_policy = ...` (Phase 1) | Behaviour switch, not an identity field. Treat like `display_name`: cosmetic at the row level. **MUST** be paired with a corresponding `authz_sync_db_grants()` run (V063) and surfaced in the operator audit trail. |
 
 ---
 
@@ -396,5 +398,6 @@ Is this an AI write (DDL / DML / authz_resource / module / business_term / conne
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.1 | 2026-04-27 | Article 2 amendment: clarify that `authz_data_source` schema migrations (e.g. V059 adding `default_l0_policy`) are not identity-field changes (no per-row consent), and that `UPDATE ... SET default_l0_policy = ...` is a behaviour switch (not identity) but **MUST** be paired with `authz_sync_db_grants()`. Ratified via Article 8 with explicit user approval (Adam, 2026-04-27 — chose lowest-operational-cost option from agent-proposed amendment). Source: `.claude/plans/v3-phase-1/permission-default-allow-pilot-plan.md` AC-X.2. |
 | 2.0 | 2026-04-24 | Added Article 9 (AI Agent Operations, 8 sub-articles). Ratified via Article 8 procedure with all 8 sub-articles approved as-is. Source: `.claude/plans/v3-phase-1/constitution-ai-chapter-draft.md`. Configures sandbox→diff→approve baseline for future AI features (Q1 2027), aligned with bottom-up Discover/Pending Review/schema-driven UI patterns shipped 2026-04. Companion `authz_audit` migration (actor_type / agent_id / model_id / consent_given columns) pending. |
 | 1.0 | 2026-04-20 | Initial ratification. Scope: `authz_data_source` only. |
