@@ -49,6 +49,9 @@ DECLARE
     v_inserted BIGINT;
 BEGIN
     -- PG 16 csvlog has 26 columns. Schema must match exactly or COPY fails.
+    -- DROP first so manual re-invocations within one txn don't collide
+    -- (pg_cron normally gives us a fresh txn each tick).
+    DROP TABLE IF EXISTS _csvlog_stage;
     CREATE TEMP TABLE _csvlog_stage (
         log_time              TIMESTAMPTZ,
         user_name             TEXT,
@@ -131,23 +134,28 @@ BEGIN
         FROM _csvlog_stage
         WHERE error_severity = 'LOG'
           AND message LIKE 'AUDIT: %'
+          AND user_name IS NOT NULL       -- skip background-worker audit rows
+          AND database_name IS NOT NULL   -- skip non-DB-context audit rows
     ) parsed
     WHERE array_length(audit_fields, 1) >= 7
       AND audit_fields[1] = 'SESSION'   -- skip OBJECT-class duplicates
       AND audit_fields[4] = 'READ'       -- pgaudit.log=read scope
-      AND NOT (
-          upper(audit_fields[6]) = 'TABLE'
-          AND audit_fields[7] LIKE 'public.authz_audit_log%'
-      )
-      AND NOT (
-          upper(audit_fields[6]) = 'TABLE'
-          AND audit_fields[7] LIKE 'public.authz_audit_path_c_ingest_state%'
-      );
+      -- Recursion guards. pgaudit reports the same object as 'TABLE',
+      -- 'COMPOSITE TYPE', 'VIEW' depending on call site, so match
+      -- on object name only (audit_fields[7]) regardless of type.
+      AND audit_fields[7] NOT LIKE 'public.authz_audit_log%'
+      AND audit_fields[7] NOT LIKE 'public.authz_audit_path_c_ingest_state%'
+      AND audit_fields[7] NOT LIKE 'pg_temp%._csvlog_stage'
+      AND audit_fields[7] NOT LIKE 'cron.%';  -- pg_cron internals (job, job_run_details, ...)
 
     GET DIAGNOSTICS v_inserted = ROW_COUNT;
     RETURN v_inserted;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER
+   -- Don't audit our own audit-ingest reads (cron.job / pg_temp / catalog
+   -- lookups inside this function). Without this, every tick adds ~10
+   -- self-referential audit rows that the next tick has to ingest.
+   SET pgaudit.log = 'none';
 
 -- ─── 3. Driver — one file per tick ───
 CREATE OR REPLACE FUNCTION ingest_pgaudit_csvlog()
@@ -202,7 +210,8 @@ BEGIN
     rows_inserted  := v_inserted;
     RETURN NEXT;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER
+   SET pgaudit.log = 'none';
 
 COMMENT ON FUNCTION ingest_pgaudit_csvlog() IS
     'V058 driver — picks one oldest unprocessed pgaudit csvlog file and ingests it into authz_audit_log_path_c. Idempotent via authz_audit_path_c_ingest_state. Scheduled by pg_cron every minute.';

@@ -26,6 +26,8 @@ services:
       - "-c"
       - "cron.database_name=nexus_authz"
       - "-c"
+      - "cron.use_background_workers=on"
+      - "-c"
       - "pgaudit.log=read"
       - "-c"
       - "pgaudit.log_catalog=off"

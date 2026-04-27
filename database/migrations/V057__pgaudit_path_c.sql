@@ -36,7 +36,7 @@ CREATE EXTENSION IF NOT EXISTS pg_cron;
 -- Path C is the volume-heavy path (DB-native SELECTs from BI tools)
 -- and we don't want it to crowd out the small but security-critical
 -- Path B deny stream.
-CREATE TABLE authz_audit_log_path_c (
+CREATE TABLE IF NOT EXISTS authz_audit_log_path_c (
     audit_id        BIGSERIAL,
     timestamp       TIMESTAMPTZ NOT NULL DEFAULT now(),
     access_path     CHAR(1) NOT NULL DEFAULT 'C' CHECK (access_path = 'C'),
@@ -51,11 +51,12 @@ CREATE TABLE authz_audit_log_path_c (
 
 SELECT create_hypertable('authz_audit_log_path_c', 'timestamp',
     chunk_time_interval => INTERVAL '7 days',
-    migrate_data => false);
+    migrate_data => false,
+    if_not_exists => true);
 
 -- ─── 3. Indexes (mirror V030) ───
-CREATE INDEX idx_audit_path_c_subject  ON authz_audit_log_path_c(subject_id, timestamp DESC);
-CREATE INDEX idx_audit_path_c_resource ON authz_audit_log_path_c(resource_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_path_c_subject  ON authz_audit_log_path_c(subject_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_path_c_resource ON authz_audit_log_path_c(resource_id, timestamp DESC);
 
 -- ─── 4. Compression — segment by db user (≈ subject) ───
 ALTER TABLE authz_audit_log_path_c SET (
@@ -63,10 +64,10 @@ ALTER TABLE authz_audit_log_path_c SET (
     timescaledb.compress_segmentby = 'subject_id',
     timescaledb.compress_orderby = 'timestamp DESC'
 );
-SELECT add_compression_policy('authz_audit_log_path_c', INTERVAL '30 days');
+SELECT add_compression_policy('authz_audit_log_path_c', INTERVAL '30 days', if_not_exists => true);
 
 -- ─── 5. Retention — match V056 (7y SOX) ───
-SELECT add_retention_policy('authz_audit_log_path_c', INTERVAL '7 years');
+SELECT add_retention_policy('authz_audit_log_path_c', INTERVAL '7 years', if_not_exists => true);
 
 -- ─── 6. Comments ───
 COMMENT ON TABLE authz_audit_log_path_c IS

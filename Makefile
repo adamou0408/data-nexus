@@ -70,19 +70,22 @@ db-reset: ## Destroy volume and recreate everything from scratch
 	$(MAKE) up
 	@echo "Database reset complete."
 
-pgaudit-swap: ## V057+V058 image swap → pull timescaledb-ha → apply migrations → verify pgaudit/pg_cron loaded
+pgaudit-swap: ## V057+V058 image swap → pull timescaledb-ha → wait for init-db.sh → verify pgaudit/pg_cron loaded
 	$(COMPOSE) down
 	$(COMPOSE) pull postgres
 	$(COMPOSE) up -d
-	@echo "Waiting for PostgreSQL..."
+	@echo "Waiting for PostgreSQL to accept connections..."
 	@$(COMPOSE) exec -T postgres sh -c 'until pg_isready -U nexus_admin -d nexus_authz; do sleep 1; done'
-	$(PSQL) -f /docker-entrypoint-initdb.d/migrations/V057__pgaudit_path_c.sql
-	$(PSQL) -f /docker-entrypoint-initdb.d/migrations/V058__path_c_audit_ingest_cron.sql
+	@echo "Waiting for init-db.sh to finish all migrations (poll for V058 cron job)..."
+	@i=0; until $(PSQL) -tAc "SELECT 1 FROM cron.job WHERE jobname='pgaudit_csvlog_ingest'" 2>/dev/null | grep -q 1; do \
+		i=$$((i+1)); if [ $$i -gt 60 ]; then echo "Timeout waiting for V058 cron job."; exit 1; fi; \
+		sleep 2; \
+	done
 	@echo "── Verifying extensions ──"
 	@$(PSQL) -c "SELECT extname, extversion FROM pg_extension WHERE extname IN ('pgaudit','pg_cron') ORDER BY extname;"
 	@echo "── Verifying cron schedule ──"
 	@$(PSQL) -c "SELECT jobname, schedule, active FROM cron.job WHERE jobname='pgaudit_csvlog_ingest';"
-	@echo "pgaudit-swap complete. Tail csvlog with 'make logs-pg' or check /var/lib/postgresql/data/pg_log/."
+	@echo "pgaudit-swap complete. Tail csvlog with 'make logs-pg' or check /home/postgres/pg_log/ inside container."
 
 db-tables: ## List all authz tables
 	@$(PSQL) -c "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'authz_%' ORDER BY 1;"
