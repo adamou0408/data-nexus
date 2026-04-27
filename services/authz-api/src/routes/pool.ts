@@ -71,6 +71,12 @@ poolRouter.post('/profiles', async (req, res) => {
     ip_whitelist, valid_hours, rls_applies = true, description,
     data_source_id, allowed_modules,
   } = req.body;
+  if (typeof profile_id !== 'string' || !profile_id.trim()) {
+    return res.status(400).json({ error: 'profile_id is required and must be non-empty' });
+  }
+  if (typeof pg_role !== 'string' || !pg_role.trim()) {
+    return res.status(400).json({ error: 'pg_role is required and must be non-empty' });
+  }
   try {
     const result = await pool.query(`
       INSERT INTO authz_db_pool_profile

@@ -126,20 +126,26 @@ function ProfileForm({ initial, isCreate, onSave, onCancel, saving, error, locke
           {isCreate && (
             <>
               <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Profile ID</label>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Profile ID *</label>
                 <input value={form.profile_id} onChange={e => {
                   const v = e.target.value; set('profile_id', v);
                   if (!form.pg_role || form.pg_role === suggestPgRole(form.profile_id)) set('pg_role', suggestPgRole(v));
-                }} placeholder="pool:pe_readonly" className="input font-mono" />
+                }} placeholder="pool:pe_readonly" className="input font-mono" required />
+                {!form.profile_id.trim() && (
+                  <div className="text-xs text-red-500 mt-0.5">Required</div>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                  PG Role
+                  PG Role *
                   {form.pg_role === suggestPgRole(form.profile_id) && form.pg_role && (
                     <span className="text-green-500 normal-case font-normal ml-1">(auto)</span>
                   )}
                 </label>
-                <input value={form.pg_role} onChange={e => set('pg_role', e.target.value)} placeholder="nexus_pe_ro" className="input font-mono" />
+                <input value={form.pg_role} onChange={e => set('pg_role', e.target.value)} placeholder="nexus_pe_ro" className="input font-mono" required />
+                {!form.pg_role.trim() && (
+                  <div className="text-xs text-red-500 mt-0.5">Required</div>
+                )}
               </div>
             </>
           )}
@@ -249,7 +255,15 @@ function ProfileForm({ initial, isCreate, onSave, onCancel, saving, error, locke
         </div>
         <div className="flex gap-2 justify-end">
           <button onClick={onCancel} className="btn-secondary btn-sm">Cancel</button>
-          <button onClick={() => onSave(form)} disabled={saving || form.max_connections < 1 || form.max_connections > 100} className="btn-primary btn-sm">
+          <button
+            onClick={() => onSave(form)}
+            disabled={
+              saving ||
+              form.max_connections < 1 ||
+              form.max_connections > 100 ||
+              (isCreate && (!form.profile_id.trim() || !form.pg_role.trim()))
+            }
+            className="btn-primary btn-sm">
             {saving ? 'Saving...' : isCreate ? 'Create' : 'Save Changes'}
           </button>
         </div>
