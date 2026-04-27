@@ -31,6 +31,7 @@
   - **AC-2.1 pilot use case 已定:** **物料狀況查詢**(2026-04-27);dev `ds:local` 需 seed mock 物料 schema 或等真實 ERP/MES onboard
   - **三大基線原則 (Adam 2026-04-27 指定):** ① 所有存取可追溯到個人 ② 所有 AI 決策可解釋 ③ 所有資料可遮罩。① ✓ `authz_audit_log.subject_id` 具備、② ✓ **V065 落地 2026-04-27** 加 `actor_type/agent_id/model_id/consent_given` 四欄 + actor_type CHECK + AI identity CHECK + idx_audit_actor_type partial index;4/4 constraint cells pass + verify-phase1 14/14 仍通過、③ ✓ V061 `column_mask` rule_type 機制存在
   - **AC-X.4 pilot SOP 已交付:** `.claude/plans/v3-phase-1/permission-default-allow-pilot-report.md` §7 逐日操作清單(D-7..D14),含 ROLLBACK 觸發點 + Adam 不能放手的 3 件事
+- [x] **DS-PERM-SYSADMIN (V066 god-mode role)** — Adam 2026-04-27 插單,目標「減少初始 debug 白工」。AskUserQuestion Option B:allow-端 god-mode + V064 deny 仍擋 (PII/SOX/三原則 #1 紅線保留)。實作:V066 加 `SYSADMIN` role + `group:SYSADMINS` subject + 修 `authz_check` 在最前面 short-circuit (邏輯與 default-allow branch 同) + 修 `authz_resolve` 加 `is_sysadmin` sidecar 給 frontend god-mode UI 用。FK 設計坑:role_permission '*' 樣板因 FK 失敗 → 改用 function short-circuit。Verified 5/5 cells (god-mode、無組擋下、explicit deny 仍擋、resolve sidecar) + verify-phase1 14/14 unchanged。Adam 加成員方式:`INSERT INTO authz_subject_role(subject_id, role_id) VALUES('user:adam_ou','SYSADMIN')` 或加進 `group:SYSADMINS` 群組 (commit `TBD`)
   - ~~**未完待 article 8**~~ ✅ constitution v2.1 ratified 2026-04-27 (commit `2fa8dee`)
 
 **進行中(this week,可獨立完成):**
