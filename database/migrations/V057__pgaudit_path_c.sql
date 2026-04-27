@@ -1,16 +1,14 @@
 -- ============================================================
--- V057 (DRAFT — needs docker-compose image swap before applying)
+-- V057: Path C audit pipeline foundation
 --
--- Path C audit pipeline foundation. Phase 0 of permission-default-allow
+-- Phase 0 of permission-default-allow
 -- (.claude/plans/v3-phase-1/permission-default-allow-pilot-plan.md AC-0.2).
 --
 -- Pre-req: deploy/docker-compose/docker-compose.yml postgres image must
 -- be `timescale/timescaledb-ha:pg16` (bundles pgaudit + pg_cron). The
--- current `timescale/timescaledb:latest-pg16` does NOT ship either, so
--- CREATE EXTENSION will fail there. See companion file
--- `docker-compose-pgaudit-swap.md` for the compose diff and migration
--- ordering notes (compose change MUST land + container restart before
--- this V057 runs).
+-- previous `timescale/timescaledb:latest-pg16` does NOT ship either,
+-- so CREATE EXTENSION will fail there. Apply via `make pgaudit-swap`,
+-- which sequences the compose down → pull → up → migration apply.
 --
 -- What this migration does:
 --   1. Enable pgaudit + pg_cron extensions on nexus_authz

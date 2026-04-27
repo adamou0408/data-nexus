@@ -10,7 +10,7 @@ COMPOSE_METABASE := docker compose -f deploy/docker-compose/docker-compose.yml -
 COMPOSE_ALL := docker compose -f deploy/docker-compose/docker-compose.yml -f deploy/docker-compose/docker-compose.ldap.yml -f deploy/docker-compose/docker-compose.metabase.yml
 
 .PHONY: help up down restart status logs \
-        db-reset db-psql db-migrate db-seed db-shell \
+        db-reset db-psql db-migrate db-seed db-shell pgaudit-swap \
         verify clean dev dev-api dev-ui \
         up-ldap down-ldap ldap-up ldap-down ldap-sync \
         metabase-up metabase-down up-all down-all clean-all
@@ -69,6 +69,20 @@ db-reset: ## Destroy volume and recreate everything from scratch
 	$(COMPOSE) down -v
 	$(MAKE) up
 	@echo "Database reset complete."
+
+pgaudit-swap: ## V057+V058 image swap → pull timescaledb-ha → apply migrations → verify pgaudit/pg_cron loaded
+	$(COMPOSE) down
+	$(COMPOSE) pull postgres
+	$(COMPOSE) up -d
+	@echo "Waiting for PostgreSQL..."
+	@$(COMPOSE) exec -T postgres sh -c 'until pg_isready -U nexus_admin -d nexus_authz; do sleep 1; done'
+	$(PSQL) -f /docker-entrypoint-initdb.d/migrations/V057__pgaudit_path_c.sql
+	$(PSQL) -f /docker-entrypoint-initdb.d/migrations/V058__path_c_audit_ingest_cron.sql
+	@echo "── Verifying extensions ──"
+	@$(PSQL) -c "SELECT extname, extversion FROM pg_extension WHERE extname IN ('pgaudit','pg_cron') ORDER BY extname;"
+	@echo "── Verifying cron schedule ──"
+	@$(PSQL) -c "SELECT jobname, schedule, active FROM cron.job WHERE jobname='pgaudit_csvlog_ingest';"
+	@echo "pgaudit-swap complete. Tail csvlog with 'make logs-pg' or check /var/lib/postgresql/data/pg_log/."
 
 db-tables: ## List all authz tables
 	@$(PSQL) -c "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'authz_%' ORDER BY 1;"

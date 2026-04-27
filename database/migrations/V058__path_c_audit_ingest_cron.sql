@@ -1,13 +1,13 @@
 -- ============================================================
--- V058 (DRAFT — depends on V057 + image swap, see _p0h notes)
+-- V058: Path C audit ingest cron
 --
--- Path C audit ingest cron. Phase 0 of permission-default-allow
+-- Phase 0 of permission-default-allow
 -- (.claude/plans/v3-phase-1/permission-default-allow-pilot-plan.md AC-0.2).
 --
 -- Pre-req: V057 must have created authz_audit_log_path_c hypertable
 -- AND pgaudit + pg_cron extensions must already be loaded
--- (timescaledb-ha:pg16 image + shared_preload_libraries — see
--- docker-compose-pgaudit-swap.md).
+-- (timescaledb-ha:pg16 image + shared_preload_libraries — applied via
+-- `make pgaudit-swap`).
 --
 -- What this migration does:
 --   1. State table tracking which csvlog files are already ingested

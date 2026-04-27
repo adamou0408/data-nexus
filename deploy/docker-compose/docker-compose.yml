@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: timescale/timescaledb:latest-pg16
+    image: timescale/timescaledb-ha:pg16
     environment:
       POSTGRES_DB: nexus_authz
       POSTGRES_USER: nexus_admin
@@ -15,7 +15,34 @@ services:
       - ./pg_hba_custom.conf:/var/lib/postgresql/pg_hba.conf:ro
     # Note: init-db.sh creates nexus_data as second DB in the same instance.
     # Authz migrations run on nexus_authz, data migrations (migrations/data/) run on nexus_data.
-    command: ["postgres", "-c", "hba_file=/var/lib/postgresql/pg_hba.conf"]
+    command:
+      - "postgres"
+      - "-c"
+      - "hba_file=/var/lib/postgresql/pg_hba.conf"
+      - "-c"
+      - "shared_preload_libraries=timescaledb,pgaudit,pg_cron"
+      - "-c"
+      - "cron.database_name=nexus_authz"
+      - "-c"
+      - "pgaudit.log=read"
+      - "-c"
+      - "pgaudit.log_catalog=off"
+      - "-c"
+      - "pgaudit.log_relation=on"
+      - "-c"
+      - "pgaudit.log_parameter=off"
+      - "-c"
+      - "log_destination=csvlog"
+      - "-c"
+      - "logging_collector=on"
+      - "-c"
+      - "log_directory=/var/lib/postgresql/data/pg_log"
+      - "-c"
+      - "log_filename=postgresql-%Y-%m-%d_%H%M%S.log"
+      - "-c"
+      - "log_rotation_age=1h"
+      - "-c"
+      - "log_rotation_size=0"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nexus_admin -d nexus_authz"]
       interval: 5s
