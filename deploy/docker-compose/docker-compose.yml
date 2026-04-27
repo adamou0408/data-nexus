@@ -8,7 +8,9 @@ services:
     ports:
       - "15432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # timescaledb-ha image uses PGDATA=/home/postgres/pgdata/data — mount
+      # the volume one level up so the image's init creates `data/` inside.
+      - pgdata:/home/postgres/pgdata
       - ../../database/migrations:/docker-entrypoint-initdb.d/migrations:ro
       - ../../database/seed:/docker-entrypoint-initdb.d/seed:ro
       - ./init-db.sh:/docker-entrypoint-initdb.d/00-init-db.sh:ro
@@ -36,7 +38,7 @@ services:
       - "-c"
       - "logging_collector=on"
       - "-c"
-      - "log_directory=/var/lib/postgresql/data/pg_log"
+      - "log_directory=/home/postgres/pg_log"
       - "-c"
       - "log_filename=postgresql-%Y-%m-%d_%H%M%S.log"
       - "-c"

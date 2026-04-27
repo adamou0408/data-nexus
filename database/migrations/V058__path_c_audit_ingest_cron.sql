@@ -153,7 +153,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION ingest_pgaudit_csvlog()
 RETURNS TABLE(file_processed TEXT, rows_inserted BIGINT) AS $$
 DECLARE
-    v_log_dir TEXT := '/var/lib/postgresql/data/pg_log';
+    v_log_dir TEXT := '/home/postgres/pg_log';  -- matches PGLOG in timescaledb-ha image
     v_latest  TEXT;
     v_target  TEXT;
     v_inserted BIGINT;
