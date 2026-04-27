@@ -112,6 +112,7 @@ Full rules: **`docs/constitution.md`** (must-read for any agent touching datasou
 | Data Mining vision | `.claude/plans/v3-phase-1/design-mining-vision.md` | When trigger conditions are met |
 | Agent roles & principles | `.claude/agents/README.md` | When onboarding agents |
 | Dev standards | `docs/standards/` | When rules change |
+| Claude toolkit (memory/skills/agents) usage | `docs/standards/claude-toolkit-usage.md` | When workflow changes, or 半年 review |
 | Local dev setup / startup | `docs/nexus-startup-guide.md` | When dev workflow changes |
 | Testing guide | `docs/standards/testing-guide.md` | When test conventions change |
 | Path A / Config-SM detail spec | `docs/config_driven_ui_requirements.md` (appendix to v2.4) | When Config-SM rules change |

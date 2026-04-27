@@ -9,5 +9,6 @@
 | `security.md` | 安全審查規則與觸發條件 | 涉及 authz_check / authz_resolve 變更時 |
 | `known-risks.md` | 20 個已知生產風險追蹤 | Sprint planning 或安全審查時 |
 | `devkit.config` | 專案階段設定 (`STAGE=growth`) | Dev Kit 工具讀取用 |
+| `claude-toolkit-usage.md` | Claude Code memory / skills / agents 精簡使用配方 | 開新 session、調整工作流、忘記哪個工具該用時 |
 
 > Note: 專案全局規範、coding standards、安全紅線定義在根目錄 `CLAUDE.md`。
