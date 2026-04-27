@@ -27,8 +27,11 @@
 - [x] **RENDER-TOKEN-01** — ICON_MAP / STATUS_COLORS / PHASE_COLORS / GATE_COLORS 從 hardcoded 搬進 `authz_ui_render_token` (V053);新增 `RenderTokensContext` + `/api/ui/render-tokens` endpoint;Curator INSERT 新 token 零 React 改動(2026-04-26)
 - [x] **DAG-SAVE-PAGE-01 (Path A)** — DAG 任一 node 跑完可一鍵存成 Tier B snapshot page;V054 加 `authz_ui_page.snapshot_data` JSONB + 更新 `fn_ui_page`;新 endpoint `POST /api/dag/save-as-page`;config-exec.ts step 3a short-circuit 直接回傳 cached rows + columns;DagTab Inspector 加「Save as page」按鈕 + dialog,save 後自動跳 auto-page tab 看頁(2026-04-26)
 - [x] **DS-PERM-P1 (default-allow inversion pilot)** — V059..V064 + engine + verify-phase1 14/14。`authz_data_source.default_l0_policy` ENUM(deny|allow);`authz_check`/`authz_resolve` invert on 'allow' datasources;V061 `authz_discovery_rule.effect`;V062 +30 deny patterns(PII/PHI/SOX);V063 `authz_sync_db_grants` per-profile branch + 對稱 `ALTER DEFAULT PRIVILEGES` REVOKE(AC-1.7 rollback symmetry,pg_default_acl 3 → 0);V064 `authz_check` allow-branch widens deny override to also EXIST-test `authz_policy(effect='deny',status='active')` — 關 AC-1.5 approval loop。Discovery engine effect='deny' rules 寫 pending_review L0 deny policy;`/discover/suggestions` 加 effect 過濾 + 暴露 policy_effect/rule_effect。AC-1.1..1.7 + X.1 完成,X.2 docs(api-reference + architecture-diagram)落地,commit `85428df` + `eea5f4a`(2026-04-27)
-  - **未完待 Adam:** V062 30 條 deny 樣板需 法遵/內稽 + Adam dual sign-off 才能 deploy 到 prod;AC-2.1 BI sandbox schema name 待 Adam 指定
-  - **未完待 article 8:** 提議 constitution Article 2 加 row 釐清 V059 schema migration 不算 identity 變更 + UPDATE `default_l0_policy` 屬 behaviour switch — agent 不可自行 amend,提案待 Adam 核可(P1-O)
+  - **未完待 Adam:** V062 30 條 deny 樣板需 法遵/內稽 + Adam dual sign-off 才能 deploy 到 prod
+  - **AC-2.1 pilot use case 已定:** **物料狀況查詢**(2026-04-27);dev `ds:local` 需 seed mock 物料 schema 或等真實 ERP/MES onboard
+  - **三大基線原則 (Adam 2026-04-27 指定):** ① 所有存取可追溯到個人 ② 所有 AI 決策可解釋 ③ 所有資料可遮罩。① ✓ `authz_audit_log.subject_id` 具備、② ❌ **V065 待補** `actor_type/agent_id/model_id/consent_given` 欄位(constitution v2.0 §9.7 承諾未交)、③ ✓ V061 `column_mask` rule_type 機制存在。pilot 啟動前須交付 V065
+  - **AC-X.4 pilot SOP 已交付:** `.claude/plans/v3-phase-1/permission-default-allow-pilot-report.md` §7 逐日操作清單(D-7..D14),含 ROLLBACK 觸發點 + Adam 不能放手的 3 件事
+  - ~~**未完待 article 8**~~ ✅ constitution v2.1 ratified 2026-04-27 (commit `2fa8dee`)
 
 **進行中(this week,可獨立完成):**
 - [x] **V044 self-review & promote** — semantic layer columns 落地 `database/migrations/V044__authz_resource_business_term.sql`(2026-04-26)。修改:owner_user_id → owner_subject_id 對齊 V020;blessed_fields_check 鬆綁讓 deprecated 保留 audit history。Smoke-tested:lifecycle (draft→blessed→deprecated)、unique on blessed business_term、blessing invariants 全部通過。
