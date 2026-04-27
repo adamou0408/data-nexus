@@ -163,7 +163,8 @@ export function requireRole(...roles: string[]) {
         [resolved.user_id, resolved.groups]
       );
       const userRoles: string[] = result.rows[0].roles || [];
-      const hasRole = roles.some(r => userRoles.includes(r));
+      const isSysadmin = userRoles.includes('SYSADMIN');
+      const hasRole = isSysadmin || roles.some(r => userRoles.includes(r));
       if (!hasRole) {
         audit({
           access_path: 'B',
@@ -176,6 +177,16 @@ export function requireRole(...roles: string[]) {
         return res.status(403).json({
           error: 'Forbidden',
           detail: `Requires role: ${roles.join(' or ')}`,
+        });
+      }
+      if (isSysadmin && !roles.includes('SYSADMIN')) {
+        audit({
+          access_path: 'B',
+          subject_id: resolved.user_id,
+          action_id: methodToAction(req.method),
+          resource_id: `route:${auditRoute(req)}`,
+          decision: 'allow',
+          context: { reason: 'sysadmin_bypass', required_roles: roles, user_roles: userRoles, method: req.method },
         });
       }
       (req as any).authzUser = resolved;
