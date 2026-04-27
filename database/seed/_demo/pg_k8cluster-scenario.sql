@@ -1,5 +1,14 @@
 -- ============================================================
--- pg_k8cluster Scenario: Tiptop ERP Module Mapping
+-- pg_k8cluster Scenario: Tiptop ERP Module Mapping (LEGACY DEMO)
+-- ============================================================
+-- Moved to _demo/ on 2026-04-27 — superseded by real `ds:pg_k8` onboarded
+-- via dashboard. The placeholder `ds:pg_k8cluster` referenced here is NOT
+-- a real data source. Files under database/seed/_demo/ are NOT auto-loaded
+-- by deploy/docker-compose/init-db.sh (its glob is `seed/*.sql`,
+-- non-recursive). Apply manually only for legacy demos.
+-- Do not re-apply on top of real ds:pg_k8 — would collide with user-created
+-- module:pg_tiptop_v1.
+--
 -- Run AFTER: 1) ds:pg_k8cluster registered, 2) Discover completed
 -- ============================================================
 

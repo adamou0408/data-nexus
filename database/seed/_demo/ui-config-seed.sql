@@ -1,5 +1,16 @@
 -- ============================================================
--- Config-Driven UI Seed Data
+-- Config-Driven UI Seed Data (LEGACY DEMO)
+-- ============================================================
+-- Moved to _demo/ on 2026-04-27 — all 8 page rows below bind to mock
+-- modules (module:mrp.*, module:sales.*, module:quality.*) that were
+-- removed from dev-seed.sql when mock data was purged. Reapplying this
+-- file would fail the FK to authz_resource(resource_id) unless those
+-- mock modules are recreated first.
+--
+-- Files under database/seed/_demo/ are NOT auto-loaded by
+-- deploy/docker-compose/init-db.sh (its glob is `seed/*.sql`,
+-- non-recursive). Apply manually only for legacy Path A demos.
+--
 -- Depends on: dev-seed.sql (authz_resource entries must exist)
 -- Populates: authz_ui_page (UI page definitions — SSOT)
 -- ============================================================

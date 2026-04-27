@@ -116,51 +116,15 @@ INSERT INTO authz_subject_role (subject_id, role_id, granted_by) VALUES
     ('group:OP_SSD',      'OP',          'ldap_sync');
 
 -- ============================================================
--- 4. Resources (Phison data center module hierarchy)
+-- 4. Resources — web pages only (Path B)
 -- ============================================================
+-- Mock module hierarchy (mrp/quality/sales/engineering/analytics + their
+-- tables/columns) was removed 2026-04-27 per Adam — bottom-up direction now
+-- starts from real user-onboarded data sources (e.g. ds:pg_k8). Module rows
+-- are created via dashboard "Create Module" + Discover-driven mapping.
+-- The deleted module/table/column inserts live in git history and in
+-- database/seed/_demo/dev-seed-legacy.sql for reference.
 INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name) VALUES
-    -- MRP System
-    ('module:mrp',                      'module', NULL,                          'MRP System'),
-    ('module:mrp.lot_tracking',         'module', 'module:mrp',                 'Lot Tracking / WIP'),
-    ('table:lot_status',                'table',  'module:mrp.lot_tracking',    'Lot Status Table'),
-    ('column:lot_status.unit_price',    'column', 'table:lot_status',           'Unit Price'),
-    ('column:lot_status.customer',      'column', 'table:lot_status',           'Customer'),
-    ('column:lot_status.cost',          'column', 'table:lot_status',           'Cost (internal)'),
-    ('table:wip_inventory',             'table',  'module:mrp.lot_tracking',    'WIP Inventory'),
-    ('module:mrp.yield_analysis',       'module', 'module:mrp',                 'Yield Analysis'),
-    ('table:cp_ft_result',              'table',  'module:mrp.yield_analysis',  'CP/FT Test Results'),
-    ('module:mrp.npi',                  'module', 'module:mrp',                 'NPI Gate Review'),
-    ('table:npi_gate_checklist',        'table',  'module:mrp.npi',             'NPI Gate Checklist'),
-
-    -- Quality System
-    ('module:quality',                  'module', NULL,                          'Quality System'),
-    ('module:quality.reliability',      'module', 'module:quality',             'Reliability Testing'),
-    ('table:reliability_report',        'table',  'module:quality.reliability', 'Reliability Reports'),
-    ('module:quality.rma',              'module', 'module:quality',             'RMA Management'),
-    ('table:rma_record',                'table',  'module:quality.rma',         'RMA Records'),
-    ('module:quality.failure_analysis', 'module', 'module:quality',             'Failure Analysis'),
-
-    -- Sales System
-    ('module:sales',                    'module', NULL,                          'Sales System'),
-    ('module:sales.order_mgmt',         'module', 'module:sales',               'Order Management'),
-    ('table:sales_order',               'table',  'module:sales.order_mgmt',    'Sales Orders'),
-    ('module:sales.pricing',            'module', 'module:sales',               'Pricing Management'),
-    ('table:price_book',                'table',  'module:sales.pricing',       'Price Book'),
-    ('column:price_book.margin',        'column', 'table:price_book',           'Margin (confidential)'),
-    ('module:sales.customer',           'module', 'module:sales',               'Customer Management'),
-
-    -- Engineering System
-    ('module:engineering',              'module', NULL,                          'Engineering System'),
-    ('module:engineering.firmware',     'module', 'module:engineering',          'Firmware Repository'),
-    ('module:engineering.test_program', 'module', 'module:engineering',          'Test Programs'),
-    ('module:engineering.design_data',  'module', 'module:engineering',          'Design Data (restricted)'),
-
-    -- Analytics
-    ('module:analytics',                'module', NULL,                          'Analytics & BI'),
-    ('module:analytics.dashboard',      'module', 'module:analytics',           'BI Dashboards'),
-    ('module:analytics.reports',        'module', 'module:analytics',           'Reports'),
-
-    -- Web pages (Path B)
     ('web_page:home',                   'web_page', NULL,                        'Homepage'),
     ('web_page:admin_dashboard',        'web_page', NULL,                        'Admin Dashboard'),
     ('web_page:authz_admin',            'web_page', NULL,                        'AuthZ Admin Panel');
@@ -169,146 +133,19 @@ INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name)
 UPDATE authz_resource SET attributes = '{"auth_required": false}' WHERE resource_id = 'web_page:home';
 
 -- ============================================================
--- 5. L0 Permissions (Role × Action × Resource)
+-- 5. L0 Permissions — admin web pages only
 -- ============================================================
+-- Mock-module grants (PE/PM/OP/QA/SALES/FAE/RD/FW/FINANCE/VP/BI_USER/ETL_SVC
+-- on module:mrp/quality/sales/engineering/analytics/* and their column
+-- masks/denies) were removed 2026-04-27. Real permissions now come from
+-- dashboard module mapping after Discover scan on real data sources.
 INSERT INTO authz_role_permission (role_id, action_id, resource_id, effect) VALUES
-    -- ═══ PE: Product Engineer ═══
-    ('PE', 'read',    'module:mrp.lot_tracking',        'allow'),
-    ('PE', 'write',   'module:mrp.lot_tracking',        'allow'),
-    ('PE', 'read',    'module:mrp.yield_analysis',      'allow'),
-    ('PE', 'read',    'module:mrp.npi',                 'allow'),
-    ('PE', 'write',   'module:mrp.npi',                 'allow'),
-    ('PE', 'approve', 'module:mrp.npi',                 'allow'),
-    ('PE', 'read',    'module:quality',                 'allow'),
-    ('PE', 'read',    'module:engineering',             'allow'),
-    ('PE', 'read',    'module:analytics.dashboard',     'allow'),
-    ('PE', 'hold',    'table:lot_status',               'allow'),
-    ('PE', 'release', 'table:lot_status',               'allow'),
-    -- PE column denials
-    ('PE', 'read',    'column:lot_status.unit_price',   'deny'),
-    ('PE', 'read',    'column:lot_status.cost',         'deny'),
-    ('PE', 'read',    'column:price_book.margin',       'deny'),
-
-    -- ═══ PM: Product Manager ═══
-    ('PM', 'read',    'module:mrp.lot_tracking',        'allow'),
-    ('PM', 'read',    'module:mrp.yield_analysis',      'allow'),
-    ('PM', 'read',    'module:mrp.npi',                 'allow'),
-    ('PM', 'approve', 'module:mrp.npi',                 'allow'),
-    ('PM', 'read',    'module:quality',                 'allow'),
-    ('PM', 'read',    'module:sales.order_mgmt',        'allow'),
-    ('PM', 'read',    'module:sales.pricing',           'allow'),
-    ('PM', 'read',    'module:analytics.dashboard',     'allow'),
-
-    -- ═══ OP: Operator ═══
-    ('OP', 'read',    'module:mrp.lot_tracking',        'allow'),
-    -- OP column denials (operators see lot tracking but not pricing/customer data)
-    ('OP', 'read',    'column:lot_status.unit_price',   'deny'),
-    ('OP', 'read',    'column:lot_status.cost',         'deny'),
-    ('OP', 'read',    'column:lot_status.customer',     'deny'),
-
-    -- ═══ QA: Quality Assurance ═══
-    ('QA', 'read',    'module:mrp.lot_tracking',        'allow'),
-    ('QA', 'read',    'module:mrp.yield_analysis',      'allow'),
-    ('QA', 'read',    'module:mrp.npi',                 'allow'),
-    ('QA', 'read',    'module:quality',                 'allow'),
-    ('QA', 'write',   'module:quality',                 'allow'),
-    ('QA', 'read',    'module:engineering',             'allow'),
-    ('QA', 'read',    'module:analytics.dashboard',     'allow'),
-    -- QA column denials (QA checks quality, not pricing)
-    ('QA', 'read',    'column:lot_status.unit_price',   'deny'),
-    ('QA', 'read',    'column:lot_status.cost',         'deny'),
-
-    -- ═══ SALES: Sales ═══
-    ('SALES', 'read',  'module:mrp.lot_tracking',       'allow'),
-    ('SALES', 'read',  'module:sales',                  'allow'),
-    ('SALES', 'write', 'module:sales.order_mgmt',       'allow'),
-    ('SALES', 'write', 'module:sales.customer',         'allow'),
-    ('SALES', 'read',  'module:analytics.dashboard',    'allow'),
-    ('SALES', 'read',  'column:lot_status.unit_price',  'allow'),
-    -- SALES column denials (internal cost data is confidential)
-    ('SALES', 'read',  'column:lot_status.cost',        'deny'),
-    ('SALES', 'read',  'column:price_book.margin',      'deny'),
-
-    -- ═══ FAE: Field Application Engineer ═══
-    ('FAE', 'read',   'module:mrp.lot_tracking',        'allow'),
-    ('FAE', 'read',   'module:mrp.yield_analysis',      'allow'),
-    ('FAE', 'read',   'module:quality',                 'allow'),
-    ('FAE', 'read',   'module:sales.order_mgmt',        'allow'),
-    ('FAE', 'read',   'module:engineering',             'allow'),
-    ('FAE', 'read',   'module:analytics.dashboard',     'allow'),
-    -- FAE column denials
-    ('FAE', 'read',   'column:lot_status.cost',         'deny'),
-    ('FAE', 'read',   'column:price_book.margin',       'deny'),
-
-    -- ═══ RD: R&D Engineer ═══
-    ('RD', 'read',    'module:mrp.lot_tracking',        'allow'),
-    ('RD', 'read',    'module:mrp.yield_analysis',      'allow'),
-    ('RD', 'read',    'module:mrp.npi',                 'allow'),
-    ('RD', 'read',    'module:engineering',             'allow'),
-    ('RD', 'write',   'module:engineering',             'allow'),
-    -- RD column denials (R&D focuses on design, not pricing)
-    ('RD', 'read',    'column:lot_status.unit_price',   'deny'),
-    ('RD', 'read',    'column:lot_status.cost',         'deny'),
-
-    -- ═══ FW: Firmware Engineer ═══
-    ('FW', 'read',    'module:mrp.lot_tracking',        'allow'),
-    ('FW', 'read',    'module:mrp.yield_analysis',      'allow'),
-    ('FW', 'read',    'module:engineering',             'allow'),
-    ('FW', 'write',   'module:engineering.firmware',     'allow'),
-    ('FW', 'write',   'module:engineering.test_program', 'allow'),
-    -- FW column denials (firmware engineers don't need pricing data)
-    ('FW', 'read',    'column:lot_status.unit_price',   'deny'),
-    ('FW', 'read',    'column:lot_status.cost',         'deny'),
-
-    -- ═══ FINANCE: Finance ═══
-    ('FINANCE', 'read',  'module:sales.order_mgmt',     'allow'),
-    ('FINANCE', 'read',  'module:sales.pricing',        'allow'),
-    ('FINANCE', 'write', 'module:sales.pricing',        'allow'),
-    ('FINANCE', 'read',  'module:analytics',            'allow'),
-
-    -- ═══ VP: Executive ═══
-    ('VP', 'read',    'module:mrp',                     'allow'),
-    ('VP', 'read',    'module:quality',                 'allow'),
-    ('VP', 'read',    'module:sales',                   'allow'),
-    ('VP', 'read',    'module:engineering',             'allow'),
-    ('VP', 'read',    'module:analytics',               'allow'),
-    ('VP', 'read',    'column:lot_status.unit_price',   'allow'),
-    ('VP', 'read',    'column:lot_status.cost',         'allow'),
-    ('VP', 'read',    'column:price_book.margin',       'allow'),
-
-    -- ═══ BI_USER: BI Analyst ═══
-    ('BI_USER', 'read',  'module:analytics',            'allow'),
-    ('BI_USER', 'write', 'module:analytics',            'allow'),
-    -- BI column denial
-    ('BI_USER', 'read',  'column:price_book.margin',    'deny'),
-
-    -- ═══ ADMIN: System Admin (full access via top-level modules) ═══
-    ('ADMIN', 'read',  'module:mrp',                    'allow'),
-    ('ADMIN', 'write', 'module:mrp',                    'allow'),
-    ('ADMIN', 'read',  'module:quality',                'allow'),
-    ('ADMIN', 'write', 'module:quality',                'allow'),
-    ('ADMIN', 'read',  'module:sales',                  'allow'),
-    ('ADMIN', 'write', 'module:sales',                  'allow'),
-    ('ADMIN', 'read',  'module:engineering',            'allow'),
-    ('ADMIN', 'write', 'module:engineering',            'allow'),
-    ('ADMIN', 'read',  'module:analytics',              'allow'),
-    ('ADMIN', 'write', 'module:analytics',              'allow'),
-    ('ADMIN', 'read',  'column:lot_status.unit_price',  'allow'),
-    ('ADMIN', 'read',  'column:lot_status.cost',        'allow'),
-    ('ADMIN', 'read',  'column:price_book.margin',      'allow'),
-    -- Admin web pages
+    -- ═══ ADMIN: web_page admin dashboard ═══
     ('ADMIN', 'read',  'web_page:admin_dashboard',      'allow'),
     ('ADMIN', 'write', 'web_page:admin_dashboard',      'allow'),
-
-    -- ═══ AUTHZ_ADMIN: AuthZ Admin ═══
+    -- ═══ AUTHZ_ADMIN: AuthZ admin panel ═══
     ('AUTHZ_ADMIN', 'read',  'web_page:authz_admin',    'allow'),
-    ('AUTHZ_ADMIN', 'write', 'web_page:authz_admin',    'allow'),
-
-    -- ═══ ETL_SVC: ETL Service Account ═══
-    ('ETL_SVC', 'read',  'module:mrp',                  'allow'),
-    ('ETL_SVC', 'write', 'module:mrp',                  'allow'),
-    ('ETL_SVC', 'read',  'module:quality',              'allow'),
-    ('ETL_SVC', 'write', 'module:quality',              'allow');
+    ('AUTHZ_ADMIN', 'write', 'web_page:authz_admin',    'allow');
 
 -- ============================================================
 -- 6. L1 ABAC Policies (data scope by product_line / region)
