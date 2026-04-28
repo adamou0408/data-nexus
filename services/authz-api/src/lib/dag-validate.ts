@@ -9,13 +9,15 @@
 
 export interface DagNode {
   id: string;
-  type?: string;                 // 'function' (future: 'table', 'if', ...)
+  type?: string;                 // 'fn' | 'literal' | 'filter' | 'cast' (future: 'aggregate', 'sink', ...)
   data?: {
     resource_id?: string;
     function_name?: string;
-    inputs?: Array<{ name: string; semantic_type?: string; hasDefault?: boolean }>;
-    outputs?: Array<{ name: string; semantic_type?: string }>;
+    inputs?: Array<{ name: string; semantic_type?: string; hasDefault?: boolean; pgType?: string }>;
+    outputs?: Array<{ name: string; semantic_type?: string; pgType?: string }>;
     bound_params?: Record<string, unknown>; // user-supplied constants
+    op_kind?: 'literal' | 'filter' | 'cast';
+    op_config?: Record<string, unknown>;
   };
 }
 
@@ -45,6 +47,24 @@ export interface ValidationIssue {
   message: string;
   node_id?: string;
   edge_id?: string;
+}
+
+// pgType "kind" family — mirrors apps/authz-dashboard/src/utils/handleCompat.ts.
+// Kept inline so dag-validate has zero cross-package imports.
+function kindFamily(pg?: string): 'text' | 'number' | 'bool' | 'date' | 'array' | 'json' | 'any' {
+  if (!pg) return 'any';
+  const p = pg.toLowerCase().trim();
+  if (p.includes('[]') || p.startsWith('_')) return 'array';
+  if (p.includes('char') || p === 'text' || p === 'name' || p === 'citext' || p === 'uuid') return 'text';
+  if (
+    p.includes('int') || p.includes('numeric') || p.includes('decimal') ||
+    p === 'real' || p === 'double precision' || p === 'float4' || p === 'float8' ||
+    p === 'money' || p === 'serial' || p === 'bigserial'
+  ) return 'number';
+  if (p === 'boolean' || p === 'bool') return 'bool';
+  if (p.includes('timestamp') || p === 'date' || p === 'time' || p === 'timetz' || p === 'interval') return 'date';
+  if (p === 'json' || p === 'jsonb') return 'json';
+  return 'any';
 }
 
 export function validateDag(doc: DagDoc): { ok: boolean; issues: ValidationIssue[] } {
@@ -79,14 +99,50 @@ export function validateDag(doc: DagDoc): { ok: boolean; issues: ValidationIssue
       continue;
     }
 
-    // DV-01 — type consistency
-    const outType = srcOut?.semantic_type;
-    const inType = tgtIn?.semantic_type;
-    if (outType && inType && outType !== 'unknown' && inType !== 'unknown' && outType !== inType) {
+    // Operator handles (`__upstream` / `__downstream` / semantic_type='__rowset')
+    // are passthrough by design — type compatibility is checked at the upstream
+    // or downstream fn boundary, not inside the operator chain. Skip strict
+    // checks when either side is operator-flavored.
+    const isOperatorHandle =
+      outName === '__downstream' || inName === '__upstream' ||
+      srcOut?.semantic_type === '__rowset' || tgtIn?.semantic_type === '__rowset';
+    if (isOperatorHandle) continue;
+
+    // DV-01 — type consistency. Two-tier check mirrors handleCompat.ts:
+    //   1. If both sides have a non-'unknown' semantic_type → strict equality
+    //   2. Otherwise fall back to pgType kind family
+    // Error message includes both sides' (semantic / pgType) plus a hint so
+    // curator knows whether to insert a Cast node or fix upstream metadata.
+    const outSem = srcOut?.semantic_type;
+    const inSem = tgtIn?.semantic_type;
+    const outPg = srcOut?.pgType;
+    const inPg = tgtIn?.pgType;
+    const renderSide = (sem?: string, pg?: string) => {
+      const semPart = sem && sem !== 'unknown' ? sem : 'unclassified';
+      const pgPart = pg || 'unknown';
+      return `${semPart}/${pgPart}`;
+    };
+    const semStrictMismatch =
+      outSem && inSem && outSem !== 'unknown' && inSem !== 'unknown' && outSem !== inSem;
+    const kindFallbackMismatch =
+      !semStrictMismatch && (!outSem || outSem === 'unknown' || !inSem || inSem === 'unknown') &&
+      kindFamily(outPg) !== 'any' && kindFamily(inPg) !== 'any' &&
+      kindFamily(outPg) !== kindFamily(inPg);
+    if (semStrictMismatch || kindFallbackMismatch) {
+      const hint = semStrictMismatch
+        ? `Hint: insert a Cast node, or align semantic_type on upstream output.`
+        : `Hint: insert a Cast node to coerce ${kindFamily(outPg)} → ${kindFamily(inPg)}.`;
       issues.push({
         severity: 'error',
         code: 'type_mismatch',
-        message: `Edge ${e.id}: '${outName}'(${outType}) → '${inName}'(${inType}) semantic types differ`,
+        message:
+          `Edge ${e.id}: ` +
+          `'${outName}' (${renderSide(outSem, outPg)}) → ` +
+          `'${inName}' (${renderSide(inSem, inPg)}) — ` +
+          (semStrictMismatch
+            ? `semantic_type mismatch (${outSem} vs ${inSem}).`
+            : `pgType family mismatch (${kindFamily(outPg)} vs ${kindFamily(inPg)}).`) +
+          ` ${hint}`,
         edge_id: e.id,
       });
     }

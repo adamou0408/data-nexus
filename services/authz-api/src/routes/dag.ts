@@ -11,6 +11,7 @@ import { logAdminAction } from '../lib/admin-audit';
 import { getUserId, getClientIp, handleApiError } from '../lib/request-helpers';
 import { parseFunctionArgs } from '../lib/function-metadata';
 import { validateDag, DagDoc } from '../lib/dag-validate';
+import { runOperator, deriveOperatorResourceId, UpstreamFrame } from '../lib/dag-operators';
 import { requireRole } from '../middleware/authz';
 
 export const dagRouter = Router();
@@ -192,22 +193,93 @@ dagRouter.post('/validate', (req, res) => {
 //   2. upstream row0[sourceHandle] whose edge targets this input
 //   3. first upstream column matching by semantic_type
 dagRouter.post('/execute-node', async (req, res) => {
-  const { data_source_id, node, upstream = {}, edges = [] } = req.body as {
+  const { data_source_id, node, upstream = {}, edges = [], upstream_resources = {} } = req.body as {
     data_source_id: string;
     node: {
       id: string;
+      type?: string;                       // 'fn' (default) | 'literal' | 'filter' | 'cast'
       data: {
-        resource_id: string;
+        resource_id?: string;              // fn nodes only — operator nodes derive from upstream
         inputs?: Array<{ name: string; semantic_type?: string; hasDefault?: boolean }>;
         bound_params?: Record<string, unknown>;
+        op_kind?: 'literal' | 'filter' | 'cast';
+        op_config?: Record<string, unknown>;
       };
     };
-    upstream: Record<string, { columns: Array<{ name: string; semantic_type?: string }>; row0?: Record<string, unknown> }>;
+    upstream: Record<string, UpstreamFrame>;
     edges: Array<{ source: string; target: string; sourceHandle?: string | null; targetHandle?: string | null }>;
+    upstream_resources?: Record<string, string>;   // upstream node_id → fn resource_id (for operator authz inheritance)
   };
 
   const userId = getUserId(req);
   const groups = (req.headers['x-user-groups'] as string || '').split(',').filter(Boolean);
+
+  // ── Operator dispatch (composer-operator-and-sink plan §3.3) ──
+  // Operators inherit AuthZ from the upstream fn whose rows they shape; they
+  // do not introduce new data access surface. Audit still fires under the
+  // upstream's resource_id for forensic continuity.
+  if (node.type && node.type !== 'fn') {
+    const opKind = node.data.op_kind || (node.type as 'literal' | 'filter' | 'cast');
+    const inbound = edges.filter((e) => e.target === node.id);
+    const inheritedRid = deriveOperatorResourceId({
+      op_kind: opKind,
+      inbound,
+      upstreamResourceIds: upstream_resources,
+    });
+
+    // For non-literal operators, gate against the upstream resource the same
+    // way fn execute-node does — if curator can't execute upstream, they
+    // can't shape its rows either.
+    if (opKind !== 'literal' && inheritedRid.startsWith('function:')) {
+      const chk = await authzPool.query(
+        'SELECT authz_check($1, $2, $3, $4) AS allowed',
+        [userId, groups, 'execute', inheritedRid]
+      );
+      if (!chk.rows[0].allowed) {
+        audit({
+          access_path: 'B', subject_id: userId,
+          action_id: `dag_op_${opKind}`, resource_id: inheritedRid,
+          decision: 'deny', context: { node_id: node.id, op_kind: opKind },
+        });
+        return res.status(403).json({
+          error: 'Forbidden',
+          detail: `${userId} lacks execute on upstream ${inheritedRid}`,
+        });
+      }
+    }
+
+    try {
+      const result = runOperator({
+        op_kind: opKind,
+        op_config: node.data.op_config || {},
+        inbound,
+        upstream,
+        node_id: node.id,
+      });
+      audit({
+        access_path: 'B', subject_id: userId,
+        action_id: `dag_op_${opKind}`, resource_id: inheritedRid,
+        decision: 'allow',
+        context: {
+          data_source_id, node_id: node.id, op_kind: opKind,
+          row_count: result.row_count, elapsed_ms: result.elapsed_ms,
+        },
+      });
+      return res.json({
+        status: 'ok',
+        node_id: node.id,
+        resource_id: inheritedRid,
+        columns: result.columns,
+        rows: result.rows,
+        row_count: result.row_count,
+        truncated: false,
+        elapsed_ms: result.elapsed_ms,
+        lineage: result.lineage,
+      });
+    } catch (err: any) {
+      return res.status(400).json({ error: 'Operator execution failed', detail: err.message });
+    }
+  }
 
   if (!data_source_id || !node?.data?.resource_id) {
     return res.status(400).json({ error: 'data_source_id and node.data.resource_id required' });

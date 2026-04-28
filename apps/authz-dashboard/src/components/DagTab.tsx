@@ -33,6 +33,13 @@ type FnMeta = {
   parsed_args: IO[];
   return_shape: { shape: string; columns?: IO[] };
 };
+type ReturnShape = 'scalar' | 'table' | 'setof' | 'void' | 'unknown';
+type OpKind = 'literal' | 'filter' | 'cast';
+type OpConfig =
+  | { kind: 'literal'; value: string; pgType: string; semantic_type?: string }
+  | { kind: 'filter'; column: string; op: 'eq' | 'ne' | 'in' | 'gt' | 'lt' | 'like'; value: string }
+  | { kind: 'cast'; source_column: string; target_pgType: string; target_semantic_type?: string };
+
 type NodeData = {
   resource_id: string;
   label: string;
@@ -40,8 +47,11 @@ type NodeData = {
   inputs: IO[];
   outputs: IO[];
   bound_params: Record<string, unknown>;
+  return_shape?: ReturnShape;       // fn nodes only — surfaces multiplicity badge
+  op_kind?: OpKind;                 // operator nodes only
+  op_config?: OpConfig;             // operator nodes only
   last_result?: {
-    columns: Array<{ name: string; semantic_type?: string }>;
+    columns: Array<{ name: string; semantic_type?: string; pgType?: string }>;
     rows: Record<string, unknown>[];
     row_count: number;
     elapsed_ms: number;
@@ -70,6 +80,16 @@ const SUBTYPE_STYLES: Record<string, { bg: string; accent: string }> = {
   action: { bg: '#fef3c7', accent: '#d97706' },
   report: { bg: '#ede9fe', accent: '#7c3aed' },
   query:  { bg: '#f0f9ff', accent: '#0284c7' },
+};
+// Multiplicity badge — surfaces return_shape so curator sees "this fn returns
+// many rows / one row / one value" without opening Inspector. Source: PG fn
+// metadata `return_shape.shape` (function-metadata.ts parseReturnType).
+const SHAPE_BADGE: Record<ReturnShape, { glyph: string; label: string; bg: string; fg: string }> = {
+  table:   { glyph: '⊞', label: 'rows',   bg: '#dbeafe', fg: '#1d4ed8' },
+  setof:   { glyph: '≣', label: 'setof',  bg: '#dbeafe', fg: '#1d4ed8' },
+  scalar:  { glyph: '•', label: 'scalar', bg: '#e0f2fe', fg: '#0369a1' },
+  void:    { glyph: '∅', label: 'void',   bg: '#f1f5f9', fg: '#64748b' },
+  unknown: { glyph: '?', label: '?',      bg: '#f1f5f9', fg: '#64748b' },
 };
 // Context broadcasts the in-flight drag source so every FunctionNode can
 // dim incompatible handles and ring compatible ones during onConnectStart.
@@ -112,20 +132,37 @@ function FunctionNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
         <span style={{ fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {data.label}
         </span>
-        <span
-          style={{
-            fontSize: 9,
-            letterSpacing: 0.5,
-            textTransform: 'uppercase',
-            padding: '1px 6px',
-            borderRadius: 999,
-            background: s.accent,
-            color: 'white',
-            flexShrink: 0,
-          }}
-        >
-          {data.subtype}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          {data.return_shape && SHAPE_BADGE[data.return_shape] && (
+            <span
+              title={`Returns: ${SHAPE_BADGE[data.return_shape].label}`}
+              style={{
+                fontSize: 10,
+                padding: '1px 5px',
+                borderRadius: 4,
+                background: SHAPE_BADGE[data.return_shape].bg,
+                color: SHAPE_BADGE[data.return_shape].fg,
+                fontWeight: 600,
+                lineHeight: 1.4,
+              }}
+            >
+              {SHAPE_BADGE[data.return_shape].glyph} {SHAPE_BADGE[data.return_shape].label}
+            </span>
+          )}
+          <span
+            style={{
+              fontSize: 9,
+              letterSpacing: 0.5,
+              textTransform: 'uppercase',
+              padding: '1px 6px',
+              borderRadius: 999,
+              background: s.accent,
+              color: 'white',
+            }}
+          >
+            {data.subtype}
+          </span>
+        </div>
       </div>
 
       {/* Inputs (left) — handle centered per row by xyflow's default CSS */}
@@ -254,7 +291,149 @@ function FunctionNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
   );
 }
 
-const nodeTypes = { fn: FunctionNode };
+// ── Operator node (composer-operator-and-sink plan §3.1) ──
+// Compact tile for literal / filter / cast. One symbolic input handle
+// (`__upstream`) and one output (`__downstream` or `value` for literals).
+// Visual styling deliberately differs from fn nodes so curator sees at a
+// glance which nodes are platform primitives vs domain SQL fns.
+const OP_STYLES: Record<OpKind, { bg: string; accent: string; glyph: string }> = {
+  literal: { bg: '#fff7ed', accent: '#ea580c', glyph: '◇' },
+  filter:  { bg: '#ecfdf5', accent: '#059669', glyph: '⚲' },
+  cast:    { bg: '#eff6ff', accent: '#2563eb', glyph: '⇄' },
+};
+
+function OperatorNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
+  const colorFor = useColorFor();
+  const dragSrc = useContext(DragSrcContext);
+  const opKind = (data.op_kind || 'literal') as OpKind;
+  const s = OP_STYLES[opKind];
+  const border = selected ? '#2563eb' : '#cbd5e1';
+  const isSourceNode = dragSrc?.nodeId === id;
+
+  // Build a one-line config summary so the node is self-documenting.
+  const summary = (() => {
+    const cfg = data.op_config as any;
+    if (!cfg) return '(unconfigured)';
+    if (opKind === 'literal') return `= ${cfg.value ?? '?'} :: ${cfg.pgType || 'text'}`;
+    if (opKind === 'filter') return `${cfg.column || '?'} ${cfg.op || 'eq'} ${cfg.value ?? '?'}`;
+    if (opKind === 'cast') return `${cfg.source_column || '?'} → ${cfg.target_pgType || 'text'}`;
+    return '';
+  })();
+
+  return (
+    <div
+      data-testid={`op-${opKind}-${id}`}
+      style={{
+        background: s.bg,
+        border: `2px solid ${border}`,
+        borderRadius: 8,
+        minWidth: 200,
+        fontSize: 12,
+        boxShadow: selected ? '0 4px 10px rgba(37,99,235,0.18)' : '0 1px 2px rgba(0,0,0,0.06)',
+      }}
+    >
+      <div
+        style={{
+          padding: '6px 10px',
+          background: 'rgba(255,255,255,0.6)',
+          borderBottom: '1px solid rgba(15,23,42,0.06)',
+          borderTopLeftRadius: 6,
+          borderTopRightRadius: 6,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 6,
+        }}
+      >
+        <span style={{ fontWeight: 600, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ color: s.accent, fontSize: 14 }}>{s.glyph}</span>
+          {opKind}
+        </span>
+        <span
+          style={{
+            fontSize: 9,
+            letterSpacing: 0.5,
+            textTransform: 'uppercase',
+            padding: '1px 6px',
+            borderRadius: 999,
+            background: s.accent,
+            color: 'white',
+          }}
+        >
+          op
+        </span>
+      </div>
+
+      {/* Body — show single-line config summary so curator can read DAG without opening Inspector */}
+      <div
+        style={{
+          position: 'relative',
+          padding: '6px 14px',
+          color: '#475569',
+          fontSize: 11,
+          fontFamily: 'ui-monospace, monospace',
+          minHeight: ROW_H,
+          display: 'flex',
+          alignItems: 'center',
+        }}
+      >
+        {/* Input handle on left for filter/cast (literal has no input) */}
+        {opKind !== 'literal' && (
+          <Handle
+            type="target"
+            position={Position.Left}
+            id="__upstream"
+            style={{
+              background: '#94a3b8',
+              width: 10,
+              height: 10,
+              border: '2px solid white',
+              boxShadow: dragSrc && !isSourceNode ? '0 0 0 3px rgba(34,197,94,0.45)' : 'none',
+              transition: 'box-shadow 120ms',
+            }}
+          />
+        )}
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {summary}
+        </span>
+        {/* Output handle on right — literal emits 'value', others emit '__downstream' */}
+        <Handle
+          type="source"
+          position={Position.Right}
+          id={opKind === 'literal' ? 'value' : '__downstream'}
+          style={{
+            background: opKind === 'literal' ? colorFor((data.op_config as any)?.semantic_type) : '#94a3b8',
+            width: 10,
+            height: 10,
+            border: '2px solid white',
+          }}
+        />
+      </div>
+
+      {data.last_result && (
+        <div
+          style={{
+            padding: '4px 10px',
+            background: '#dcfce7',
+            color: '#166534',
+            fontSize: 10,
+            fontWeight: 500,
+            borderTop: '1px solid rgba(22,101,52,0.15)',
+            borderBottomLeftRadius: 6,
+            borderBottomRightRadius: 6,
+            display: 'flex',
+            justifyContent: 'space-between',
+          }}
+        >
+          <span>✓ {data.last_result.row_count} rows</span>
+          <span>{data.last_result.elapsed_ms}ms</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const nodeTypes = { fn: FunctionNode, literal: OperatorNode, filter: OperatorNode, cast: OperatorNode };
 
 // ── Main tab ──
 export function DagTab() {
@@ -435,6 +614,8 @@ export function DagTab() {
     }));
     const outputs: IO[] = fn.return_shape?.shape === 'table'
       ? (fn.return_shape.columns || []).map((c: any) => ({ name: c.name, semantic_type: c.semantic_type, pgType: c.pgType }))
+      : fn.return_shape?.shape === 'setof' || fn.return_shape?.shape === 'scalar'
+      ? [{ name: 'value', semantic_type: undefined, pgType: (fn.return_shape as any).pgType }]
       : [];
     const node: Node<NodeData> = {
       id,
@@ -446,11 +627,57 @@ export function DagTab() {
         subtype: fn.subtype,
         inputs, outputs,
         bound_params: {},
+        return_shape: (fn.return_shape?.shape as ReturnShape) || 'unknown',
       },
     };
     pushHistory();
     setNodes((nds) => [...nds, node]);
     setSelectedId(id);
+  };
+
+  // Operator nodes are composer-native — they don't reference an
+  // authz_resource (no fn registry entry). Inputs/outputs are symbolic
+  // (`__upstream` / `__downstream`); runtime resolves the actual rowset.
+  const addOperatorNode = (opKind: OpKind) => {
+    const id = nextNodeId();
+    const inputs: IO[] = opKind === 'literal'
+      ? []
+      : [{ name: '__upstream', semantic_type: '__rowset' }];
+    const outputs: IO[] = opKind === 'literal'
+      ? [{ name: 'value', pgType: 'text' }]
+      : [{ name: '__downstream', semantic_type: '__rowset' }];
+    const op_config: OpConfig =
+      opKind === 'literal' ? { kind: 'literal', value: '', pgType: 'text' }
+      : opKind === 'filter' ? { kind: 'filter', column: '', op: 'eq', value: '' }
+      : { kind: 'cast', source_column: '', target_pgType: 'text' };
+    const node: Node<NodeData> = {
+      id,
+      type: opKind,
+      position: { x: 80 + (nodes.length % 4) * 280, y: 80 + Math.floor(nodes.length / 4) * 260 },
+      data: {
+        resource_id: '',                 // operators have no fn resource
+        label: opKind,
+        subtype: 'operator',
+        inputs,
+        outputs,
+        bound_params: {},
+        op_kind: opKind,
+        op_config,
+      },
+    };
+    pushHistory();
+    setNodes((nds) => [...nds, node]);
+    setSelectedId(id);
+  };
+
+  const updateOpConfig = (patch: Record<string, unknown>) => {
+    if (!selected) return;
+    pushHistory();
+    setNodes((nds) => nds.map((n) => {
+      if (n.id !== selected.id) return n;
+      const next = { ...(n.data.op_config || {}), ...patch } as OpConfig;
+      return { ...n, data: { ...n.data, op_config: next } };
+    }));
   };
 
   const deleteSelected = useCallback(() => {
@@ -591,20 +818,58 @@ export function DagTab() {
     if (!node) return;
     setRunning(nodeId);
     try {
-      // Gather upstream results from any node that has a last_result
+      // Gather upstream results from any node that has a last_result.
+      // Operator nodes need full `rows[]` (filter/cast) — fn-only path uses row0
+      // and is unchanged. upstream_resources is needed so operator authz can
+      // inherit the upstream fn's resource_id (composer-operator-and-sink §3.2).
       const upstream: Record<string, any> = {};
+      const upstream_resources: Record<string, string> = {};
       for (const n of nodes) {
         if (n.data.last_result && n.data.last_result.rows.length > 0) {
           upstream[n.id] = {
             columns: n.data.last_result.columns,
             row0: n.data.last_result.rows[0],
+            rows: n.data.last_result.rows,
           };
+        }
+        if (n.type === 'fn' && n.data.resource_id) {
+          upstream_resources[n.id] = n.data.resource_id;
+        }
+      }
+      // Propagate fn ancestor resource_id through operator chains so operators
+      // depth ≥ 2 (e.g. fn → filter → filter) re-trigger authz_check on the
+      // original fn. Walk back via inbound edges until a fn ancestor is found.
+      const findFnAncestor = (startId: string, visited = new Set<string>()): string | undefined => {
+        if (visited.has(startId)) return undefined;
+        visited.add(startId);
+        const inEdge = edges.find((e) => e.target === startId);
+        if (!inEdge) return undefined;
+        const src = nodes.find((n) => n.id === inEdge.source);
+        if (!src) return undefined;
+        if (src.type === 'fn' && src.data.resource_id) return src.data.resource_id;
+        return findFnAncestor(src.id, visited);
+      };
+      for (const n of nodes) {
+        if (n.type && n.type !== 'fn' && n.type !== 'literal' && !upstream_resources[n.id]) {
+          const rid = findFnAncestor(n.id);
+          if (rid) upstream_resources[n.id] = rid;
         }
       }
       const payload = {
         data_source_id: dsId,
-        node: { id: node.id, data: { resource_id: node.data.resource_id, inputs: node.data.inputs, bound_params: node.data.bound_params } },
+        node: {
+          id: node.id,
+          type: node.type,
+          data: {
+            resource_id: node.data.resource_id,
+            inputs: node.data.inputs,
+            bound_params: node.data.bound_params,
+            op_kind: node.data.op_kind,
+            op_config: node.data.op_config,
+          },
+        },
         upstream,
+        upstream_resources,
         edges: edges.map((e) => ({ source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
       };
       const r = await api.dagExecuteNode(payload);
@@ -864,6 +1129,36 @@ export function DagTab() {
             </div>
           )}
 
+          {/* Operators — composer-native primitives (no PG fn registration).
+              See .claude/plans/v3-phase-1/composer-operator-and-sink.md §3.1 */}
+          <div className="mb-3">
+            <div className="text-[10px] uppercase tracking-wide text-orange-700 flex items-center gap-1 mb-1">
+              <Sparkles size={12} /> Operators
+            </div>
+            <div className="space-y-1">
+              {(['literal', 'filter', 'cast'] as const).map((k) => {
+                const style = OP_STYLES[k];
+                return (
+                  <button
+                    key={k}
+                    onClick={() => addOperatorNode(k)}
+                    data-testid={`palette-op-${k}`}
+                    className="w-full text-left text-xs px-2 py-1 rounded border border-orange-200 bg-orange-50 hover:bg-orange-100 text-slate-700 flex items-center gap-1.5"
+                    title={
+                      k === 'literal' ? 'Emit a typed constant'
+                      : k === 'filter' ? 'Filter upstream rows by predicate'
+                      : 'Cast a column to a different pgType'
+                    }
+                  >
+                    <span style={{ color: style.accent, fontSize: 14 }}>{style.glyph}</span>
+                    <span className="font-medium">{k}</span>
+                    <span className="text-[10px] text-slate-400 ml-auto">op</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">All Functions ({filteredFns.length})</div>
           <div className="space-y-1 overflow-y-auto flex-1">
             {filteredFns.map((fn) => (
@@ -1016,6 +1311,22 @@ export function DagTab() {
                 </button>
               </div>
 
+              {/* Operator-specific config block — composer-operator-and-sink §3.1 */}
+              {selected.data.op_kind && (
+                <OperatorInspector
+                  opKind={selected.data.op_kind}
+                  config={selected.data.op_config}
+                  upstreamColumns={(() => {
+                    const inEdge = edges.find((e) => e.target === selected.id);
+                    if (!inEdge) return [];
+                    const upNode = nodes.find((n) => n.id === inEdge.source);
+                    return upNode?.data.last_result?.columns || upNode?.data.outputs || [];
+                  })()}
+                  onChange={updateOpConfig}
+                />
+              )}
+
+              {!selected.data.op_kind && (
               <div>
                 <div className="text-xs font-medium text-slate-700 mb-1">Inputs</div>
                 <div className="space-y-2">
@@ -1074,6 +1385,7 @@ export function DagTab() {
                   {selected.data.inputs.length === 0 && <div className="text-xs text-slate-400">no inputs</div>}
                 </div>
               </div>
+              )}
 
               <button
                 data-testid={`run-${selected.id}`}
@@ -1122,6 +1434,166 @@ export function DagTab() {
           </div>
         </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Operator inspector (composer-operator-and-sink §3.1) ──
+// Renders config form per op_kind. Upstream columns come from the connected
+// upstream node's last_result (so curator can dropdown-pick column names
+// instead of typing them).
+function OperatorInspector({
+  opKind, config, upstreamColumns, onChange,
+}: {
+  opKind: OpKind;
+  config?: OpConfig;
+  upstreamColumns: Array<{ name: string; semantic_type?: string; pgType?: string }>;
+  onChange: (patch: Record<string, unknown>) => void;
+}) {
+  const c = (config || {}) as any;
+  const PG_TYPES = ['text', 'int', 'numeric', 'boolean', 'date', 'timestamp', 'jsonb'];
+
+  if (opKind === 'literal') {
+    return (
+      <div className="border border-orange-200 bg-orange-50 rounded p-2 space-y-2">
+        <div className="text-xs font-medium text-orange-800">Literal config</div>
+        <div>
+          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Value</label>
+          <input
+            data-testid="op-literal-value"
+            value={c.value ?? ''}
+            onChange={(e) => onChange({ value: e.target.value })}
+            placeholder="e.g. 42"
+            className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">pgType</label>
+          <select
+            data-testid="op-literal-pgtype"
+            value={c.pgType || 'text'}
+            onChange={(e) => onChange({ pgType: e.target.value })}
+            className="w-full text-xs border border-slate-200 rounded px-2 py-1"
+          >
+            {PG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">semantic_type (optional)</label>
+          <input
+            data-testid="op-literal-semantic"
+            value={c.semantic_type || ''}
+            onChange={(e) => onChange({ semantic_type: e.target.value || undefined })}
+            placeholder="e.g. material_no"
+            className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (opKind === 'filter') {
+    return (
+      <div className="border border-emerald-200 bg-emerald-50 rounded p-2 space-y-2">
+        <div className="text-xs font-medium text-emerald-800">Filter config</div>
+        <div>
+          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Column</label>
+          {upstreamColumns.length > 0 ? (
+            <select
+              data-testid="op-filter-column"
+              value={c.column || ''}
+              onChange={(e) => onChange({ column: e.target.value })}
+              className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+            >
+              <option value="">— pick column —</option>
+              {upstreamColumns.map((col) => <option key={col.name} value={col.name}>{col.name}</option>)}
+            </select>
+          ) : (
+            <input
+              data-testid="op-filter-column"
+              value={c.column || ''}
+              onChange={(e) => onChange({ column: e.target.value })}
+              placeholder="(connect upstream + run it to see columns)"
+              className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+            />
+          )}
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Operator</label>
+          <select
+            data-testid="op-filter-op"
+            value={c.op || 'eq'}
+            onChange={(e) => onChange({ op: e.target.value })}
+            className="w-full text-xs border border-slate-200 rounded px-2 py-1"
+          >
+            {['eq', 'ne', 'in', 'gt', 'lt', 'like'].map((op) => <option key={op} value={op}>{op}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Value</label>
+          <input
+            data-testid="op-filter-value"
+            value={c.value ?? ''}
+            onChange={(e) => onChange({ value: e.target.value })}
+            placeholder={c.op === 'in' ? 'comma-separated, e.g. A,B,C' : c.op === 'like' ? 'SQL LIKE: % _ wildcards' : 'value'}
+            className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // cast
+  return (
+    <div className="border border-blue-200 bg-blue-50 rounded p-2 space-y-2">
+      <div className="text-xs font-medium text-blue-800">Cast config</div>
+      <div>
+        <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Source column</label>
+        {upstreamColumns.length > 0 ? (
+          <select
+            data-testid="op-cast-column"
+            value={c.source_column || ''}
+            onChange={(e) => onChange({ source_column: e.target.value })}
+            className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+          >
+            <option value="">— pick column —</option>
+            {upstreamColumns.map((col) => (
+              <option key={col.name} value={col.name}>
+                {col.name} {col.pgType ? `(${col.pgType})` : ''}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            data-testid="op-cast-column"
+            value={c.source_column || ''}
+            onChange={(e) => onChange({ source_column: e.target.value })}
+            placeholder="(connect upstream + run it to see columns)"
+            className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+          />
+        )}
+      </div>
+      <div>
+        <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Target pgType</label>
+        <select
+          data-testid="op-cast-target-pgtype"
+          value={c.target_pgType || 'text'}
+          onChange={(e) => onChange({ target_pgType: e.target.value })}
+          className="w-full text-xs border border-slate-200 rounded px-2 py-1"
+        >
+          {PG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Target semantic_type (optional)</label>
+        <input
+          data-testid="op-cast-target-semantic"
+          value={c.target_semantic_type || ''}
+          onChange={(e) => onChange({ target_semantic_type: e.target.value || undefined })}
+          placeholder="e.g. material_no"
+          className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+        />
       </div>
     </div>
   );
