@@ -7,12 +7,14 @@
 //   POST /function-explain — SQL → markdown explanation
 //
 // Constitution refs:
-//   §11.2 — schema context is filtered through authz_check before the prompt.
-//   §11.3 — AI never deploys; output lands in the textarea, Adam clicks Deploy.
-//           Destructive keyword guard rejects DROP / TRUNCATE / GRANT / etc.
-//   §11.6 — only SHA-256 hashes hit authz_ai_usage (raw prompt forbidden).
-//   §11.7 — every call writes authz_admin_audit_log with actor_type='ai_assist',
-//           consent_given='human_explicit' (user clicked the button).
+//   §9.2 — schema context is filtered through authz_check before the prompt.
+//   §9.3 — AI never deploys; output lands in the textarea, Adam clicks Deploy.
+//          Destructive keyword guard rejects DROP / TRUNCATE / GRANT / etc.
+//   §9.6 — only SHA-256 hashes hit authz_ai_usage (raw prompt forbidden by
+//          default). §9.9 carve-out: when user clicks 👍/👎, full plaintext
+//          may be written to authz_eval_case via POST /eval-mark.
+//   §9.7 — every call writes authz_admin_audit_log with actor_type='ai_agent',
+//          consent_given='human_explicit' (user clicked the button).
 // ============================================================
 
 import { Router } from 'express';
@@ -77,7 +79,7 @@ aiAssistRouter.post('/function-draft', async (req, res) => {
     const sql = extractSql(result.text);
     rejectIfDestructive(sql);
 
-    await logUsage({ userId, featureTag: FEATURE_TAG, promptText: `${systemPrompt}\n${userPrompt}`, result });
+    const usage_id = await logUsage({ userId, featureTag: FEATURE_TAG, promptText: `${systemPrompt}\n${userPrompt}`, result });
     await logAdminAction(authzPool, {
       userId,
       action: 'AI_ASSIST_FUNCTION_DRAFT',
@@ -102,6 +104,7 @@ aiAssistRouter.post('/function-draft', async (req, res) => {
       rationale: result.text.length > sql.length ? result.text : null,
       provider_id: result.provider_id,
       model_id: result.model_id,
+      usage_id,
       schema_truncated: ctx.truncated,
       schema_tables: ctx.table_count,
       usage: {
@@ -146,7 +149,7 @@ ${instruction.trim()}`;
     const sql = extractSql(result.text);
     rejectIfDestructive(sql);
 
-    await logUsage({ userId, featureTag: FEATURE_TAG, promptText: `${systemPrompt}\n${userPrompt}`, result });
+    const usage_id = await logUsage({ userId, featureTag: FEATURE_TAG, promptText: `${systemPrompt}\n${userPrompt}`, result });
     await logAdminAction(authzPool, {
       userId,
       action: 'AI_ASSIST_FUNCTION_REFINE',
@@ -170,6 +173,7 @@ ${instruction.trim()}`;
       diff_summary: null,
       provider_id: result.provider_id,
       model_id: result.model_id,
+      usage_id,
       usage: {
         prompt_tokens: result.prompt_tokens,
         completion_tokens: result.completion_tokens,
@@ -197,7 +201,7 @@ aiAssistRouter.post('/function-explain', async (req, res) => {
 
     const result = await callChat({ provider, systemPrompt, userPrompt });
 
-    await logUsage({ userId, featureTag: FEATURE_TAG, promptText: `${systemPrompt}\n${userPrompt}`, result });
+    const usage_id = await logUsage({ userId, featureTag: FEATURE_TAG, promptText: `${systemPrompt}\n${userPrompt}`, result });
     await logAdminAction(authzPool, {
       userId,
       action: 'AI_ASSIST_FUNCTION_EXPLAIN',
@@ -215,6 +219,7 @@ aiAssistRouter.post('/function-explain', async (req, res) => {
       markdown: result.text,
       provider_id: result.provider_id,
       model_id: result.model_id,
+      usage_id,
       usage: {
         prompt_tokens: result.prompt_tokens,
         completion_tokens: result.completion_tokens,
@@ -222,6 +227,79 @@ aiAssistRouter.post('/function-explain', async (req, res) => {
         latency_ms: result.latency_ms,
       },
     });
+  } catch (err) {
+    handleAIError(res, err);
+  }
+});
+
+// ─── POST /eval-mark ────────────────────────────────────────
+// §9.9 explicit-consent capture: user clicks 👍/👎 on an AI output, frontend
+// posts the (usage_id, full prompt + response, verdict) here. We refuse if
+// the usage row doesn't exist or doesn't belong to this caller — the user
+// can only mark their own AI calls.
+aiAssistRouter.post('/eval-mark', async (req, res) => {
+  const { ai_usage_id, prompt_text, response_text, verdict, notes } = req.body as {
+    ai_usage_id?: number;
+    prompt_text?: string;
+    response_text?: string;
+    verdict?: 'good' | 'bad';
+    notes?: string;
+  };
+  const userId = getUserId(req);
+  if (!ai_usage_id || !prompt_text || !response_text || (verdict !== 'good' && verdict !== 'bad')) {
+    return res.status(400).json({ error: 'ai_usage_id, prompt_text, response_text, verdict ("good"|"bad") are required' });
+  }
+
+  try {
+    const usageRow = await authzPool.query<{
+      provider_id: string; model_id: string; feature_tag: string; called_by: string;
+    }>(
+      `SELECT provider_id, model_id, feature_tag, called_by
+         FROM authz_ai_usage
+        WHERE usage_id = $1`,
+      [ai_usage_id],
+    );
+    if (usageRow.rows.length === 0) {
+      return res.status(404).json({ error: 'ai_usage_id not found' });
+    }
+    if (usageRow.rows[0].called_by !== userId) {
+      return res.status(403).json({ error: 'You can only mark eval cases for your own AI calls.' });
+    }
+    const { provider_id, model_id, feature_tag } = usageRow.rows[0];
+
+    const ins = await authzPool.query<{ case_id: string }>(
+      `INSERT INTO authz_eval_case (
+         ai_usage_id, feature_tag, provider_id, model_id, data_source_id,
+         prompt_text, response_text, verdict, notes, marked_by
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING case_id`,
+      [
+        ai_usage_id,
+        feature_tag,
+        provider_id,
+        model_id,
+        null,                         // data_source_id is in the prompt; not a separate column in usage row
+        prompt_text,
+        response_text,
+        verdict,
+        notes ?? null,
+        userId,
+      ],
+    );
+    const case_id = Number(ins.rows[0].case_id);
+
+    await logAdminAction(authzPool, {
+      userId,
+      action: 'AI_ASSIST_EVAL_MARK',
+      resourceType: 'ai_provider',
+      resourceId: provider_id,
+      details: { case_id, ai_usage_id, feature_tag, verdict, prompt_chars: prompt_text.length, response_chars: response_text.length },
+      ip: getClientIp(req),
+      actorType: 'human',
+      consentGiven: 'human_explicit',
+    });
+
+    res.json({ case_id, verdict });
   } catch (err) {
     handleAIError(res, err);
   }

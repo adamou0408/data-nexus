@@ -22,14 +22,14 @@ data-nexus/
 ├── .claude/
 │   ├── agents/                # 16 agent role definitions + dba-guardian-hiring
 │   └── plans/
-│       ├── v3-phase-1/        # Active Phase 1 sub-plans (see README.md inside)
+│       ├── v3-phase-1/        # Active sub-plans index (README.md inside)
 │       └── _ARCHIVED/         # Deprecated docs (e.g., requirements_spec v1)
 ├── apps/authz-dashboard/      # React dashboard (port 13173)
 ├── services/
 │   ├── authz-api/             # Express API (port 13001)
 │   └── identity-sync/         # LDAP → DB sync service
 ├── database/
-│   ├── migrations/            # V001-V030 sequential SQL migrations (incl. TimescaleDB)
+│   ├── migrations/            # sequential SQL migrations (V001+, incl. TimescaleDB)
 │   └── seed/                  # Dev seed data
 ├── deploy/
 │   ├── docker-compose/        # TimescaleDB/PG 16 (15432) + Redis 7 (16379) + OpenLDAP
@@ -38,25 +38,23 @@ data-nexus/
 └── Makefile                   # Run `make help` for all commands
 ```
 
-## Milestones
+## Status
 
-> **State SSOT:** `docs/PROGRESS.md` (read first every session)
-> **Plan SSOT (Phase 1 active):** `docs/plan-v3-phase-1.md`
+> **State SSOT:** `docs/PROGRESS.md` (read first every session — *what's active this sprint*)
+> **Long-term reference:** `docs/plan-v3-phase-1.md` (don't structure new work from this — sprint is the unit)
 
-1. **AuthZ runs locally**: ✅ Complete
-2. **First page is permission-aware**: ✅ Complete
-3. **All three paths enforced**: ✅ Complete (LDAP, middleware, Path C, admin CRUD, external sync, Config-SM, Metabase BI)
-4. **Production-ready (M4)**: 🟡 In Progress → Q3 2026 (Gate **G1**)
-   - SEC-06 secrets, Helm chart, Keycloak SSO, LDAP CronJob, Redis cache
-   - Oracle 19c CDC: design complete, implementation deferred to Phase 2 (not in Phase 1 scope)
-   - Tracker: `.claude/plans/v3-phase-1/m4-prod-ready-tracker.md`
-5. **v3 Phase 1 — BI + AI platform**: 🟢 Active (2026-05 → 2027-05 demo)
-   - **Q3 2026:** M4 + 基座 (semantic layer, design system, eval set kickoff)
-   - **Q4 2026:** Tier 2 分析 wizard MVP (Gate **G2** gates Path A migration)
-   - **Q1 2027:** AI 側欄 + Path A 辦死 (Gate **G3** LLM SLO)
-   - **Q2 2027:** Tier 3 Query Tool + Tier 1 dashboard + Demo (Gate **G4**)
-   - Plan: `docs/plan-v3-phase-1.md` | sub-plans: `.claude/plans/v3-phase-1/`
-6. **AI Agent Integration** (Smart Analyst 2.0): ⏳ Blocked on M4 go-live (Gate G1)
+**Done foundations:** AuthZ runs locally · permission-aware UI · all three paths enforced (LDAP, middleware, Path C, admin CRUD, external sync, Config-SM, Metabase BI). Detail in `docs/PROGRESS.md`.
+
+**Active work:** see `docs/PROGRESS.md` *This Sprint* section. Don't re-derive sprint scope from this file.
+
+**Hard gates to protect** (one-way doors — *only these* warrant phase-style guarding):
+- **M4 prod-ready go-live** (SEC-06 / Helm / Keycloak / LDAP Cron / Redis) — blocks Smart Analyst 2.0 / AI Agent integration. Tracker: `.claude/plans/v3-phase-1/m4-prod-ready-tracker.md`.
+- **Path A → Tier 2 admin form migration** — irreversible; only open after Tier 2 alpha self-validates ≥ 1 business workflow.
+- **Demo target:** 2027-05.
+
+**Deferred / parked:** Oracle 19c CDC (designed, not yet impl). Detail: `docs/wishlist-features.md`.
+
+> ⚠️ **Anti-phase anchor:** Do **not** structure new work around quarterly buckets, "Phase 1.5/2", or extrapolated gate language unless it touches a hard gate above. Most work is pure-additive — just write the next migration / route / page. Sprint-level decisions live in `docs/PROGRESS.md`.
 
 ## Core Concepts
 
@@ -98,8 +96,8 @@ Full rules: **`docs/constitution.md`** (must-read for any agent touching datasou
 
 | What | Where | When to update |
 |------|-------|----------------|
-| **Phase 1 master plan (active SSOT)** | `docs/plan-v3-phase-1.md` | When scope / architecture / gates change |
-| **Phase 1 sub-plans (tactical)** | `.claude/plans/v3-phase-1/` (+ README.md index) | Per sub-plan owner |
+| Long-term track reference | `docs/plan-v3-phase-1.md` | When a hard gate above changes, or architectural decision lands |
+| Tactical sub-plans (per-feature) | `.claude/plans/v3-phase-1/` (+ README.md index) | Per sub-plan owner |
 | Agent constitution (binding) | `docs/constitution.md` | When safety rules change (Article 8 amendment) |
 | Progress & milestones | `docs/PROGRESS.md` | Weekly |
 | API & dashboard reference | `docs/api-reference.md` | After adding routes or tabs |
@@ -107,7 +105,7 @@ Full rules: **`docs/constitution.md`** (must-read for any agent touching datasou
 | Architecture diagrams | `docs/architecture-diagram.md` | After structural changes |
 | ER diagram | `docs/er-diagram.md` | After DB schema changes |
 | Tech debt & backlog | `docs/backlog-tech-debt.md` | When discovering issues |
-| Feature requests (Phase 2+) | `docs/wishlist-features.md` | When receiving requirements outside Phase 1 scope |
+| Feature requests / parked work | `docs/wishlist-features.md` | When receiving requirements outside current sprint scope |
 | Data Mining plan | `docs/design-data-mining-engine.md` | When implementing data mining features |
 | Data Mining vision | `.claude/plans/v3-phase-1/design-mining-vision.md` | When trigger conditions are met |
 | Agent roles & principles | `.claude/agents/README.md` | When onboarding agents |

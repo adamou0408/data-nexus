@@ -51,7 +51,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | tier1-dashboard-engine-plan | TBD | STUB | Q2 2027 (G4) |
 | ai-sidepanel-plan | TBD | STUB | Q1 2027 |
 | ai-pg-function-authoring-dogfood | Adam (planner) → Claude (executor) | **READY-FOR-REVIEW** (2026-04-28：4 new files + 3 mods，smoke 21/21 pass) | Q3 2026 dogfood |
-| eval-set-collection-plan | TBD (Adam + DBA + PM) | STUB | Q3 2026 → Q4 2026 |
+| eval-set-collection-plan | Adam (sole AuthorPanel user) | **in-progress** — capture infra live 2026-04-28 (V071 `authz_eval_case` + `POST /api/ai-assist/eval-mark` + UI 👍/👎); rewrite from cross-team interview → dogfood-driven (Constitution §9.9 carve-out) | Q3 2026 100 / Q4 2026 200 (累積自 Adam dogfood) |
 | dependency-cascade-plan | TBD (backend) | schema-draft-ready (V045 SQL + plan; DBA review) | Q3 2026 |
 | permission-inheritance-cascade | Adam (planner) → Claude (same-session executor) | **READY-FOR-REVIEW** (V070 applied + 4 invariant verified, 2026-04-28) | V070 done; Discovery auto-ensure + cache walk = next loop |
 | path-a-inventory | Explore agent → Adam to validate | ready-for-review | input to Q4 2026 / Q1 2027 |

@@ -705,6 +705,17 @@ export const api = {
     request<AIAssistExplainResponse>('/ai-assist/function-explain', {
       method: 'POST', body: JSON.stringify({ sql }),
     }),
+  // §9.9 explicit-consent eval case capture (👍 / 👎 click)
+  aiAssistEvalMark: (params: {
+    ai_usage_id: number;
+    prompt_text: string;
+    response_text: string;
+    verdict: 'good' | 'bad';
+    notes?: string;
+  }) =>
+    request<{ case_id: number; verdict: 'good' | 'bad' }>('/ai-assist/eval-mark', {
+      method: 'POST', body: JSON.stringify(params),
+    }),
 };
 
 export type AIAssistUsage = {
@@ -718,6 +729,7 @@ export type AIAssistDraftResponse = {
   rationale: string | null;
   provider_id: string;
   model_id: string;
+  usage_id: number | null;
   schema_truncated: boolean;
   schema_tables: number;
   usage: AIAssistUsage;
@@ -727,12 +739,14 @@ export type AIAssistRefineResponse = {
   diff_summary: string | null;
   provider_id: string;
   model_id: string;
+  usage_id: number | null;
   usage: AIAssistUsage;
 };
 export type AIAssistExplainResponse = {
   markdown: string;
   provider_id: string;
   model_id: string;
+  usage_id: number | null;
   usage: AIAssistUsage;
 };
 

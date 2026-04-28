@@ -5,11 +5,11 @@
 // source so the LLM can name real columns when drafting / refining functions.
 //
 // Constitution refs:
-//   §11.2 — read scope follows authz_check(userId, 'read', resource_id);
-//           tables the user cannot read are stripped before the prompt is
-//           assembled, so the LLM never learns of them.
-//   §11.6 — only schema metadata is sent (no row data, no row counts);
-//           PII column values are out of scope by construction.
+//   §9.2 — read scope follows authz_check(userId, 'read', resource_id);
+//          tables the user cannot read are stripped before the prompt is
+//          assembled, so the LLM never learns of them.
+//   §9.6 — only schema metadata is sent (no row data, no row counts);
+//          PII column values are out of scope by construction.
 // ============================================================
 
 import { pool as authzPool } from '../db';

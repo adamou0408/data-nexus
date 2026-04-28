@@ -7,9 +7,11 @@
 // Constitution refs:
 //   §9.2 — caller's userId is forwarded into authz_ai_usage.called_by, so the
 //          ledger inherits the caller's authz bounds (no agent shadow user).
-//   §9.6 — only SHA-256 hash + token counts are persisted, never raw prompt.
-//   §11.3 — any callable that yields SQL must run a destructive-keyword guard
-//           before returning to the route layer (sandbox-before-deploy).
+//   §9.3 — any callable that yields SQL must run a destructive-keyword guard
+//          before returning to the route layer (sandbox-before-deploy).
+//   §9.6 — only SHA-256 hash + token counts are persisted in authz_ai_usage,
+//          never raw prompt. Plaintext lives in authz_eval_case ONLY when the
+//          user clicks 👍/👎 (§9.9 explicit-consent carve-out).
 // ============================================================
 
 import { createHash } from 'crypto';
@@ -51,12 +53,12 @@ export class NoProviderError extends Error {
 
 export class DestructiveSqlError extends Error {
   constructor(public matched: string) {
-    super(`AI output blocked: contains destructive keyword '${matched}'. Constitution §11.3 — only CREATE OR REPLACE FUNCTION is permitted via this path.`);
+    super(`AI output blocked: contains destructive keyword '${matched}'. Constitution §9.3 — only CREATE OR REPLACE FUNCTION is permitted via this path.`);
     this.name = 'DestructiveSqlError';
   }
 }
 
-// §11.3 destructive-keyword guard. Matches whole words only so column names
+// §9.3 destructive-keyword guard. Matches whole words only so column names
 // like `dropped_at` don't trip the regex.
 const DESTRUCTIVE = /\b(DROP|TRUNCATE|GRANT|REVOKE|COPY|VACUUM|REINDEX|CLUSTER|DELETE\s+FROM|UPDATE\s+\w+\s+SET|INSERT\s+INTO)\b/i;
 
@@ -172,30 +174,43 @@ export interface LogUsageOpts {
   errorDetail?: string;
 }
 
-export async function logUsage(opts: LogUsageOpts): Promise<void> {
+/**
+ * Insert one authz_ai_usage row (hash-only per §9.6) and return the new
+ * usage_id. Callers pass usage_id to the client so the user can later mark
+ * that case via POST /api/ai-assist/eval-mark (§9.9 explicit-consent path).
+ *
+ * Returns null if the insert failed — eval-mark won't FK-link in that case
+ * but the rest of the response stays usable.
+ */
+export async function logUsage(opts: LogUsageOpts): Promise<number | null> {
   const promptHash = createHash('sha256').update(opts.promptText).digest('hex');
-  await authzPool.query(
-    `INSERT INTO authz_ai_usage (
-       provider_id, called_by, feature_tag, model_id,
-       prompt_hash, prompt_tokens, completion_tokens, cost_usd, latency_ms,
-       status, error_detail
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-    [
-      opts.result.provider_id,
-      opts.userId,
-      opts.featureTag,
-      opts.result.model_id,
-      promptHash,
-      opts.result.prompt_tokens,
-      opts.result.completion_tokens,
-      opts.result.cost_usd,
-      opts.result.latency_ms,
-      opts.status ?? 'ok',
-      opts.errorDetail ?? null,
-    ],
-  ).catch((err) => {
+  try {
+    const r = await authzPool.query<{ usage_id: string }>(
+      `INSERT INTO authz_ai_usage (
+         provider_id, called_by, feature_tag, model_id,
+         prompt_hash, prompt_tokens, completion_tokens, cost_usd, latency_ms,
+         status, error_detail
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       RETURNING usage_id`,
+      [
+        opts.result.provider_id,
+        opts.userId,
+        opts.featureTag,
+        opts.result.model_id,
+        promptHash,
+        opts.result.prompt_tokens,
+        opts.result.completion_tokens,
+        opts.result.cost_usd,
+        opts.result.latency_ms,
+        opts.status ?? 'ok',
+        opts.errorDetail ?? null,
+      ],
+    );
+    return r.rows[0] ? Number(r.rows[0].usage_id) : null;
+  } catch (err) {
     console.error('[ai-call] logUsage failed:', err);
-  });
+    return null;
+  }
 }
 
 /**

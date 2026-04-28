@@ -1,6 +1,6 @@
 # Agent Constitution — Data Nexus
 
-> **Status**: Active (v2.1 ratified 2026-04-27; v2.0 ratified 2026-04-24; v1.0 ratified 2026-04-20)
+> **Status**: Active (v2.2 ratified 2026-04-28; v2.1 ratified 2026-04-27; v2.0 ratified 2026-04-24; v1.0 ratified 2026-04-20)
 > **Scope**: Binding on all AI agents operating in this repository
 > **Override**: Only via explicit human instruction *in the same conversation turn*
 
@@ -329,6 +329,11 @@ AI 改動使用者 canvas（Tier 1 dashboard、Tier 2 wizard、Tier 3 Query Tool
 - 每季至少一次由 Data Nexus owner 抽查 LLM log sample（hash、metadata），
   確認無 raw payload 外洩；抽查結果記入 `authz_audit`。
 - 違反本條視為合規事故，**MUST** 立即通報使用者並暫停該 AI 功能線。
+- **Carve-out（v2.2 新增）：** 當使用者於 UI 對某次 AI 輸出主動點擊 👍 / 👎
+  verdict 按鈕（Article 3 explicit consent），系統 **MAY** 將該次 prompt
+  與 response 全文寫入 `authz_eval_case`。詳細規範見 §9.9。此 carve-out
+  僅適用於 dashboard 端 user-initiated 的點擊；**MUST NOT** 由 backend /
+  agent 自動觸發。
 
 ### 9.7 Audit Log
 
@@ -359,8 +364,34 @@ LLM 服務替換或升級底層模型時，**MUST**：
 4. 通過 SLO 的新模型上線時，於 `authz_audit` 留 `model_swap` event，並於
    使用者中央 chat 以一次性 banner 告知。
 
-Eval set 每季增補 20–50 筆（plan §2.8）；model swap 時以最新 eval set 為準，
+Eval set 每季增補 20–50 筆（plan §2.8）；model swap 時以最新 eval set 為準,
 不得挑舊版 eval set 以利結果。
+
+### 9.9 Eval Case Capture (Eval Set Plaintext)
+
+> **新增於 v2.2 (2026-04-28)** — AI-DOGFOOD-01 (AuthorPanel AI 助理) 上線後,
+> 為了持續累積 eval set 與 model swap baseline (§9.8),需要在嚴格的 §9.6
+> hash-only 預設下開一條明確的、user-initiated 全文捕獲路徑。
+
+§9.6 規定 LLM log 預設只留 hash。例外：使用者於 UI 對某次 AI 輸出主動點擊
+👍 / 👎 (此即 Article 3 explicit consent) 時,**MAY** 將該次 prompt 全文
++ response 全文寫入 `authz_eval_case`,作為日後 eval set 與 SLO 驗證之用。
+
+- **觸發條件**：必須是 user 在 dashboard UI 親自點擊 verdict 按鈕；後端
+  或 agent **MUST NOT** 自動寫入 `authz_eval_case`。
+- **權限約束**：使用者僅能標記自己發起的 AI call (backend 比對
+  `authz_ai_usage.called_by = subject_id`,其他人的 call 直接 403)。
+- **Audit 對齊**：每次寫入同步寫一筆 `authz_admin_audit_log` `AI_ASSIST_EVAL_MARK`
+  動作,`actor_type='human'`,`consent_given='human_explicit'`。
+- **使用範圍**：`authz_eval_case` 僅供 eval set / model swap baseline / prompt
+  regression;**MUST NOT** 回灌 production prompt context;**MUST NOT** 對外
+  分享或匯出個人 prompt 資料。
+- **保留期**：永不 compress、永不刪除（與 §9.7 audit 同政策）。
+- **撤回機制**：使用者可隨時 DELETE 自己 `marked_by = subject_id` 的 row
+  （Article 6 audit 仍保留撤回事件本身）。
+
+實作參考：`database/migrations/V071__authz_eval_case.sql` +
+`POST /api/ai-assist/eval-mark`。
 
 ---
 
@@ -398,6 +429,7 @@ Is this an AI write (DDL / DML / authz_resource / module / business_term / conne
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.2 | 2026-04-28 | Article 9 amendment: §9.6 carve-out + new §9.9 "Eval Case Capture (Eval Set Plaintext)". Allows user-initiated 👍/👎 verdict clicks to write full prompt + response to `authz_eval_case` (Article 3 explicit consent), gated by ownership check (`authz_ai_usage.called_by = subject_id`) and `AI_ASSIST_EVAL_MARK` audit row. Ratified via Article 8 with tech-lead self-sign per `feedback_tech_lead_governance` (Adam, 2026-04-28 — internal dev governance, external review N/A for AI eval mechanics). Source: `.claude/plans/v3-phase-1/ai-pg-function-authoring-dogfood.md` + `.claude/plans/v3-phase-1/eval-set-collection-plan.md`. Implementation: V071 migration + `POST /api/ai-assist/eval-mark`. |
 | 2.1 | 2026-04-27 | Article 2 amendment: clarify that `authz_data_source` schema migrations (e.g. V059 adding `default_l0_policy`) are not identity-field changes (no per-row consent), and that `UPDATE ... SET default_l0_policy = ...` is a behaviour switch (not identity) but **MUST** be paired with `authz_sync_db_grants()`. Ratified via Article 8 with explicit user approval (Adam, 2026-04-27 — chose lowest-operational-cost option from agent-proposed amendment). Source: `.claude/plans/v3-phase-1/permission-default-allow-pilot-plan.md` AC-X.2. |
 | 2.0 | 2026-04-24 | Added Article 9 (AI Agent Operations, 8 sub-articles). Ratified via Article 8 procedure with all 8 sub-articles approved as-is. Source: `.claude/plans/v3-phase-1/constitution-ai-chapter-draft.md`. Configures sandbox→diff→approve baseline for future AI features (Q1 2027), aligned with bottom-up Discover/Pending Review/schema-driven UI patterns shipped 2026-04. Companion `authz_audit` migration (actor_type / agent_id / model_id / consent_given columns) pending. |
 | 1.0 | 2026-04-20 | Initial ratification. Scope: `authz_data_source` only. |
