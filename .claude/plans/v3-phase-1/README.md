@@ -23,6 +23,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | [`ai-sidepanel-plan.md`](./ai-sidepanel-plan.md) | AI 側欄 UX (Q1 2027) — 建議卡片 + 中央 chat + sandbox/blessed workflow |
 | [`eval-set-collection-plan.md`](./eval-set-collection-plan.md) | LLM eval set 200 筆 collection (Q3 2026 start, Q4 2026 delivery) |
 | [`dependency-cascade-plan.md`](./dependency-cascade-plan.md) | 依賴清查級聯 schema (`resource_cascade_policy`) + 30-day sandbox workflow |
+| [`permission-inheritance-cascade.md`](./permission-inheritance-cascade.md) | V070 schema-as-resource + parent_id walk → DB/schema/function 繼承 default policy（onboarding row 數削減 80%+） |
 | [`path-a-inventory.md`](./path-a-inventory.md) | Path A surviving screens/descriptors inventory *(owned by another agent — see file for status)* |
 | [`constitution-ai-chapter-draft.md`](./constitution-ai-chapter-draft.md) | Constitution AI chapter draft (Article 8 revision) *(owned by another agent — see file for status)* |
 | [`two-tier-platform-model.md`](./two-tier-platform-model.md) | Tier A (平台) vs Tier B (應用) 切分 + 4 platform primitive backlog (help_text / saved_view / feedback / subscription) |
@@ -50,6 +51,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | ai-sidepanel-plan | TBD | STUB | Q1 2027 |
 | eval-set-collection-plan | TBD (Adam + DBA + PM) | STUB | Q3 2026 → Q4 2026 |
 | dependency-cascade-plan | TBD (backend) | schema-draft-ready (V045 SQL + plan; DBA review) | Q3 2026 |
+| permission-inheritance-cascade | Adam (planner) → Claude (same-session executor) | **READY-FOR-REVIEW** (V070 applied + 4 invariant verified, 2026-04-28) | V070 done; Discovery auto-ensure + cache walk = next loop |
 | path-a-inventory | Explore agent → Adam to validate | ready-for-review | input to Q4 2026 / Q1 2027 |
 | constitution-ai-chapter-draft | Drafting agent → Adam | ready-for-review (Article 8 amendment) | merge before Q1 2027 |
 | two-tier-platform-model | Adam | draft (2026-04-26) | foundation — gates UI 提案 Q3 2026 起 |

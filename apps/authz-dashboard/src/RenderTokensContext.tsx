@@ -6,6 +6,7 @@ export type RenderTokens = {
   status_color: Record<string, string>;  // status string → tailwind class
   phase_color: Record<string, string>;
   gate_color: Record<string, string>;
+  semantic_color: Record<string, string>; // semantic_type → hex (#RRGGBB) for inline styles (DagTab handles/edges)
 };
 
 // Tier A platform fallback. If /api/ui/render-tokens is unreachable the UI
@@ -74,6 +75,22 @@ const FALLBACK_TOKENS: RenderTokens = {
     G3_qualification: 'bg-purple-100 text-purple-700',
     G4_mass_production: 'bg-emerald-100 text-emerald-700',
   },
+  semantic_color: {
+    material_no:    '#2563eb',
+    product_family: '#9333ea',
+    make_buy_flag:  '#f59e0b',
+    wo_no:          '#059669',
+    shipment_no:    '#0ea5e9',
+    customer_code:  '#ec4899',
+    keyword:        '#64748b',
+    limit:          '#94a3b8',
+    date:           '#ea580c',
+    datetime:       '#ea580c',
+    count:          '#14b8a6',
+    quantity:       '#14b8a6',
+    status:         '#f43f5e',
+    unknown:        '#cbd5e1',
+  },
 };
 
 const RenderTokensContext = createContext<RenderTokens>(FALLBACK_TOKENS);
@@ -89,10 +106,11 @@ export function RenderTokensProvider({ children }: { children: ReactNode }) {
     api.renderTokens()
       .then(fetched => {
         setTokens({
-          icon:         { ...FALLBACK_TOKENS.icon,         ...(fetched.icon         || {}) },
-          status_color: { ...FALLBACK_TOKENS.status_color, ...(fetched.status_color || {}) },
-          phase_color:  { ...FALLBACK_TOKENS.phase_color,  ...(fetched.phase_color  || {}) },
-          gate_color:   { ...FALLBACK_TOKENS.gate_color,   ...(fetched.gate_color   || {}) },
+          icon:           { ...FALLBACK_TOKENS.icon,           ...(fetched.icon           || {}) },
+          status_color:   { ...FALLBACK_TOKENS.status_color,   ...(fetched.status_color   || {}) },
+          phase_color:    { ...FALLBACK_TOKENS.phase_color,    ...(fetched.phase_color    || {}) },
+          gate_color:     { ...FALLBACK_TOKENS.gate_color,     ...(fetched.gate_color     || {}) },
+          semantic_color: { ...FALLBACK_TOKENS.semantic_color, ...(fetched.semantic_color || {}) },
         });
       })
       .catch(() => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow, ReactFlowProvider, Background, Controls, MiniMap,
   addEdge, applyEdgeChanges, applyNodeChanges,
@@ -7,9 +7,11 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api } from '../api';
+import { isCompatibleHandle } from '../utils/handleCompat';
 
 type DataSourceLite = { source_id: string; display_name: string; db_type: string };
 import { useToast } from './Toast';
+import { useRenderTokens } from '../RenderTokensContext';
 import { PageHeader } from './shared/atoms/PageHeader';
 import { EmptyState } from './shared/atoms/EmptyState';
 import {
@@ -48,23 +50,14 @@ type NodeData = {
 };
 
 // ── Color per semantic_type so handles line up visually ──
-const SEMANTIC_COLORS: Record<string, string> = {
-  material_no: '#2563eb',
-  product_family: '#9333ea',
-  make_buy_flag: '#f59e0b',
-  wo_no: '#059669',
-  shipment_no: '#0ea5e9',
-  customer_code: '#ec4899',
-  keyword: '#64748b',
-  limit: '#94a3b8',
-  date: '#ea580c',
-  datetime: '#ea580c',
-  count: '#14b8a6',
-  quantity: '#14b8a6',
-  status: '#f43f5e',
-  unknown: '#cbd5e1',
-};
-const colorFor = (t?: string) => SEMANTIC_COLORS[t || 'unknown'] || SEMANTIC_COLORS.unknown;
+// SSOT: authz_ui_render_token (V055, category='semantic_color').
+// Curator can INSERT new semantic_type → hex without touching React.
+// Fallback ships in RenderTokensContext so the UI never breaks if the
+// registry fetch fails.
+function useColorFor(): (t?: string) => string {
+  const { semantic_color } = useRenderTokens();
+  return (t?: string) => semantic_color[t || 'unknown'] || semantic_color.unknown || '#cbd5e1';
+}
 
 // ── Custom function-node ──
 // Each I/O row is a fixed-height flex container with `position: relative`.
@@ -78,11 +71,17 @@ const SUBTYPE_STYLES: Record<string, { bg: string; accent: string }> = {
   report: { bg: '#ede9fe', accent: '#7c3aed' },
   query:  { bg: '#f0f9ff', accent: '#0284c7' },
 };
-function FunctionNode({ data, selected }: NodeProps<Node<NodeData>>) {
+// Context broadcasts the in-flight drag source so every FunctionNode can
+// dim incompatible handles and ring compatible ones during onConnectStart.
+type DragSrc = { nodeId: string; handleId: string; out: IO } | null;
+const DragSrcContext = createContext<DragSrc>(null);
+
+function FunctionNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
+  const colorFor = useColorFor();
+  const dragSrc = useContext(DragSrcContext);
   const s = SUBTYPE_STYLES[data.subtype] || SUBTYPE_STYLES.query;
   const border = selected ? '#2563eb' : '#cbd5e1';
-  const visibleOutputs = data.outputs.slice(0, 6);
-  const hiddenCount = data.outputs.length - visibleOutputs.length;
+  const isSourceNode = dragSrc?.nodeId === id;
 
   return (
     <div
@@ -132,69 +131,103 @@ function FunctionNode({ data, selected }: NodeProps<Node<NodeData>>) {
       {/* Inputs (left) — handle centered per row by xyflow's default CSS */}
       {data.inputs.length > 0 && (
         <div style={{ padding: '4px 0' }}>
-          {data.inputs.map((i) => (
-            <div
-              key={`in-${i.name}`}
-              style={{
-                position: 'relative',
-                height: ROW_H,
-                display: 'flex',
-                alignItems: 'center',
-                padding: '0 10px 0 14px',
-                color: '#334155',
-              }}
-            >
-              <Handle
-                type="target"
-                position={Position.Left}
-                id={i.name}
-                style={{ background: colorFor(i.semantic_type), width: 10, height: 10, border: '2px solid white' }}
-              />
-              <span style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: colorFor(i.semantic_type), display: 'inline-block' }} />
-                {i.name}
-                {i.hasDefault && <span style={{ color: '#94a3b8', fontSize: 10 }}>(opt)</span>}
-              </span>
-            </div>
-          ))}
+          {data.inputs.map((i) => {
+            // Highlight compatibility: while user is dragging from an output handle
+            // on another node, dim incompatible inputs and ring compatible ones.
+            const compatible = dragSrc && !isSourceNode
+              ? isCompatibleHandle(dragSrc.out, i)
+              : true;
+            const dim = !!(dragSrc && !isSourceNode && !compatible);
+            const ring = !!(dragSrc && !isSourceNode && compatible);
+            return (
+              <div
+                key={`in-${i.name}`}
+                style={{
+                  position: 'relative',
+                  height: ROW_H,
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '0 10px 0 14px',
+                  color: '#334155',
+                  opacity: dim ? 0.4 : 1,
+                  transition: 'opacity 120ms',
+                }}
+              >
+                <Handle
+                  type="target"
+                  position={Position.Left}
+                  id={i.name}
+                  style={{
+                    background: colorFor(i.semantic_type),
+                    width: 10,
+                    height: 10,
+                    border: '2px solid white',
+                    opacity: dim ? 0.25 : 1,
+                    boxShadow: ring ? '0 0 0 3px rgba(34,197,94,0.45)' : 'none',
+                    transition: 'opacity 120ms, box-shadow 120ms',
+                  }}
+                />
+                <span style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: colorFor(i.semantic_type), display: 'inline-block' }} />
+                  {i.name}
+                  {i.hasDefault && <span style={{ color: '#94a3b8', fontSize: 10 }}>(opt)</span>}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {data.inputs.length > 0 && visibleOutputs.length > 0 && (
+      {data.inputs.length > 0 && data.outputs.length > 0 && (
         <div style={{ borderTop: '1px dashed #cbd5e1', margin: '0 8px' }} />
       )}
 
-      {/* Outputs (right) */}
-      {visibleOutputs.length > 0 && (
-        <div style={{ padding: '4px 0' }}>
-          {visibleOutputs.map((o) => (
-            <div
-              key={`out-${o.name}`}
-              style={{
-                position: 'relative',
-                height: ROW_H,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'flex-end',
-                padding: '0 14px 0 10px',
-                color: '#334155',
-              }}
-            >
-              <span style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                {o.name}
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: colorFor(o.semantic_type), display: 'inline-block' }} />
-              </span>
-              <Handle
-                type="source"
-                position={Position.Right}
-                id={o.name}
-                style={{ background: colorFor(o.semantic_type), width: 10, height: 10, border: '2px solid white' }}
-              />
-            </div>
-          ))}
-          {hiddenCount > 0 && (
-            <div style={{ fontSize: 10, color: '#94a3b8', textAlign: 'right', padding: '0 14px 2px' }}>+{hiddenCount} more</div>
-          )}
+      {/* Outputs (right) — full list, scrollable when long. xyflow's Handle
+          uses absolute positioning so drag still works inside scroll containers. */}
+      {data.outputs.length > 0 && (
+        <div
+          className="nodrag nowheel"
+          style={{ padding: '4px 0', maxHeight: 220, overflowY: 'auto' }}
+        >
+          {data.outputs.map((o) => {
+            // While dragging from this node, dim other outputs to make the
+            // active handle visually obvious.
+            const dim = !!(dragSrc && isSourceNode && dragSrc.handleId !== o.name);
+            return (
+              <div
+                key={`out-${o.name}`}
+                style={{
+                  position: 'relative',
+                  height: ROW_H,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  padding: '0 14px 0 10px',
+                  color: '#334155',
+                  opacity: dim ? 0.5 : 1,
+                  transition: 'opacity 120ms',
+                }}
+              >
+                <span style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {o.name}
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: colorFor(o.semantic_type), display: 'inline-block' }} />
+                </span>
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={o.name}
+                  style={{
+                    background: colorFor(o.semantic_type),
+                    width: 10,
+                    height: 10,
+                    border: '2px solid white',
+                    opacity: dim ? 0.5 : 1,
+                    transition: 'opacity 120ms',
+                  }}
+                />
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -226,6 +259,7 @@ const nodeTypes = { fn: FunctionNode };
 // ── Main tab ──
 export function DagTab() {
   const toast = useToast();
+  const colorFor = useColorFor();
   const showToast = (msg: string, kind: 'success' | 'error' | 'info' = 'info') =>
     kind === 'success' ? toast.success(msg) : kind === 'error' ? toast.error(msg) : toast.info(msg);
   const [dataSources, setDataSources] = useState<DataSourceLite[]>([]);
@@ -448,8 +482,37 @@ export function DagTab() {
     setEdges((eds) => applyEdgeChanges(changes, eds));
   }, [pushHistory]);
 
+  // Drag-time compatibility highlighting: track the active source handle so
+  // FunctionNode can ring compatible inputs / dim incompatible ones.
+  const [dragSrc, setDragSrc] = useState<DragSrc>(null);
+  const onConnectStart = useCallback((_e: any, params: { nodeId?: string | null; handleId?: string | null; handleType?: string | null }) => {
+    if (params.handleType !== 'source' || !params.nodeId || !params.handleId) {
+      setDragSrc(null);
+      return;
+    }
+    const src = nodes.find((n) => n.id === params.nodeId);
+    if (!src) return;
+    const out = src.data.outputs.find((o) => o.name === params.handleId);
+    if (out) setDragSrc({ nodeId: params.nodeId, handleId: params.handleId, out });
+  }, [nodes]);
+  const onConnectEnd = useCallback(() => setDragSrc(null), []);
+
+  // Pre-validate before xyflow draws the rubber-band edge — returning false
+  // prevents the user from even dropping on incompatible handles.
+  const isValidConnection = useCallback((conn: Connection | Edge) => {
+    if (!conn.source || !conn.target || !conn.sourceHandle || !conn.targetHandle) return false;
+    const src = nodes.find((n) => n.id === conn.source);
+    const tgt = nodes.find((n) => n.id === conn.target);
+    const o = src?.data.outputs.find((x) => x.name === conn.sourceHandle);
+    const i = tgt?.data.inputs.find((x) => x.name === conn.targetHandle);
+    if (!o || !i) return false;
+    return isCompatibleHandle(o, i);
+  }, [nodes]);
+
   // Edge type-check on connect (W6-5 — do it client-side for instant feedback;
-  // server revalidates on save/execute)
+  // server revalidates on save/execute). Loose match: pgType kind family
+  // (text/number/...) covers the case where semantic_type is missing — see
+  // utils/handleCompat.ts.
   const onConnect = useCallback((conn: Connection) => {
     const src = nodes.find((n) => n.id === conn.source);
     const tgt = nodes.find((n) => n.id === conn.target);
@@ -457,10 +520,10 @@ export function DagTab() {
     const srcOut = src.data.outputs.find((o) => o.name === conn.sourceHandle);
     const tgtIn = tgt.data.inputs.find((i) => i.name === conn.targetHandle);
     if (!srcOut || !tgtIn) return;
-    if (srcOut.semantic_type && tgtIn.semantic_type &&
-        srcOut.semantic_type !== 'unknown' && tgtIn.semantic_type !== 'unknown' &&
-        srcOut.semantic_type !== tgtIn.semantic_type) {
-      showToast(`Type mismatch: ${srcOut.semantic_type} → ${tgtIn.semantic_type}`, 'error');
+    if (!isCompatibleHandle(srcOut, tgtIn)) {
+      const sLabel = srcOut.semantic_type || srcOut.pgType || 'unknown';
+      const tLabel = tgtIn.semantic_type || tgtIn.pgType || 'unknown';
+      showToast(`Type mismatch: ${sLabel} → ${tLabel}`, 'error');
       return;
     }
     pushHistory();
@@ -617,9 +680,16 @@ export function DagTab() {
   const updateBoundParam = (argName: string, value: unknown) => {
     if (!selected) return;
     pushHistory();
-    setNodes((nds) => nds.map((n) => n.id === selected.id ? {
-      ...n, data: { ...n.data, bound_params: { ...n.data.bound_params, [argName]: value } },
-    } : n));
+    setNodes((nds) => nds.map((n) => {
+      if (n.id !== selected.id) return n;
+      const next = { ...n.data.bound_params };
+      if (value === undefined) {
+        delete next[argName];
+      } else {
+        next[argName] = value;
+      }
+      return { ...n, data: { ...n.data, bound_params: next } };
+    }));
   };
 
   const canUndo = historyPastRef.current.length > 0;
@@ -838,24 +908,29 @@ export function DagTab() {
           })()}
           <div className="relative flex-1">
             <ReactFlowProvider>
-              <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                onNodeClick={(_, n) => setSelectedId(n.id)}
-                onPaneClick={() => setSelectedId(null)}
-                nodeTypes={nodeTypes}
-                deleteKeyCode={['Delete', 'Backspace']}
-                multiSelectionKeyCode={['Control', 'Meta']}
-                selectionKeyCode={'Shift'}
-                fitView
-              >
-                <Background />
-                <Controls />
-                <MiniMap />
-              </ReactFlow>
+              <DragSrcContext.Provider value={dragSrc}>
+                <ReactFlow
+                  nodes={nodes}
+                  edges={edges}
+                  onNodesChange={onNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onConnect={onConnect}
+                  onConnectStart={onConnectStart}
+                  onConnectEnd={onConnectEnd}
+                  isValidConnection={isValidConnection}
+                  onNodeClick={(_, n) => setSelectedId(n.id)}
+                  onPaneClick={() => setSelectedId(null)}
+                  nodeTypes={nodeTypes}
+                  deleteKeyCode={['Delete', 'Backspace']}
+                  multiSelectionKeyCode={['Control', 'Meta']}
+                  selectionKeyCode={'Shift'}
+                  fitView
+                >
+                  <Background />
+                  <Controls />
+                  <MiniMap />
+                </ReactFlow>
+              </DragSrcContext.Provider>
             </ReactFlowProvider>
             {nodes.length === 0 && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -958,16 +1033,41 @@ export function DagTab() {
                         </div>
                         {hasEdge ? (
                           <div className="text-[10px] text-emerald-700 mt-1">↑ connected (upstream)</div>
-                        ) : (
-                          <input
-                            aria-label={`param-${i.name}`}
-                            data-testid={`param-${selected.id}-${i.name}`}
-                            value={bound == null ? '' : String(bound)}
-                            onChange={(e) => updateBoundParam(i.name, e.target.value)}
-                            placeholder={i.hasDefault ? 'default' : 'required'}
-                            className="w-full mt-1 text-xs border border-slate-200 rounded px-2 py-1"
-                          />
-                        )}
+                        ) : (() => {
+                          const isArray = !!(i.pgType && i.pgType.endsWith('[]'));
+                          const display = bound == null
+                            ? ''
+                            : Array.isArray(bound) ? bound.join(', ') : String(bound);
+                          const placeholder = isArray
+                            ? (i.hasDefault ? 'default — or comma-separated, e.g. PS5021, PS5031' : 'comma-separated, e.g. PS5021, PS5031')
+                            : (i.hasDefault ? 'default' : 'required');
+                          return (
+                            <>
+                              <input
+                                aria-label={`param-${i.name}`}
+                                data-testid={`param-${selected.id}-${i.name}`}
+                                value={display}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  if (isArray) {
+                                    const arr = raw
+                                      .split(',')
+                                      .map((s) => s.trim())
+                                      .filter((s) => s.length > 0);
+                                    updateBoundParam(i.name, arr.length === 0 ? undefined : arr);
+                                  } else {
+                                    updateBoundParam(i.name, raw);
+                                  }
+                                }}
+                                placeholder={placeholder}
+                                className="w-full mt-1 text-xs border border-slate-200 rounded px-2 py-1"
+                              />
+                              {isArray && (
+                                <div className="text-[10px] text-slate-400 mt-1">{i.pgType} — sent as array</div>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     );
                   })}

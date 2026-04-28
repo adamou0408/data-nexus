@@ -158,7 +158,7 @@ L0 (functional access) 從 default-deny 改為 **per-data-source 可選 default-
   - flag=`allow` → 對該 datasource 的所有 resource 自動視為 L0 allow，除非 `authz_policy.effect='deny'` 命中
 - [x] **AC-1.3:** `authz_check()` 同步支援（V060/V064，含資源繼承邏輯）
 - [x] **AC-1.4:** Discovery rule 支援 `effect ENUM('allow','deny')` 欄位（V061 + engine `policyNameFor` `auto_deny:` prefix）
-- [~] **AC-1.5:** Deny pattern 庫：**enforcement loop 已實作**（V064 + engine + `/discover/suggestions` PATCH approval；verify-phase1 cell B7 14/14 passing）。**仍待 Adam + 法遵 / 內稽 dual sign-off 30 條 V062 種子內容後才可推 prod**
+- [~] **AC-1.5:** Deny pattern 庫：**enforcement loop 已實作**（V064 + engine + `/discover/suggestions` PATCH approval；verify-phase1 cell B7 14/14 passing）。**Adam tech lead pre-approval 已簽核 2026-04-28**（authz_admin_audit_log id=15, action=`V062_DENY_PATTERN_TECH_LEAD_PRE_APPROVAL`，註記 `external_review_status='pending'`、`escalation_path='法遵+內稽'`）→ dev/staging 解封跑 deny pattern test cases；**prod 推送仍待 法遵 / 內稽 正式 sign-off**（與 AC-2.7 IT audit sign-off 平行跑）
 - [x] **AC-1.6:** Path C `authz_sync_db_grants()` 支援 `default_l0_policy='allow'` 模式（V063，per Q1 = all schema objects）：
   - `GRANT USAGE ON SCHEMA`
   - `GRANT SELECT ON ALL TABLES IN SCHEMA`

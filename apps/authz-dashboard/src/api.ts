@@ -643,9 +643,9 @@ export const api = {
   uiDescriptors: (pageId: string) =>
     request<UIDescriptor[]>(`/ui/descriptors/${encodeURIComponent(pageId)}`),
 
-  // Render-token registry (V053) — { icon, status_color, phase_color, gate_color }
+  // Render-token registry (V053 + V055) — { icon, status_color, phase_color, gate_color, semantic_color }
   renderTokens: () =>
-    request<Record<'icon' | 'status_color' | 'phase_color' | 'gate_color', Record<string, string>>>(
+    request<Record<'icon' | 'status_color' | 'phase_color' | 'gate_color' | 'semantic_color', Record<string, string>>>(
       '/ui/render-tokens'),
 
   // Config snapshot & bulk import

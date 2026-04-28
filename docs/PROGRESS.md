@@ -6,7 +6,7 @@
 > All sessions should read this file first and update it when completing work.
 > For feature requests detail: `docs/wishlist-features.md`
 > For tech debt detail: `docs/backlog-tech-debt.md`
-> Last updated: 2026-04-27
+> Last updated: 2026-04-28
 
 ---
 
@@ -18,6 +18,10 @@
 ### This week (2026-04-26 → 2026-05-03)
 
 **新近完成（本 session 落地）:**
+- [x] **DS-PERM-CASCADE-V070 (Permission Inheritance Cascade)** — Schema-as-resource + ancestor deny-walk 全部落地 2026-04-28。新增 `db_schema:pg_k8.tiptop` parent row + reparent 3 個 tiptop functions;`authz_check` SYSADMIN/default-allow/default-deny 三條 branch 全改用 `resource_ancestors` mat view 做 deny-walk(取代直接 match);allow-walk 在 default-deny branch 從 inline recursive CTE 換成 mat view 查表(語意一致、O(1));V067 SYSADMIN cross-join 加 `db_schema` resource_type 進 enumeration 列表。Verified 4/4 invariants:baseline allow / schema-deny blocks descendant function / SYSADMIN deny-wins / default-deny + schema-allow cascade 全部 pass。Plan/migration:`.claude/plans/v3-phase-1/permission-inheritance-cascade.md` (READY-FOR-REVIEW) + `database/migrations/V070__permission_inheritance_cascade.sql`。**Discovery auto-ensure 同步落地:** `services/authz-api/src/routes/datasource.ts` 加 schema row 自動 upsert + 把 tables/views/functions parent_id 設成 `db_schema:<ds>.<schema>` + commit 後 `REFRESH MATERIALIZED VIEW resource_ancestors`,新發現的 resource 直接掛上繼承鏈。
+- [x] **FLOW-COMPOSER-UX-01 (DagTab 三件 fix)** — Adam 2026-04-28 從前端試 V070 + DAT-test DAG 反映:(1) outputs 多時看不到全部 handle (slice(0,6) hardcap)、(2) 拖拽 edge 沒有 compatibility 視覺提示、(3) `tc_ima001` (varchar) 連 `p_searchkey/p_material_no` (text) 對接不到。修法:移除 hardcap 改 `maxHeight: 220 + overflow-y-auto`(`.nodrag .nowheel`);新增 `DragSrcContext` + `onConnectStart/onConnectEnd` + `isValidConnection`,compatible input 發綠光 ring `rgba(34,197,94,0.45)` / 不相容 dim 0.25;新檔 `apps/authz-dashboard/src/utils/handleCompat.ts` 提供 `isCompatibleHandle` (semantic_type strict match / pgType kind family fallback — text/number/bool/date/array/json/any),寬鬆化 onConnect 阻擋邏輯。後端 `dag-validate.ts` 不需動(line 85 strict check 已 short-circuit when semantic_type undefined)。TypeScript 兩 service 都 clean。Plan:`C:\Users\adam_ou\.claude\plans\compressed-jingling-bear.md`。
+- [x] **DS-PERM-V062-TECH-LEAD-PREAPPROVAL** — 30 條 V062 deny pattern 在 dev 已 apply(`SELECT COUNT(*) FROM authz_discovery_rule WHERE effect='deny'` = 30),enforcement loop verify-phase1 cell B7 14/14 passing。Adam 以 Phison Data Nexus tech lead 身份對 internal dev environment 範疇 self-sign 解封 deny pattern test cases:authz_admin_audit_log id=15,action=`V062_DENY_PATTERN_TECH_LEAD_PRE_APPROVAL`,details 註記 `pre_approval='tech_lead'` / `external_review_status='pending'` / `escalation_path='法遵+內稽'` / `scope='internal_dev_environment'`。Prod 推送仍待 法遵 + 內稽 正式 sign-off(AC-1.5 + AC-2.7 平行跑,不擋 dev/staging)。Plan AC-1.5 status 同步更新。
+
 - [x] **PLATFORM-MODEL-01** — Two-Tier Platform Model framework 寫入 plan + standards (`.claude/plans/v3-phase-1/two-tier-platform-model.md` + `docs/standards/metadata-driven-ui.md`,master plan §2.1 鎖定為 4th architectural decision)
 - [x] **AUDIT-AI-01** — Constitution §9.7 admin-audit columns(actor_type / agent_id / model_id / consent_given)落地 (V049 + admin-audit lib,commit dac27d6)
 - [x] **Constitution v2.0** — Article 9 (AI Agent Operations) ratified (commit 82c6790)
@@ -27,7 +31,7 @@
 - [x] **RENDER-TOKEN-01** — ICON_MAP / STATUS_COLORS / PHASE_COLORS / GATE_COLORS 從 hardcoded 搬進 `authz_ui_render_token` (V053);新增 `RenderTokensContext` + `/api/ui/render-tokens` endpoint;Curator INSERT 新 token 零 React 改動(2026-04-26)
 - [x] **DAG-SAVE-PAGE-01 (Path A)** — DAG 任一 node 跑完可一鍵存成 Tier B snapshot page;V054 加 `authz_ui_page.snapshot_data` JSONB + 更新 `fn_ui_page`;新 endpoint `POST /api/dag/save-as-page`;config-exec.ts step 3a short-circuit 直接回傳 cached rows + columns;DagTab Inspector 加「Save as page」按鈕 + dialog,save 後自動跳 auto-page tab 看頁(2026-04-26)
 - [x] **DS-PERM-P1 (default-allow inversion pilot)** — V059..V064 + engine + verify-phase1 14/14。`authz_data_source.default_l0_policy` ENUM(deny|allow);`authz_check`/`authz_resolve` invert on 'allow' datasources;V061 `authz_discovery_rule.effect`;V062 +30 deny patterns(PII/PHI/SOX);V063 `authz_sync_db_grants` per-profile branch + 對稱 `ALTER DEFAULT PRIVILEGES` REVOKE(AC-1.7 rollback symmetry,pg_default_acl 3 → 0);V064 `authz_check` allow-branch widens deny override to also EXIST-test `authz_policy(effect='deny',status='active')` — 關 AC-1.5 approval loop。Discovery engine effect='deny' rules 寫 pending_review L0 deny policy;`/discover/suggestions` 加 effect 過濾 + 暴露 policy_effect/rule_effect。AC-1.1..1.7 + X.1 完成,X.2 docs(api-reference + architecture-diagram)落地,commit `85428df` + `eea5f4a`(2026-04-27)
-  - **未完待 Adam:** V062 30 條 deny 樣板需 法遵/內稽 + Adam dual sign-off 才能 deploy 到 prod
+  - **未完待 Adam:** V062 30 條 deny 樣板:Adam tech lead pre-approval 已簽核 2026-04-28(audit log id=15)→ dev/staging 解封;**prod 仍需 法遵/內稽 正式 sign-off**(平行跑,不擋 dev)
   - **AC-2.1 pilot use case 已定:** **物料狀況查詢**(2026-04-27);dev `ds:local` 需 seed mock 物料 schema 或等真實 ERP/MES onboard
   - **三大基線原則 (Adam 2026-04-27 指定):** ① 所有存取可追溯到個人 ② 所有 AI 決策可解釋 ③ 所有資料可遮罩。① ✓ `authz_audit_log.subject_id` 具備、② ✓ **V065 落地 2026-04-27** 加 `actor_type/agent_id/model_id/consent_given` 四欄 + actor_type CHECK + AI identity CHECK + idx_audit_actor_type partial index;4/4 constraint cells pass + verify-phase1 14/14 仍通過、③ ✓ V061 `column_mask` rule_type 機制存在
   - **AC-X.4 pilot SOP 已交付:** `.claude/plans/v3-phase-1/permission-default-allow-pilot-report.md` §7 逐日操作清單(D-7..D14),含 ROLLBACK 觸發點 + Adam 不能放手的 3 件事

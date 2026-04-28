@@ -654,6 +654,27 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
 
       // ── Phase 2: Prepare batch arrays ──
 
+      // V070: db_schema parent rows — one per schema we scanned. Children
+      // (tables/views/functions) inherit policy via these. Naming convention
+      // (matches V070 migration): db_schema:<source_id_minus_'ds:'>.<schema>.
+      const dsShort = ds.source_id.startsWith('ds:') ? ds.source_id.slice(3) : ds.source_id;
+      const schemaResourceIdFor = (schemaName: string) => `db_schema:${dsShort}.${schemaName}`;
+      const distinctSchemas = Array.from(new Set<string>([
+        ...tables.map((t: any) => t.table_schema),
+        ...functionsResult.rows.map((f: any) => f.schema_name),
+      ]));
+      const schIds: string[] = [], schDisplays: string[] = [], schAttrs: string[] = [];
+      for (const schemaName of distinctSchemas) {
+        schIds.push(schemaResourceIdFor(schemaName));
+        schDisplays.push(`${dsShort} / ${schemaName}`);
+        schAttrs.push(JSON.stringify({
+          data_source_id: ds.source_id,
+          schema_name: schemaName,
+          default_policy_inherits: 'data_source',
+          created_by: 'discovery_auto_ensure',
+        }));
+      }
+
       // Build column map keyed by "schema.table" for output-column derivation.
       const columnsByTable = new Map<string, Array<{ name: string; pgType: string; kind: ReturnType<typeof classifyType> }>>();
       for (const col of columns) {
@@ -667,8 +688,10 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
       }
 
       // Tables/views arrays — unified node model (inputs/outputs/side_effects/idempotent)
+      // V070: parent_id = db_schema row so cascade walk reaches schema-level grants.
       const tblIds: string[] = [], tblTypes: string[] = [], tblDisplays: string[] = [];
       const tblAttrs: string[] = [], tblAutoNames: string[] = [];
+      const tblParents: string[] = [];
       for (const table of tables) {
         const isView = table.table_type === 'VIEW';
         const resourceId = `${isView ? 'view' : 'table'}:${table.table_name}`;
@@ -694,6 +717,7 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
           idempotent: true,
         }));
         tblAutoNames.push(autoName);
+        tblParents.push(schemaResourceIdFor(table.table_schema));
       }
 
       // Column arrays — build parent_id mapping from table resource IDs
@@ -713,8 +737,9 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
         colAttrs.push(JSON.stringify({ data_source_id: ds.source_id, data_type: col.data_type }));
       }
 
-      // Function arrays
+      // Function arrays — V070: parent_id = db_schema row for cascade.
       const fnIds: string[] = [], fnDisplays: string[] = [], fnAttrs: string[] = [];
+      const fnParents: string[] = [];
       for (const fn of functionsResult.rows) {
         const meta = extractFunctionMetadata({
           name: fn.function_name,
@@ -735,6 +760,7 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
           idempotent: meta.idempotent,
           side_effects: meta.side_effects,
         }));
+        fnParents.push(schemaResourceIdFor(fn.schema_name));
       }
 
       // ── Oracle: scan Oracle-side callable functions ──
@@ -785,7 +811,8 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
           for (const fn of (fnListResult.rows || []) as any[]) {
             const args = argMap.get(fn.OBJECT_NAME)?.join(', ') || '';
             const retType = returnMap.get(fn.OBJECT_NAME) || fn.OBJECT_TYPE;
-            fnIds.push(`function:${ds.cdc_target_schema}.${fn.OBJECT_NAME.toLowerCase()}`);
+            const oraSchema = ds.cdc_target_schema;
+            fnIds.push(`function:${oraSchema}.${fn.OBJECT_NAME.toLowerCase()}`);
             fnDisplays.push(`${fn.OWNER}.${fn.OBJECT_NAME}(${args})`);
             fnAttrs.push(JSON.stringify({
               data_source_id: ds.source_id,
@@ -794,6 +821,20 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
               return_type: retType,
               object_type: fn.OBJECT_TYPE,
             }));
+            // Ensure schema row exists for the Oracle CDC target schema, then
+            // parent the function under it. distinctSchemas may not have included
+            // this schema yet (Oracle scan runs after the PG-side schema list).
+            if (!schIds.includes(schemaResourceIdFor(oraSchema))) {
+              schIds.push(schemaResourceIdFor(oraSchema));
+              schDisplays.push(`${dsShort} / ${oraSchema}`);
+              schAttrs.push(JSON.stringify({
+                data_source_id: ds.source_id,
+                schema_name: oraSchema,
+                default_policy_inherits: 'data_source',
+                created_by: 'discovery_auto_ensure',
+              }));
+            }
+            fnParents.push(schemaResourceIdFor(oraSchema));
           }
         } catch (oraErr) {
           // Non-fatal: Oracle function scan failure shouldn't block table/column discovery
@@ -806,20 +847,39 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
       // ── Phase 3: Batch upsert inside transaction ──
       const client = await authzPool.connect();
       let created: string[] = [];
+      let schemasCreated = 0;
       try {
         await client.query('BEGIN');
+
+        // V070: ensure db_schema parent rows exist BEFORE inserting children
+        // (FK / parent_id integrity). parent_id stays NULL on schema rows —
+        // authz_check derives default from attributes.data_source_id.
+        if (schIds.length > 0) {
+          const schResult = await client.query(`
+            INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name, attributes, is_active)
+            SELECT unnest($1::text[]), 'db_schema', NULL, unnest($2::text[]), unnest($3::jsonb[]), TRUE
+            ON CONFLICT (resource_id) DO UPDATE SET
+              attributes = authz_resource.attributes || EXCLUDED.attributes,
+              is_active = TRUE,
+              updated_at = now()
+            RETURNING resource_id, (xmax = 0) AS is_new
+          `, [schIds, schDisplays, schAttrs]);
+          schemasCreated = schResult.rows.filter((r: any) => r.is_new).length;
+          created.push(...schResult.rows.filter((r: any) => r.is_new).map((r: any) => r.resource_id));
+        }
 
         // Batch upsert tables/views (smart display_name: only overwrite auto-generated names)
         if (tblIds.length > 0) {
           const tblResult = await client.query(`
             WITH input AS (
-              SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::jsonb[], $5::text[])
-                AS t(r_id, r_type, d_name, attrs, auto_name)
+              SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::jsonb[], $6::text[])
+                AS t(r_id, r_type, parent_id, d_name, attrs, auto_name)
             )
-            INSERT INTO authz_resource (resource_id, resource_type, display_name, attributes)
-            SELECT r_id, r_type, d_name, attrs FROM input
+            INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name, attributes)
+            SELECT r_id, r_type, parent_id, d_name, attrs FROM input
             ON CONFLICT (resource_id) DO UPDATE SET
               attributes = authz_resource.attributes || EXCLUDED.attributes,
+              parent_id = COALESCE(authz_resource.parent_id, EXCLUDED.parent_id),
               display_name = CASE
                 WHEN authz_resource.display_name IS NULL THEN EXCLUDED.display_name
                 WHEN authz_resource.display_name = (SELECT i.auto_name FROM input i WHERE i.r_id = authz_resource.resource_id)
@@ -828,7 +888,7 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
               END,
               updated_at = now()
             RETURNING resource_id, (xmax = 0) AS is_new
-          `, [tblIds, tblTypes, tblDisplays, tblAttrs, tblAutoNames]);
+          `, [tblIds, tblTypes, tblParents, tblDisplays, tblAttrs, tblAutoNames]);
           created.push(...tblResult.rows.filter((r: any) => r.is_new).map((r: any) => r.resource_id));
         }
 
@@ -845,16 +905,17 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
           created.push(...colResult.rows.filter((r: any) => r.is_new).map((r: any) => r.resource_id));
         }
 
-        // Batch upsert functions
+        // Batch upsert functions — V070 parent_id = db_schema row.
         if (fnIds.length > 0) {
           const fnResult = await client.query(`
-            INSERT INTO authz_resource (resource_id, resource_type, display_name, attributes)
-            SELECT unnest($1::text[]), 'function', unnest($2::text[]), unnest($3::jsonb[])
+            INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name, attributes)
+            SELECT unnest($1::text[]), 'function', unnest($2::text[]), unnest($3::text[]), unnest($4::jsonb[])
             ON CONFLICT (resource_id) DO UPDATE SET
               attributes = authz_resource.attributes || EXCLUDED.attributes,
+              parent_id = COALESCE(authz_resource.parent_id, EXCLUDED.parent_id),
               updated_at = now()
             RETURNING resource_id, (xmax = 0) AS is_new
-          `, [fnIds, fnDisplays, fnAttrs]);
+          `, [fnIds, fnParents, fnDisplays, fnAttrs]);
           created.push(...fnResult.rows.filter((r: any) => r.is_new).map((r: any) => r.resource_id));
         }
 
@@ -870,6 +931,17 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
         throw txErr;
       } finally {
         client.release();
+      }
+
+      // V070: refresh resource_ancestors mat view so new schema parent edges
+      // are visible to authz_check's deny-walk. Non-fatal — if this fails, a
+      // later policy change or scheduled refresh will pick it up.
+      if (schemasCreated > 0 || created.length > 0) {
+        try {
+          await authzPool.query('REFRESH MATERIALIZED VIEW resource_ancestors');
+        } catch (e) {
+          console.warn(`[discover] resource_ancestors refresh failed for ${ds.source_id}:`, e);
+        }
       }
 
       const viewCount = tables.filter((t: any) => t.table_type === 'VIEW').length;
@@ -894,8 +966,8 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
         }
       }
 
-      audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_discover', resource_id: ds.source_id, decision: 'allow', context: { tables_found: tableCount, views_found: viewCount, functions_found: fnIds.length, resources_created: created.length, suggestions: suggestionResult ?? undefined } });
-      logAdminAction(authzPool, { userId: getUserId(req), action: 'DISCOVER_DATASOURCE', resourceType: 'data_source', resourceId: ds.source_id, details: { tables_found: tableCount, views_found: viewCount, functions_found: fnIds.length, resources_created: created.length, suggestions: suggestionResult ?? undefined, suggestion_error: suggestionError ?? undefined }, ip: getClientIp(req) });
+      audit({ access_path: 'B', subject_id: getUserId(req), action_id: 'datasource_discover', resource_id: ds.source_id, decision: 'allow', context: { tables_found: tableCount, views_found: viewCount, functions_found: fnIds.length, resources_created: created.length, schemas_ensured: schIds.length, schemas_created: schemasCreated, suggestions: suggestionResult ?? undefined } });
+      logAdminAction(authzPool, { userId: getUserId(req), action: 'DISCOVER_DATASOURCE', resourceType: 'data_source', resourceId: ds.source_id, details: { tables_found: tableCount, views_found: viewCount, functions_found: fnIds.length, resources_created: created.length, schemas_ensured: schIds.length, schemas_created: schemasCreated, suggestions: suggestionResult ?? undefined, suggestion_error: suggestionError ?? undefined }, ip: getClientIp(req) });
 
       res.json({
         source_id: ds.source_id,
@@ -903,6 +975,8 @@ datasourceRouter.post('/:id/discover', async (req, res) => {
         views_found: viewCount,
         functions_found: fnIds.length,
         columns_found: columns.length,
+        schemas_ensured: schIds.length,
+        schemas_created: schemasCreated,
         resources_created: created.length,
         resources_updated: totalResources - created.length,
         created,
