@@ -116,4 +116,54 @@ test.describe('Flow Composer (W6+)', () => {
       )
       .toBeTruthy();
   });
+
+  test('aggregate operator: palette → node + inspector renders', async ({ page }) => {
+    await page.goto('/');
+    await loginAs(page);
+    await navigateTo(page, 'Flow Composer');
+    await expect(page.getByTestId('dag-tab')).toBeVisible();
+
+    await page.getByTestId('palette-op-aggregate').click();
+
+    const aggNode = page.locator('[data-testid^="op-aggregate-"]').first();
+    await expect(aggNode).toBeVisible();
+    await aggNode.click();
+
+    // Inspector shows aggregate-specific controls
+    await expect(page.getByTestId('op-agg-groupby-add')).toBeVisible();
+    await expect(page.getByTestId('op-agg-add')).toBeVisible();
+    await expect(page.getByTestId('op-agg-fn-0')).toBeVisible();
+    await expect(page.getByTestId('op-agg-col-0')).toBeVisible();
+
+    // Default config: count(?). Switch fn to sum and confirm node summary updates.
+    await page.getByTestId('op-agg-fn-0').selectOption('sum');
+    await expect(aggNode).toContainText(/sum\(/);
+  });
+
+  test('aggregate operator: add group key + extra aggregation', async ({ page }) => {
+    await page.goto('/');
+    await loginAs(page);
+    await navigateTo(page, 'Flow Composer');
+    await expect(page.getByTestId('dag-tab')).toBeVisible();
+
+    await page.getByTestId('palette-op-aggregate').click();
+    const aggNode = page.locator('[data-testid^="op-aggregate-"]').first();
+    await aggNode.click();
+
+    // Add a group_by key (no upstream → free-text input)
+    await page.getByTestId('op-agg-groupby-add').click();
+    const grpInput = page.getByTestId('op-agg-groupby-0');
+    await expect(grpInput).toBeVisible();
+    await grpInput.fill('product_line');
+
+    // Add a 2nd aggregation
+    await page.getByTestId('op-agg-add').click();
+    await expect(page.getByTestId('op-agg-fn-1')).toBeVisible();
+    await page.getByTestId('op-agg-fn-1').selectOption('avg');
+    await page.getByTestId('op-agg-col-1').fill('cost');
+
+    // Node summary reflects "by product_line" + "avg(cost)"
+    await expect(aggNode).toContainText('by product_line');
+    await expect(aggNode).toContainText(/avg\(cost\)/);
+  });
 });
