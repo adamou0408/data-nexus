@@ -4,7 +4,225 @@
 > For detailed specs see [`phison-data-nexus-architecture-v2.4.md`](phison-data-nexus-architecture-v2.4.md).
 > For DB schema see [`er-diagram.md`](er-diagram.md).
 
-## System Overview
+> **Reading order:** "Current Snapshot" below is the up-to-date top-level view (V070+, AI dogfood, NPI vertical, workflow primitive). Sections from "System Overview (V020-era baseline)" downward are the original baseline diagrams — still valid for the AuthZ core (three paths, L0-L3, Path A flow, sidebar, bootstrap), but they predate `resource_ancestors` deny-walk, AI audit columns, eval capture, lifecycle/workflow primitive, and the NPI vertical.
+
+---
+
+## Current Snapshot (2026-04-28, V070+)
+
+### A. System Overview
+
+```
+                       Phison Data Nexus
++-------------------------------------------------------------------------+
+|  FRONTEND  apps/authz-dashboard  (React + Vite, port 13173)             |
+|  ----------------------------------------------------------------       |
+|   AuthzContext         GET /api/resolve         L0-L3 + is_sysadmin     |
+|   RenderTokensContext  GET /api/ui/render-tokens  ICON/COLOR (V053)     |
+|                                                                         |
+|   Tabs:                                                                 |
+|     My Access:   Overview · Resolve · Matrix                            |
+|     Data:        DataQuery · Dag (Flow Composer) · Metabase             |
+|     AuthZ Tools: Check · RLS · Tables                  (admin)          |
+|     Data Policy: Modules · Discover · Resources · Policies · DS/Pool    |
+|     Identity:    Subjects · Roles · Actions · Audit · ConfigTools       |
+|     Vertical:    NpiGateConsole          <-- V078 first vertical tab    |
+|     AI:          AIProviders · AuthorPanelAIAssist (in DataQuery)       |
++--------------------------------+----------------------------------------+
+                                 | HTTP X-User-Id / X-User-Groups
+                                 v
++-------------------------------------------------------------------------+
+|  BACKEND  services/authz-api  (Express + TS, port 13001)                |
+|  ----------------------------------------------------------------       |
+|  routes/        resolve · check · filter · matrix                       |
+|                 config-exec     (Path A render engine)                  |
+|                 rls-simulate · browse-{read,admin}                      |
+|                 datasource · pool · discover                            |
+|                 dag · data-query · oracle-exec                          |
+|                 modules · ui                                            |
+|                 ai-assist · ai-provider     <-- AI dogfood              |
+|                 workflow                    <-- V075 workflow primitive |
+|  lib/           policy-evaluator · policy-cache · policy-events         |
+|                 discovery-rule-engine                                   |
+|                 ai-call · ai-context · admin-audit · crypto             |
+|                 dag-validate · masked-query · rewriter/                 |
+|                 schema-to-ui · function-metadata · remote-sync          |
++----+--------------------------------------------+----------------------+
+     |                                            |
+     v                                            v
++-- nexus_authz (PG 16, SSOT) --+        +-- Business data sources -----+
+| authz_subject/role/...        |        | nexus_data (local PG)        |
+| authz_role_permission         |        |   lot_status / sales_order / |
+| authz_policy                  |        |   wip_inventory /            |
+| authz_resource                |        |   cp_ft_result /             |
+|   + attributes.data_source_id |        |   npi_gate_checklist +       |
+|   + entity_kind (V073)        |        |   V076-V078 NPI seed         |
+| authz_data_source             |        |                              |
+|   + default_l0_policy (V059)  |        | Onboarded externals:         |
+| authz_discovery_rule (V061)   |        |   tiptop (pg_k8) ERP         |
+|   + effect deny/allow         |        |   Oracle 19c CDC (designed,  |
+| authz_ui_page                 |        |   not yet implemented)       |
+|   + snapshot_data (V054)      |        +------------------------------+
+| authz_ui_render_token (V053)              ^
+| authz_audit_log                           | resolveDataSource(resource)
+|   + AI cols V049/V065                     |
+|     (actor_type / agent_id /              |
+|      model_id / consent_given)            |
+| authz_ai_provider     (V052)              |
+| authz_ai_usage        (V052)              |
+| authz_eval_case       (V071)  AI eval capture
+| authz_entity_kind     (V073)  Tier B semantic class
+| authz_lifecycle_definition  (V074) state-machine spec
+| authz_lifecycle_instance    (V074) runtime state
+| authz_workflow_request      (V075) submitted request
+| authz_workflow_approval_record (V075) chain step result
+|                               |
+| PG functions                  |
+|   authz_resolve / authz_check / authz_filter                |
+|   authz_sync_db_grants  (Path C, symmetric REVOKE V063)     |
+|   fn_ui_root / fn_ui_page / fn_mask_*                       |
+|   resource_ancestors  (mat view, V037; deny-walk by V070)   |
++-------------------------------+
+
+External / side:
+  TimescaleDB hypertable  (V030)   audit log compression + 7y retention (V056)
+  pgaudit Path C ingest   (V057/V058)
+  pgbouncer (port 16432)           Path C auth_query → nexus_authz
+  Redis 7 (port 16379)             cache slot (M4 上線正式啟用)
+  OpenLDAP (port 389)              identity-sync → authz_group_member
+```
+
+### B. Path A request flow (most common)
+
+```
+[User clicks card]
+      |
+      v
+ConfigEngine.tsx                          (Path A metadata-driven UI)
+      |
+      | POST /api/config-exec/:page_id   body={params}
+      v
++-- routes/config-exec.ts ----------------------------------------+
+|  step 1: authz_check(user, action, resource)                    |
+|          |- V066 SYSADMIN short-circuit  -> ALLOW               |
+|          |- resource_ancestors deny-walk (V070)                 |
+|          |- V064 explicit deny in authz_policy?                 |
+|          \- datasource.default_l0_policy: deny / allow inverted |
+|          -> 403 if denied                                       |
+|                                                                 |
+|  step 2: fn_ui_page(page_id, user) -> {columns, filters, sql}   |
+|                                                                 |
+|  step 3: buildMaskedSelect()                                    |
+|          |- L1 RLS:   authz_filter() -> WHERE clause            |
+|          \- L2 mask:  fn_mask_full / range / hash               |
+|                                                                 |
+|  step 3a (V054 snapshot): cached page -> return cached rows     |
+|                                                                 |
+|  step 4: resolveDataSource(resource) -> nexus_data / tiptop     |
+|          -> execute SELECT                                      |
+|                                                                 |
+|  step 5: audit insert (actor_type='human', consent='implicit')  |
++-----------------------------------------------------------------+
+      |
+      v
+{config, data, meta} -> DataTable render -> click row -> child page
+```
+
+### C. AI dogfood loop (AuthorPanelAIAssist + eval capture)
+
+```
+   AuthorPanel  (DataQueryTab)
+         |
+         | "draft / refine / explain"
+         v
++-- routes/ai-assist.ts -------------------------------------+
+|  requireRole('ADMIN','AUTHZ_ADMIN')                        |
+|                                                            |
+|  lib/ai-context.ts                                         |
+|     \- per-row authz_check filter -> max 50 tables x 30 cols
+|        (Constitution §9.2: AI-visible schema is gated by   |
+|        the calling user's permissions)                     |
+|                                                            |
+|  lib/ai-call.ts                                            |
+|     |- provider resolve by purpose_tags='sql_authoring'    |
+|     |- AES-256 decrypt API key                             |
+|     |- OpenAI-compatible chat/completions                  |
+|     |- destructive regex guard:                            |
+|     |   DROP / TRUNCATE / GRANT / REVOKE /                 |
+|     |   COPY / DELETE / UPDATE / INSERT                    |
+|     \- -> authz_ai_usage ledger (SHA-256 prompt hash)      |
+|                                                            |
+|  lib/admin-audit.ts                                        |
+|     \- logAdminAction(actor_type='ai_agent',               |
+|                       agent_id, model_id,                  |
+|                       consent_given='human_explicit')      |
++------------------------------------------------------------+
+         |
+         | response { sql, model_id, latency, cost, usage_id }
+         v
+   AuthorPanelAIAssist renders SQL  ->  fills textarea
+                                        (NEVER auto-deploy, §9.3)
+         |
+         v   user clicks Deploy -> window.confirm -> normal Path B
+         |
+         |   user reviews answer  ->  clicks 👍 / 👎
+         v
+   POST /api/ai-assist/eval-mark { usage_id, verdict }
+         |- ownership check: authz_ai_usage.called_by = subject
+         |- INSERT authz_eval_case(prompt_text, response_text,
+         |                          verdict, ds_id, model_id)   <- V071
+         \- audit AI_ASSIST_EVAL_MARK
+                                                                  ^
+                                                                  |
+                                                  Eval set grows by use,
+                                                  not by interview.
+                                                  (Constitution §9.9)
+```
+
+### D. NPI vertical: workflow + lifecycle (V073-V078)
+
+```
+  authz_resource (entity_kind='npi_material')   <- V073 + V076 seed
+         |
+         | governed by
+         v
+  authz_lifecycle_definition                                    <- V074
+     'npi_gate_lifecycle'  states: NPI_G0..NPI_G4
+                           transitions: G0->G1, G1->G2, G2->G3, G3->G4
+         |
+         | one instance per material
+         v
+  authz_lifecycle_instance.current_state = 'NPI_G2'             <- V074
+
+  Advance G2 -> G3 is a composite_action (V003 spec, V075 runtime):
+  -----------------------------------------------------------------
+         |
+         | requester submits
+         v
+  +-- routes/workflow.ts ---------------------------------------+
+  |  authz_check(requester, target_action, target_resource)    |
+  |     -> 403 if no permission                                |
+  |  INSERT authz_workflow_request(status='pending')           |  <- V075
+  +------------------------------------------------------------+
+         |
+         | each approver in approval_chain leaves a record
+         v
+  authz_workflow_approval_record (one per chain step)          <- V075
+         |
+         | on final approve
+         v
+  UPDATE authz_lifecycle_instance.current_state = 'NPI_G3'
+  audit insert (actor_type='human', consent='human_explicit')
+         |
+         v
+  NpiGateConsoleTab renders updated state                       <- V078
+```
+
+> **Hot-path note:** lifecycle / workflow / entity_kind tables are **not** read inside `authz_check` or `authz_resolve`. Permission still flows through `authz_role_permission` + `authz_policy`; lifecycle gating sits on top in the workflow layer.
+
+---
+
+## System Overview (V020-era baseline)
 
 ```
                                     Phison Data Nexus
