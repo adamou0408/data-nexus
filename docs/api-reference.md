@@ -150,7 +150,19 @@ maintains symmetric `ALTER DEFAULT PRIVILEGES` for AC-1.7 rollback (V063).
 | PATCH | /api/discover/suggestions/:policy_id | Approve (status → `active`) or reject suggestion. Approving a deny suggestion makes it enforce via V064's widened allow-branch deny check |
 | POST | /api/discover/generate-app | Generate Path A scaffold from a discovered table |
 
-Source: `services/authz-api/src/routes/` (10 route files)
+### AI Assist — PG Function Authoring (requireRole: ADMIN, AUTHZ_ADMIN)
+
+Dogfood (Q3 2026) endpoints powering the AuthorPanel AI helper in DataQueryTab. All three pull a provider whose `purpose_tags` contains `'sql_authoring'` (`is_fallback DESC` tiebreak), call `${base_url}/chat/completions` (OpenAI-compatible), record an `authz_ai_usage` row (SHA-256 hash of prompt — never plaintext) and an `authz_admin_audit_log` row (`actor_type='ai_agent'`, `agent_id=provider_id`, `consent_given='human_explicit'`). Output never auto-deploys — generated SQL fills the textarea; Deploy still requires `window.confirm` + human click (Constitution §11.3).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | /api/ai-assist/function-draft | Body: `{data_source_id, prompt}`. Builds authz-aware schema context (max 50 tables × 30 cols, per-row `authz_check` filter), asks LLM for a CREATE OR REPLACE FUNCTION. Returns `{sql, provider_id, model_id, usage:{prompt_tokens, completion_tokens, latency_ms, cost_usd}, schema_tables, schema_truncated}`. Destructive output (DROP/TRUNCATE/GRANT/REVOKE/COPY/DELETE/UPDATE/INSERT) → 422. No active sql_authoring provider → 503. |
+| POST | /api/ai-assist/function-refine | Body: `{data_source_id, current_sql, instruction}`. Same flow, includes the user's existing SQL in the prompt. |
+| POST | /api/ai-assist/function-explain | Body: `{sql}`. Returns markdown explanation `{markdown, provider_id, model_id, usage}`. No schema context, no destructive guard. |
+
+Smoke test: `npx tsx services/authz-api/scripts/test-ai-assist.ts` (spins up fake OpenAI provider, exercises all 3 endpoints, verifies ledger + audit + 422/503 paths).
+
+Source: `services/authz-api/src/routes/` (11 route files)
 
 ## Route Architecture
 

@@ -5,7 +5,8 @@ type DataSourceLite = { source_id: string; display_name: string; db_type: string
 import { useToast } from './Toast';
 import { EmptyState } from './shared/atoms/EmptyState';
 import { PageHeader } from './shared/atoms/PageHeader';
-import { Code2, Play, Loader2, Database, AlertCircle, Clock, Hash, AlertTriangle, FileText, Calculator, Zap, Pencil, Sparkles, CheckCircle2, UploadCloud, Table2 } from 'lucide-react';
+import { AuthorPanelAIAssist } from './AuthorPanelAIAssist';
+import { Code2, Play, Loader2, Database, AlertCircle, Clock, Hash, AlertTriangle, FileText, Calculator, Zap, Pencil, CheckCircle2, UploadCloud, Table2 } from 'lucide-react';
 
 type ParsedArg = { name: string; pgType: string; hasDefault: boolean; kind?: string };
 type OutputColumn = { name: string; pgType: string; kind?: string };
@@ -586,17 +587,16 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
           </div>
         )}
 
+        <AuthorPanelAIAssist
+          dsId={dsId}
+          sql={sql}
+          onSqlChange={(next) => { setSql(next); setValidateResult(null); setAuthorError(''); }}
+        />
+
         <div className="border border-slate-200 rounded-lg bg-white overflow-hidden">
           <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 flex items-center gap-2">
             <Code2 size={14} className="text-slate-500" />
             <span className="text-xs font-medium text-slate-600">SQL — CREATE [OR REPLACE] FUNCTION</span>
-            <button
-              disabled
-              title="Coming in W5 — LLM integration"
-              className="ml-auto px-2 py-0.5 text-[11px] rounded bg-violet-50 text-violet-500 border border-violet-200 cursor-not-allowed flex items-center gap-1"
-            >
-              <Sparkles size={11} /> Ask AI to draft
-            </button>
           </div>
           <textarea
             value={sql}

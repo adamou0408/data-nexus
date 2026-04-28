@@ -691,6 +691,49 @@ export const api = {
     request<AIProviderUsage>(`/ai-providers/${encodeURIComponent(id)}/usage?period=${period}`),
   aiProviderAudit: (id: string) =>
     request<AIProviderAuditEntry[]>(`/ai-providers/${encodeURIComponent(id)}/audit`),
+
+  // ── AI-Assisted PG Function Authoring (dogfood, Constitution §11) ──
+  aiAssistDraft: (data_source_id: string, prompt: string) =>
+    request<AIAssistDraftResponse>('/ai-assist/function-draft', {
+      method: 'POST', body: JSON.stringify({ data_source_id, prompt }),
+    }),
+  aiAssistRefine: (data_source_id: string, current_sql: string, instruction: string) =>
+    request<AIAssistRefineResponse>('/ai-assist/function-refine', {
+      method: 'POST', body: JSON.stringify({ data_source_id, current_sql, instruction }),
+    }),
+  aiAssistExplain: (sql: string) =>
+    request<AIAssistExplainResponse>('/ai-assist/function-explain', {
+      method: 'POST', body: JSON.stringify({ sql }),
+    }),
+};
+
+export type AIAssistUsage = {
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  cost_usd: number | null;
+  latency_ms: number;
+};
+export type AIAssistDraftResponse = {
+  sql: string;
+  rationale: string | null;
+  provider_id: string;
+  model_id: string;
+  schema_truncated: boolean;
+  schema_tables: number;
+  usage: AIAssistUsage;
+};
+export type AIAssistRefineResponse = {
+  sql: string;
+  diff_summary: string | null;
+  provider_id: string;
+  model_id: string;
+  usage: AIAssistUsage;
+};
+export type AIAssistExplainResponse = {
+  markdown: string;
+  provider_id: string;
+  model_id: string;
+  usage: AIAssistUsage;
 };
 
 export type UserProfile = {

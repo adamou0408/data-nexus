@@ -11,6 +11,7 @@ import { browseAdminRouter } from './routes/browse-admin';
 import { poolRouter } from './routes/pool';
 import { datasourceRouter, listDataSourcesLite } from './routes/datasource';
 import { aiProviderRouter, listAIProvidersLite } from './routes/ai-provider';
+import { aiAssistRouter } from './routes/ai-assist';
 import { oracleExecRouter } from './routes/oracle-exec';
 import { dataQueryRouter } from './routes/data-query';
 import { dagRouter } from './routes/dag';
@@ -89,6 +90,10 @@ app.use('/api/datasources', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), datasour
 // Registered BEFORE the admin-gated mount so Express matches it first.
 app.get('/api/ai-providers/list', requireAuth, listAIProvidersLite);
 app.use('/api/ai-providers', requireRole('ADMIN', 'AUTHZ_ADMIN'), aiProviderRouter);
+// AI-assisted authoring (dogfood): draft / refine / explain PG functions.
+// Admin-gated to mirror function deploy permissions; Constitution §11.3 keeps
+// Deploy human-clicked, so this endpoint never executes generated SQL.
+app.use('/api/ai-assist', requireRole('ADMIN', 'AUTHZ_ADMIN'), aiAssistRouter);
 // Modules: read open to all authenticated users (per-resource authz_check inside),
 // write operations (DELETE) protected by requireRole inside the router
 app.use('/api/modules', requireAuth, modulesRouter);

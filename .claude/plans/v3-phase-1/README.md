@@ -21,6 +21,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | [`tier3-query-tool-plan.md`](./tier3-query-tool-plan.md) | Tier 3 Query Tool (Q2 2027) — SQL editor + AI 輔助 + 歷史記錄 |
 | [`tier1-dashboard-engine-plan.md`](./tier1-dashboard-engine-plan.md) | Tier 1 自建 dashboard engine (Q2 2027) — minimal scope, Phase 2 fallback |
 | [`ai-sidepanel-plan.md`](./ai-sidepanel-plan.md) | AI 側欄 UX (Q1 2027) — 建議卡片 + 中央 chat + sandbox/blessed workflow |
+| [`ai-pg-function-authoring-dogfood.md`](./ai-pg-function-authoring-dogfood.md) | AI 輔助 PG function 建立（Q3 2026 dogfood）— AuthorPanel draft/refine/explain，Adam 自用先行 |
 | [`eval-set-collection-plan.md`](./eval-set-collection-plan.md) | LLM eval set 200 筆 collection (Q3 2026 start, Q4 2026 delivery) |
 | [`dependency-cascade-plan.md`](./dependency-cascade-plan.md) | 依賴清查級聯 schema (`resource_cascade_policy`) + 30-day sandbox workflow |
 | [`permission-inheritance-cascade.md`](./permission-inheritance-cascade.md) | V070 schema-as-resource + parent_id walk → DB/schema/function 繼承 default policy（onboarding row 數削減 80%+） |
@@ -49,6 +50,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | tier3-query-tool-plan | TBD | STUB | Q2 2027 |
 | tier1-dashboard-engine-plan | TBD | STUB | Q2 2027 (G4) |
 | ai-sidepanel-plan | TBD | STUB | Q1 2027 |
+| ai-pg-function-authoring-dogfood | Adam (planner) → Claude (executor) | **READY-FOR-REVIEW** (2026-04-28：4 new files + 3 mods，smoke 21/21 pass) | Q3 2026 dogfood |
 | eval-set-collection-plan | TBD (Adam + DBA + PM) | STUB | Q3 2026 → Q4 2026 |
 | dependency-cascade-plan | TBD (backend) | schema-draft-ready (V045 SQL + plan; DBA review) | Q3 2026 |
 | permission-inheritance-cascade | Adam (planner) → Claude (same-session executor) | **READY-FOR-REVIEW** (V070 applied + 4 invariant verified, 2026-04-28) | V070 done; Discovery auto-ensure + cache walk = next loop |

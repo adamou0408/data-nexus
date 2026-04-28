@@ -10,14 +10,15 @@
 
 ---
 
-## Phase 1 Active — Weekly Tracker (2026-04-26 → 2027-05)
+## This Sprint
 
-**Demo target:** Q2 2027 · **Master plan:** `docs/plan-v3-phase-1.md`
-**Mode:** 純軟體開發 — no hiring / cross-team / 訪談 paths in scope（見 memory `project_pure_software_dev.md`）
+> **Sprint is the unit of planning.** For non-main-path work (anything not touching the hard gates in `CLAUDE.md` §Status), don't apply phase / quarterly thinking — just queue the next migration/route/page.
+> Demo target reference: 2027-05. Long-term track: `docs/plan-v3-phase-1.md`.
 
 ### This week (2026-04-26 → 2026-05-03)
 
 **新近完成（本 session 落地）:**
+- [x] **AI-DOGFOOD-01 (AuthorPanel AI 助理 — PG function authoring dogfood)** — Q1 2027 AI 側欄計畫提前到 Q3 2026 dogfood,Adam 自用先行驗證 AI workflow + 蒐集真實 prompt → eval set。落地:`services/authz-api/src/lib/ai-call.ts`(provider resolve by `purpose_tags='sql_authoring'` + AES-256 decrypt + OpenAI-compatible chat/completions + SHA-256 prompt hash → `authz_ai_usage` ledger + destructive regex `DROP/TRUNCATE/GRANT/REVOKE/COPY/DELETE/UPDATE/INSERT`)、`lib/ai-context.ts`(per-row `authz_check` filter,max 50 tables × 30 cols schema dump,§11.2 read auth)、`routes/ai-assist.ts` 3 endpoints(`/function-draft` + `/function-refine` + `/function-explain`),mounted under `requireRole('ADMIN','AUTHZ_ADMIN')`;每次呼叫額外 `logAdminAction(actor_type='ai_agent', agent_id=provider_id, model_id, consent_given='human_explicit')` 入 V049 audit log(§9.7 + §11.7)。Frontend `AuthorPanelAIAssist.tsx`(collapsible 紫色面板,Generate/Refine/Explain 三鈕,model_id+latency+cost+schema_truncated 元數據條,localStorage 收合狀態)嵌入 `DataQueryTab.tsx` AuthorPanel,**AI 從不 auto-deploy** — 產出 SQL 只填 textarea,Deploy 仍走原本 `window.confirm` + 人手按(§11.3)。Smoke test `services/authz-api/scripts/test-ai-assist.ts`(無 jest/vitest framework,故寫成 self-contained tsx script)21/21 assertions passed:3 endpoint 200 + ledger ≥3 rows status=ok feature_tag=`pg_function_authoring` + audit 三條 actor_type=ai_agent + 422 destructive guard + 503 no-provider。`logAdminAction` actor_type 用 `'ai_agent'`(plan 原寫 `'ai_assist'` 但 type union 不允許,取 §9.7 enum 內最近值)。Plan: `.claude/plans/v3-phase-1/ai-pg-function-authoring-dogfood.md` (READY-FOR-REVIEW)。
 - [x] **DS-PERM-CASCADE-V070 (Permission Inheritance Cascade)** — Schema-as-resource + ancestor deny-walk 全部落地 2026-04-28。新增 `db_schema:pg_k8.tiptop` parent row + reparent 3 個 tiptop functions;`authz_check` SYSADMIN/default-allow/default-deny 三條 branch 全改用 `resource_ancestors` mat view 做 deny-walk(取代直接 match);allow-walk 在 default-deny branch 從 inline recursive CTE 換成 mat view 查表(語意一致、O(1));V067 SYSADMIN cross-join 加 `db_schema` resource_type 進 enumeration 列表。Verified 4/4 invariants:baseline allow / schema-deny blocks descendant function / SYSADMIN deny-wins / default-deny + schema-allow cascade 全部 pass。Plan/migration:`.claude/plans/v3-phase-1/permission-inheritance-cascade.md` (READY-FOR-REVIEW) + `database/migrations/V070__permission_inheritance_cascade.sql`。**Discovery auto-ensure 同步落地:** `services/authz-api/src/routes/datasource.ts` 加 schema row 自動 upsert + 把 tables/views/functions parent_id 設成 `db_schema:<ds>.<schema>` + commit 後 `REFRESH MATERIALIZED VIEW resource_ancestors`,新發現的 resource 直接掛上繼承鏈。
 - [x] **FLOW-COMPOSER-UX-01 (DagTab 三件 fix)** — Adam 2026-04-28 從前端試 V070 + DAT-test DAG 反映:(1) outputs 多時看不到全部 handle (slice(0,6) hardcap)、(2) 拖拽 edge 沒有 compatibility 視覺提示、(3) `tc_ima001` (varchar) 連 `p_searchkey/p_material_no` (text) 對接不到。修法:移除 hardcap 改 `maxHeight: 220 + overflow-y-auto`(`.nodrag .nowheel`);新增 `DragSrcContext` + `onConnectStart/onConnectEnd` + `isValidConnection`,compatible input 發綠光 ring `rgba(34,197,94,0.45)` / 不相容 dim 0.25;新檔 `apps/authz-dashboard/src/utils/handleCompat.ts` 提供 `isCompatibleHandle` (semantic_type strict match / pgType kind family fallback — text/number/bool/date/array/json/any),寬鬆化 onConnect 阻擋邏輯。後端 `dag-validate.ts` 不需動(line 85 strict check 已 short-circuit when semantic_type undefined)。TypeScript 兩 service 都 clean。Plan:`C:\Users\adam_ou\.claude\plans\compressed-jingling-bear.md`。
 - [x] **DS-PERM-V062-TECH-LEAD-PREAPPROVAL** — 30 條 V062 deny pattern 在 dev 已 apply(`SELECT COUNT(*) FROM authz_discovery_rule WHERE effect='deny'` = 30),enforcement loop verify-phase1 cell B7 14/14 passing。Adam 以 Phison Data Nexus tech lead 身份對 internal dev environment 範疇 self-sign 解封 deny pattern test cases:authz_admin_audit_log id=15,action=`V062_DENY_PATTERN_TECH_LEAD_PRE_APPROVAL`,details 註記 `pre_approval='tech_lead'` / `external_review_status='pending'` / `escalation_path='法遵+內稽'` / `scope='internal_dev_environment'`。Prod 推送仍待 法遵 + 內稽 正式 sign-off(AC-1.5 + AC-2.7 平行跑,不擋 dev/staging)。Plan AC-1.5 status 同步更新。
@@ -49,20 +50,23 @@
 - C) business_term-driven column mask 自動化 (Tier A,depends on V044,1 週)
 - D) default-by-convention permission preset (Tier A,1-2 週)
 
-### Phase 1 milestone gates(純軟體版本 — pilot / SLO 由 Adam 自評)
+### Hard gates(only these warrant phase-style guarding — everything else is pure additive)
 
-| Gate | Date | Exit criteria | Status |
+| Gate | Loose target | Exit criteria | Status |
 |------|------|---------------|--------|
-| **G1** | 2026-09 | M4 prod-ready 上線 (SEC-06 / Helm / Keycloak / LDAP Cron / Redis) | 🟡 planning |
-| **G2** | 2026-12 | Tier 2 admin 表單 alpha 自跑端到端 ≥ 1 個業務場景(取代 pilot) | ⏳ not started |
-| **G3** | 2027-03 | LLM eval set 200 筆 + Adam 自評 text-to-SQL ≥85%, recall@10 ≥0.90 | ⏳ eval set 待開工 |
-| **G4** | 2027-04 | Tier 1 自建引擎 render 1 個業務 dashboard 端到端 | ⏳ not started |
+| **G1 — M4 prod-ready** | ~2026-09 | SEC-06 / Helm / Keycloak / LDAP Cron / Redis 上線 | 🟡 planning |
+| **G2 — Tier 2 admin alpha** | ~2026-12 | admin 表單 alpha 自跑端到端 ≥ 1 個業務場景(取代 pilot) | ⏳ not started |
+| **G3 — LLM SLO** | ~2027-03 | eval set 200 筆 + 自評 text-to-SQL ≥85%, recall@10 ≥0.90 | ⏳ eval set 待開工 |
+| **G4 — Tier 1 dashboard** | ~2027-04 | 自建引擎 render 1 個業務 dashboard 端到端 | ⏳ not started |
 
-### Phase 1 quarterly snapshot
+> Dates are loose — slips are normal. The gates are *one-way doors* (Path A migration once opened can't easily close), not deadlines.
+
+<details>
+<summary>Long-term track aspirations(只是參考,sprint 才是執行單位 — 不要從這裡反推 sprint 內容)</summary>
 
 | Track | Q3 2026 | Q4 2026 | Q1 2027 | Q2 2027 |
 |-------|---------|---------|---------|---------|
-| M4 prod-ready | 🟡 kickoff | target 100% (G1 by 09/2026) | — | — |
+| M4 prod-ready | 🟡 kickoff | target 100% (G1) | — | — |
 | Tier A primitive (help_text / saved_view / feedback / subscription) | 🟡 help_text | saved_view + feedback | subscription | — |
 | Tier 2 分析 wizard | — | alpha target | expand | demo-ready |
 | Tier 2 admin 表單 | — | 🚧 alpha (G2 self-test) | Path A migration | done |
@@ -71,6 +75,8 @@
 | Tier 1 dashboard | — | — | — | 🚧 build (G4) |
 | eval set 200 筆 | 🟡 self-collect | 🎯 200 complete | SLO self-eval | quarterly +20 |
 | business_term | 🟡 V044 migration self-review | ≥20 blessed | ≥50 | ≥100 |
+
+</details>
 
 > **Legend:** 🟢 done · 🟡 in progress · 🚧 building · 🎯 milestone · ⏳ pending · 🔴 at risk
 
