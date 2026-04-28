@@ -36,6 +36,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | [`llm-slo-contract-template.md`](./llm-slo-contract-template.md) | Gate G3 LLM team SLO contract template (sign 2026-09) |
 | [`design-mining-vision.md`](./design-mining-vision.md) | Data Mining Engine long-term vision *(GATED — Phase 2+, moved from `docs/` 2026-04-22)* |
 | [`doc-reorg-proposal.md`](./doc-reorg-proposal.md) | Doc architecture reorg proposal (executed 2026-04-22, historical) |
+| [`npi-gate-signoff-dogfood.md`](./npi-gate-signoff-dogfood.md) | First composite-action workflow dogfood — V073-V078 + workflow router + NpiGateConsoleTab; closes wishlist W-MGR-03 |
 
 ---
 
@@ -66,6 +67,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | llm-slo-contract-template | Adam | STUB (template) | 2026-09 sign, 2027-03 G3 |
 | design-mining-vision | — | GATED (Phase 2+) | post-Milestone 0 |
 | doc-reorg-proposal | Adam | executed 2026-04-22 | historical |
+| npi-gate-signoff-dogfood | Adam (this session) | **READY-FOR-REVIEW** (2026-04-28：V072-V078 applied + workflow router + handler + E2E walkthrough verified) | Q3 2026 platform primitive dogfood |
 
 **Status legend:** STUB → draft → in-progress → ready-for-review → approved
 
