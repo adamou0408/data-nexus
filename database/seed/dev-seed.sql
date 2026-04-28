@@ -4,116 +4,38 @@
 -- ============================================================
 
 -- ============================================================
--- 1. LDAP Groups (simulating Phison AD groups)
+-- 1. LDAP Groups (minimal — Adam pruned 2026-04-28 to keep just the 4
+--    governance-relevant groups; 16 mock product/region groups removed)
 -- ============================================================
 INSERT INTO authz_subject (subject_id, subject_type, display_name, ldap_dn, attributes) VALUES
-    -- PE groups by product line
-    ('group:PE_SSD',      'ldap_group', 'PE - SSD Controller Team',   'cn=PE_SSD,ou=groups,dc=phison,dc=com',      '{"product_line": "SSD", "site": "HQ", "dept": "PE"}'),
-    ('group:PE_EMMC',     'ldap_group', 'PE - eMMC/UFS Team',         'cn=PE_EMMC,ou=groups,dc=phison,dc=com',     '{"product_line": "eMMC", "site": "HQ", "dept": "PE"}'),
-    ('group:PE_SD',       'ldap_group', 'PE - SD Controller Team',    'cn=PE_SD,ou=groups,dc=phison,dc=com',       '{"product_line": "SD", "site": "HQ", "dept": "PE"}'),
-    -- PM groups by product line
-    ('group:PM_SSD',      'ldap_group', 'PM - SSD Product Mgmt',      'cn=PM_SSD,ou=groups,dc=phison,dc=com',      '{"product_line": "SSD", "dept": "PM"}'),
-    ('group:PM_EMMC',     'ldap_group', 'PM - eMMC Product Mgmt',     'cn=PM_EMMC,ou=groups,dc=phison,dc=com',     '{"product_line": "eMMC", "dept": "PM"}'),
-    -- QA (cross product line)
-    ('group:QA_ALL',      'ldap_group', 'QA - All Products',          'cn=QA_ALL,ou=groups,dc=phison,dc=com',      '{"dept": "QA"}'),
-    -- Sales by region
-    ('group:SALES_TW',    'ldap_group', 'Sales - Taiwan / HQ',        'cn=SALES_TW,ou=groups,dc=phison,dc=com',    '{"region": "TW", "dept": "SALES"}'),
-    ('group:SALES_CN',    'ldap_group', 'Sales - China',              'cn=SALES_CN,ou=groups,dc=phison,dc=com',    '{"region": "CN", "dept": "SALES"}'),
-    ('group:SALES_US',    'ldap_group', 'Sales - US / Europe',        'cn=SALES_US,ou=groups,dc=phison,dc=com',    '{"region": "US", "dept": "SALES"}'),
-    -- FAE by region
-    ('group:FAE_TW',      'ldap_group', 'FAE - Taiwan',               'cn=FAE_TW,ou=groups,dc=phison,dc=com',     '{"region": "TW", "dept": "FAE"}'),
-    ('group:FAE_CN',      'ldap_group', 'FAE - China',                'cn=FAE_CN,ou=groups,dc=phison,dc=com',     '{"region": "CN", "dept": "FAE"}'),
-    -- R&D
-    ('group:RD_FW',       'ldap_group', 'R&D - Firmware Team',        'cn=RD_FW,ou=groups,dc=phison,dc=com',      '{"dept": "RD", "sub_dept": "FW"}'),
-    ('group:RD_IC',       'ldap_group', 'R&D - IC Design Team',       'cn=RD_IC,ou=groups,dc=phison,dc=com',      '{"dept": "RD", "sub_dept": "IC"}'),
-    -- Support groups
-    ('group:BI_TEAM',     'ldap_group', 'BI / Data Analytics Team',   'cn=BI_TEAM,ou=groups,dc=phison,dc=com',    '{"dept": "BI"}'),
-    ('group:DBA_TEAM',    'ldap_group', 'DBA Team',                   'cn=DBA_TEAM,ou=groups,dc=phison,dc=com',   '{"dept": "IT"}'),
-    ('group:FINANCE_TEAM','ldap_group', 'Finance Department',         'cn=FINANCE_TEAM,ou=groups,dc=phison,dc=com','{"dept": "FINANCE"}'),
-    ('group:VP_OFFICE',   'ldap_group', 'VP / Executive Office',      'cn=VP_OFFICE,ou=groups,dc=phison,dc=com',  '{"dept": "EXEC"}'),
-    ('group:OP_SSD',      'ldap_group', 'OP - SSD Production Line',   'cn=OP_SSD,ou=groups,dc=phison,dc=com',     '{"product_line": "SSD", "site": "HQ", "dept": "OP"}');
+    ('group:AUTHZ_ADMINS','ldap_group', 'AuthZ Administrators',     'cn=AUTHZ_ADMINS,ou=groups,dc=phison,dc=com', '{"dept": "IT"}'),
+    ('group:BI_TEAM',     'ldap_group', 'BI / Data Analytics Team', 'cn=BI_TEAM,ou=groups,dc=phison,dc=com',      '{"dept": "BI"}'),
+    ('group:DBA_TEAM',    'ldap_group', 'DBA Team',                 'cn=DBA_TEAM,ou=groups,dc=phison,dc=com',     '{"dept": "IT"}'),
+    ('group:SYSADMINS',   'ldap_group', '系統管理員群組 (SYSADMIN god-mode holders)', 'cn=SYSADMINS,ou=groups,dc=phison,dc=com', '{"dept": "IT"}');
 
 -- ============================================================
--- 2. Test Users (simulating Phison employees)
+-- 2. Test Users (minimal — Adam pruned 2026-04-28 to 3 users + 1 service
+--    account; 16 mock employees removed)
 -- ============================================================
 INSERT INTO authz_subject (subject_id, subject_type, display_name, ldap_dn, attributes) VALUES
-    ('user:wang_pe',      'user', 'Wang (PE-SSD)',        'uid=wang_pe,ou=people,dc=phison,dc=com',      '{"product_line": "SSD", "site": "HQ", "employee_id": "P2024001"}'),
-    ('user:chen_pe',      'user', 'Chen (PE-eMMC)',       'uid=chen_pe,ou=people,dc=phison,dc=com',      '{"product_line": "eMMC", "site": "HQ", "employee_id": "P2024002"}'),
-    ('user:su_pe',        'user', 'Su (PE-SD)',           'uid=su_pe,ou=people,dc=phison,dc=com',        '{"product_line": "SD", "site": "HQ", "employee_id": "P2024003"}'),
-    ('user:lin_pm',       'user', 'Lin (PM-SSD)',         'uid=lin_pm,ou=people,dc=phison,dc=com',       '{"product_line": "SSD", "employee_id": "P2024010"}'),
-    ('user:kuo_pm',       'user', 'Kuo (PM-eMMC)',        'uid=kuo_pm,ou=people,dc=phison,dc=com',       '{"product_line": "eMMC", "employee_id": "P2024011"}'),
-    ('user:huang_qa',     'user', 'Huang (QA)',           'uid=huang_qa,ou=people,dc=phison,dc=com',     '{"employee_id": "P2024020"}'),
-    ('user:lee_sales',    'user', 'Lee (Sales-TW)',       'uid=lee_sales,ou=people,dc=phison,dc=com',    '{"region": "TW", "employee_id": "P2024030"}'),
-    ('user:zhang_sales',  'user', 'Zhang (Sales-CN)',     'uid=zhang_sales,ou=people,dc=phison,dc=com',  '{"region": "CN", "employee_id": "P2024031"}'),
-    ('user:smith_sales',  'user', 'Smith (Sales-US)',     'uid=smith_sales,ou=people,dc=phison,dc=com',  '{"region": "US", "employee_id": "P2024032"}'),
-    ('user:wu_fae',       'user', 'Wu (FAE-TW)',          'uid=wu_fae,ou=people,dc=phison,dc=com',       '{"region": "TW", "employee_id": "P2024040"}'),
-    ('user:zhou_fae',     'user', 'Zhou (FAE-CN)',        'uid=zhou_fae,ou=people,dc=phison,dc=com',     '{"region": "CN", "employee_id": "P2024041"}'),
-    ('user:liu_fw',       'user', 'Liu (FW Engineer)',    'uid=liu_fw,ou=people,dc=phison,dc=com',       '{"product_line": "SSD", "employee_id": "P2024050"}'),
-    ('user:tseng_rd',     'user', 'Tseng (IC Design)',    'uid=tseng_rd,ou=people,dc=phison,dc=com',     '{"employee_id": "P2024051"}'),
-    ('user:hsu_op',       'user', 'Hsu (OP-SSD Line)',    'uid=hsu_op,ou=people,dc=phison,dc=com',       '{"product_line": "SSD", "site": "HQ", "employee_id": "P2024060"}'),
-    ('user:tsai_bi',      'user', 'Tsai (BI Analyst)',    'uid=tsai_bi,ou=people,dc=phison,dc=com',      '{"employee_id": "P2024070"}'),
-    ('user:yang_finance', 'user', 'Yang (Finance)',       'uid=yang_finance,ou=people,dc=phison,dc=com', '{"employee_id": "P2024080"}'),
-    ('user:chang_vp',     'user', 'Chang (VP)',           'uid=chang_vp,ou=people,dc=phison,dc=com',     '{"employee_id": "P2024090"}'),
-    ('user:sys_admin',    'user', 'SysAdmin',             'uid=sys_admin,ou=people,dc=phison,dc=com',    '{"employee_id": "P2024099"}'),
+    ('user:adam_ou',      'user', 'Adam Ou (Tech Lead, Phison Data Nexus)', '', '{"role_hint": "tech_lead"}'),
+    ('user:sys_admin',    'user', 'SysAdmin',          'uid=sys_admin,ou=people,dc=phison,dc=com',    '{"employee_id": "P2024099"}'),
+    ('user:tsai_bi',      'user', 'Tsai (BI Analyst)', 'uid=tsai_bi,ou=people,dc=phison,dc=com',      '{"employee_id": "P2024070", "demo_purpose": "restricted BI test role"}'),
     ('svc:etl_pipeline',  'service_account', 'ETL Pipeline', 'uid=etl_pipeline,ou=people,dc=phison,dc=com', '{"service": "data-pipeline"}');
 
 -- ============================================================
--- 3. Role Assignments
+-- 3. Role Assignments (minimal — only the 4 kept subjects)
 -- ============================================================
 INSERT INTO authz_subject_role (subject_id, role_id, granted_by) VALUES
-    -- PE engineers
-    ('user:wang_pe',      'PE',          'ldap_sync'),
-    ('user:chen_pe',      'PE',          'ldap_sync'),
-    ('user:su_pe',        'PE',          'ldap_sync'),
-    -- PM managers
-    ('user:lin_pm',       'PM',          'ldap_sync'),
-    ('user:kuo_pm',       'PM',          'ldap_sync'),
-    -- QA
-    ('user:huang_qa',     'QA',          'ldap_sync'),
-    -- Sales
-    ('user:lee_sales',    'SALES',       'ldap_sync'),
-    ('user:zhang_sales',  'SALES',       'ldap_sync'),
-    ('user:smith_sales',  'SALES',       'ldap_sync'),
-    -- FAE
-    ('user:wu_fae',       'FAE',         'ldap_sync'),
-    ('user:zhou_fae',     'FAE',         'ldap_sync'),
-    -- R&D / FW
-    ('user:liu_fw',       'FW',          'ldap_sync'),
-    ('user:liu_fw',       'RD',          'ldap_sync'),
-    ('user:tseng_rd',     'RD',          'ldap_sync'),
-    -- OP
-    ('user:hsu_op',       'OP',          'ldap_sync'),
-    -- BI
-    ('user:tsai_bi',      'BI_USER',     'ldap_sync'),
-    -- Finance
-    ('user:yang_finance', 'FINANCE',     'ldap_sync'),
-    -- VP (executive access)
-    ('user:chang_vp',     'VP',          'ldap_sync'),
-    -- Admin
+    ('user:adam_ou',      'SYSADMIN',    'manual'),
     ('user:sys_admin',    'ADMIN',       'ldap_sync'),
     ('user:sys_admin',    'AUTHZ_ADMIN', 'ldap_sync'),
-    -- Service account
+    ('user:tsai_bi',      'BI_USER',     'ldap_sync'),
     ('svc:etl_pipeline',  'ETL_SVC',     'system'),
-    -- Group-level assignments
-    ('group:PE_SSD',      'PE',          'ldap_sync'),
-    ('group:PE_EMMC',     'PE',          'ldap_sync'),
-    ('group:PE_SD',       'PE',          'ldap_sync'),
-    ('group:PM_SSD',      'PM',          'ldap_sync'),
-    ('group:PM_EMMC',     'PM',          'ldap_sync'),
-    ('group:QA_ALL',      'QA',          'ldap_sync'),
-    ('group:SALES_TW',    'SALES',       'ldap_sync'),
-    ('group:SALES_CN',    'SALES',       'ldap_sync'),
-    ('group:SALES_US',    'SALES',       'ldap_sync'),
-    ('group:FAE_TW',      'FAE',         'ldap_sync'),
-    ('group:FAE_CN',      'FAE',         'ldap_sync'),
-    ('group:RD_FW',       'FW',          'ldap_sync'),
-    ('group:RD_FW',       'RD',          'ldap_sync'),
-    ('group:RD_IC',       'RD',          'ldap_sync'),
+    ('group:AUTHZ_ADMINS','AUTHZ_ADMIN', 'ldap_sync'),
     ('group:BI_TEAM',     'BI_USER',     'ldap_sync'),
     ('group:DBA_TEAM',    'DBA',         'ldap_sync'),
-    ('group:FINANCE_TEAM','FINANCE',     'ldap_sync'),
-    ('group:VP_OFFICE',   'VP',          'ldap_sync'),
-    ('group:OP_SSD',      'OP',          'ldap_sync');
+    ('group:SYSADMINS',   'SYSADMIN',    'ldap_sync');
 
 -- ============================================================
 -- 4. Resources — web pages only (Path B)
@@ -122,8 +44,8 @@ INSERT INTO authz_subject_role (subject_id, role_id, granted_by) VALUES
 -- tables/columns) was removed 2026-04-27 per Adam — bottom-up direction now
 -- starts from real user-onboarded data sources (e.g. ds:pg_k8). Module rows
 -- are created via dashboard "Create Module" + Discover-driven mapping.
--- The deleted module/table/column inserts live in git history and in
--- database/seed/_demo/dev-seed-legacy.sql for reference.
+-- The deleted module/table/column inserts live in git history (see
+-- commit a5782c0 and earlier dev-seed.sql revisions).
 INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name) VALUES
     ('web_page:home',                   'web_page', NULL,                        'Homepage'),
     ('web_page:admin_dashboard',        'web_page', NULL,                        'Admin Dashboard'),
@@ -148,194 +70,12 @@ INSERT INTO authz_role_permission (role_id, action_id, resource_id, effect) VALU
     ('AUTHZ_ADMIN', 'write', 'web_page:authz_admin',    'allow');
 
 -- ============================================================
--- 6. L1 ABAC Policies (data scope by product_line / region)
+-- 6. Web API resources + role grants (Path B)
 -- ============================================================
-INSERT INTO authz_policy (
-    policy_name, description, granularity, effect, status,
-    applicable_paths, subject_condition, resource_condition,
-    rls_expression, created_by
-) VALUES
--- PE scoped by product_line
-('pe_ssd_data_scope',
- 'PE SSD engineers can only see SSD product line data',
- 'L1_data_domain', 'allow', 'active', '{A,B,C}',
- '{"role": ["PE"], "product_line": ["SSD"]}',
- '{"resource_type": "table", "data_domain": ["lot", "yield", "npi"]}',
- 'product_line = ''SSD''',
- 'system'),
-
-('pe_emmc_data_scope',
- 'PE eMMC engineers can only see eMMC product line data',
- 'L1_data_domain', 'allow', 'active', '{A,B,C}',
- '{"role": ["PE"], "product_line": ["eMMC"]}',
- '{"resource_type": "table", "data_domain": ["lot", "yield", "npi"]}',
- 'product_line = ''eMMC''',
- 'system'),
-
-('pe_sd_data_scope',
- 'PE SD engineers can only see SD product line data',
- 'L1_data_domain', 'allow', 'active', '{A,B,C}',
- '{"role": ["PE"], "product_line": ["SD"]}',
- '{"resource_type": "table", "data_domain": ["lot", "yield", "npi"]}',
- 'product_line = ''SD''',
- 'system'),
-
--- PM scoped by product_line
-('pm_ssd_data_scope',
- 'PM SSD managers can only see SSD product line data',
- 'L1_data_domain', 'allow', 'active', '{A,B,C}',
- '{"role": ["PM"], "product_line": ["SSD"]}',
- '{"resource_type": "table", "data_domain": ["lot", "yield", "npi"]}',
- 'product_line = ''SSD''',
- 'system'),
-
-('pm_emmc_data_scope',
- 'PM eMMC managers can only see eMMC product line data',
- 'L1_data_domain', 'allow', 'active', '{A,B,C}',
- '{"role": ["PM"], "product_line": ["eMMC"]}',
- '{"resource_type": "table", "data_domain": ["lot", "yield", "npi"]}',
- 'product_line = ''eMMC''',
- 'system'),
-
--- OP scoped by product_line
-('op_ssd_data_scope',
- 'SSD line operators can only see SSD lot data',
- 'L1_data_domain', 'allow', 'active', '{A,B,C}',
- '{"role": ["OP"], "product_line": ["SSD"]}',
- '{"resource_type": "table", "data_domain": ["lot"]}',
- 'product_line = ''SSD''',
- 'system'),
-
--- FW scoped by product_line
-('fw_ssd_data_scope',
- 'SSD firmware engineers can only see SSD data',
- 'L1_data_domain', 'allow', 'active', '{A,B,C}',
- '{"role": ["FW"], "product_line": ["SSD"]}',
- '{"resource_type": "table", "data_domain": ["lot", "yield"]}',
- 'product_line = ''SSD''',
- 'system'),
-
--- SALES scoped by region
-('sales_tw_region',
- 'Taiwan sales can only see TW region orders',
- 'L1_data_domain', 'allow', 'active', '{A,B,C}',
- '{"role": ["SALES"], "region": ["TW"]}',
- '{"resource_type": "table", "data_domain": ["order"]}',
- 'region = ''TW''',
- 'system'),
-
-('sales_cn_region',
- 'China sales can only see CN region orders',
- 'L1_data_domain', 'allow', 'active', '{A,B,C}',
- '{"role": ["SALES"], "region": ["CN"]}',
- '{"resource_type": "table", "data_domain": ["order"]}',
- 'region = ''CN''',
- 'system'),
-
-('sales_us_region',
- 'US/EU sales can only see US region orders',
- 'L1_data_domain', 'allow', 'active', '{A,B,C}',
- '{"role": ["SALES"], "region": ["US"]}',
- '{"resource_type": "table", "data_domain": ["order"]}',
- 'region = ''US''',
- 'system'),
-
--- FAE scoped by region
-('fae_tw_region',
- 'Taiwan FAE can only see TW region customer data',
- 'L1_data_domain', 'allow', 'active', '{A,B,C}',
- '{"role": ["FAE"], "region": ["TW"]}',
- '{"resource_type": "table", "data_domain": ["order"]}',
- 'region = ''TW''',
- 'system'),
-
-('fae_cn_region',
- 'China FAE can only see CN region customer data',
- 'L1_data_domain', 'allow', 'active', '{A,B,C}',
- '{"role": ["FAE"], "region": ["CN"]}',
- '{"resource_type": "table", "data_domain": ["order"]}',
- 'region = ''CN''',
- 'system');
-
--- NOTE: QA, VP, FINANCE, BI_USER have NO L1 policies → they see all data (TRUE)
-
--- ============================================================
--- 6a. L2 Column Mask Policies (SSOT for column masking across all paths)
--- ============================================================
-INSERT INTO authz_policy (
-    policy_name, description, granularity, effect, status,
-    applicable_paths, subject_condition, resource_condition,
-    column_mask_rules, created_by
-) VALUES
--- PE sees unit_price as range, cost as full mask
-('pe_column_masks',
- 'PE engineers: unit_price shown as range bucket, cost fully masked',
- 'L2_row_column', 'allow', 'active', '{A,B,C}',
- '{"role": ["PE"]}',
- '{"resource_type": "table"}',
- '{
-    "lot_status.unit_price": {"mask_type": "range", "function": "fn_mask_range"},
-    "lot_status.cost":       {"mask_type": "full",  "function": "fn_mask_full"}
-  }',
- 'system'),
-
--- OP sees unit_price as full mask, customer as partial mask
-('op_column_masks',
- 'Operators: unit_price fully masked, customer name partially masked',
- 'L2_row_column', 'allow', 'active', '{A,B,C}',
- '{"role": ["OP"]}',
- '{"resource_type": "table"}',
- '{
-    "lot_status.unit_price": {"mask_type": "full",    "function": "fn_mask_full"},
-    "lot_status.customer":   {"mask_type": "partial", "function": "fn_mask_partial"}
-  }',
- 'system'),
-
--- QA sees unit_price as range
-('qa_column_masks',
- 'QA engineers: unit_price shown as range bucket',
- 'L2_row_column', 'allow', 'active', '{A,B,C}',
- '{"role": ["QA"]}',
- '{"resource_type": "table"}',
- '{
-    "lot_status.unit_price": {"mask_type": "range", "function": "fn_mask_range"}
-  }',
- 'system'),
-
--- FAE sees cost as full mask, margin as full mask
-('fae_column_masks',
- 'FAE: cost and margin fully masked',
- 'L2_row_column', 'allow', 'active', '{A,B,C}',
- '{"role": ["FAE"]}',
- '{"resource_type": "table"}',
- '{
-    "lot_status.cost":    {"mask_type": "full", "function": "fn_mask_full"},
-    "price_book.margin":  {"mask_type": "full", "function": "fn_mask_full"}
-  }',
- 'system'),
-
--- BI_USER sees margin as hash
-('bi_column_masks',
- 'BI analysts: margin shown as hash for correlation without revealing value',
- 'L2_row_column', 'allow', 'active', '{A,B,C}',
- '{"role": ["BI_USER"]}',
- '{"resource_type": "table"}',
- '{
-    "price_book.margin": {"mask_type": "hash", "function": "fn_mask_hash"}
-  }',
- 'system');
-
--- ============================================================
--- 6b. AUTHZ_ADMINS group + web_api resources
--- ============================================================
-INSERT INTO authz_subject (subject_id, subject_type, display_name, ldap_dn, attributes) VALUES
-    ('group:AUTHZ_ADMINS', 'ldap_group', 'AuthZ Administrators', 'cn=AUTHZ_ADMINS,ou=groups,dc=phison,dc=com', '{"dept": "IT"}');
-
-INSERT INTO authz_subject_role (subject_id, role_id, granted_by) VALUES
-    ('group:AUTHZ_ADMINS', 'AUTHZ_ADMIN', 'ldap_sync'),
-    ('group:AUTHZ_ADMINS', 'ADMIN',       'ldap_sync');
-
--- Web API resources (Path B)
+-- 17 mock policies (L1 product/region scopes + L2 column_masks) and 3
+-- composite_actions (lot_hold/release/npi_gate) were removed 2026-04-28
+-- per Adam — they targeted mock modules already deleted on 2026-04-27.
+-- Real policies now come from dashboard policy editor on real resources.
 INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name) VALUES
     ('web_api:resolve',         'web_api', 'web_page:home',           'Resolve API'),
     ('web_api:check',           'web_api', 'web_page:home',           'Check API'),
@@ -344,19 +84,9 @@ INSERT INTO authz_resource (resource_id, resource_type, parent_id, display_name)
     ('web_api:pool_manage',     'web_api', 'web_page:admin_dashboard','Pool Management API'),
     ('web_api:audit_log',       'web_api', 'web_page:admin_dashboard','Audit Log API');
 
--- API permissions
+-- API permissions (only for kept roles: ADMIN / AUTHZ_ADMIN / BI_USER)
 INSERT INTO authz_role_permission (role_id, action_id, resource_id, effect) VALUES
-    -- All authenticated users can call resolve/check/filter
-    ('PE',          'read', 'web_api:resolve', 'allow'),
-    ('PM',          'read', 'web_api:resolve', 'allow'),
-    ('OP',          'read', 'web_api:resolve', 'allow'),
-    ('QA',          'read', 'web_api:resolve', 'allow'),
-    ('SALES',       'read', 'web_api:resolve', 'allow'),
-    ('FAE',         'read', 'web_api:resolve', 'allow'),
-    ('RD',          'read', 'web_api:resolve', 'allow'),
-    ('FW',          'read', 'web_api:resolve', 'allow'),
-    ('FINANCE',     'read', 'web_api:resolve', 'allow'),
-    ('VP',          'read', 'web_api:resolve', 'allow'),
+    -- All authenticated kept roles can call resolve
     ('BI_USER',     'read', 'web_api:resolve', 'allow'),
     ('ADMIN',       'read', 'web_api:resolve', 'allow'),
     ('AUTHZ_ADMIN', 'read', 'web_api:resolve', 'allow'),
@@ -373,161 +103,19 @@ INSERT INTO authz_role_permission (role_id, action_id, resource_id, effect) VALU
     ('AUTHZ_ADMIN', 'read',  'web_api:audit_log',    'allow');
 
 -- ============================================================
--- 7. L3 Composite Actions (approval workflows)
--- ============================================================
-INSERT INTO authz_composite_action (
-    policy_name, description, target_action, target_resource,
-    approval_chain, preconditions, status
-) VALUES
-('lot_hold_approval',
- 'Lot hold requires PE approval',
- 'hold', 'table:lot_status',
- '[{"step": 1, "required_role": "PE", "min_approvers": 1}]',
- '{"phase": "!shipped"}',
- 'active'),
-
-('lot_release_approval',
- 'Lot release requires PE + QA dual approval',
- 'release', 'table:lot_status',
- '[{"step": 1, "required_role": "PE", "min_approvers": 1}, {"step": 2, "required_role": "QA", "min_approvers": 1}]',
- '{"status": "hold"}',
- 'active'),
-
-('npi_gate_approval',
- 'NPI gate advancement requires PM + PE approval',
- 'approve', 'table:npi_gate_checklist',
- '[{"step": 1, "required_role": "PE", "min_approvers": 1}, {"step": 2, "required_role": "PM", "min_approvers": 1}]',
- '{}',
- 'active');
-
--- ============================================================
--- 8. Path C: DB Connection Pool Profiles, Assignments, Credentials
--- ============================================================
-
--- Pool profiles (different access levels for different roles)
-INSERT INTO authz_db_pool_profile (
-    profile_id, pg_role, allowed_schemas, allowed_tables,
-    denied_columns, connection_mode, max_connections,
-    rls_applies, description
-) VALUES
-('pool:pe_readonly',
- 'nexus_pe_ro', '{public}',
- '{lot_status,wip_inventory,cp_ft_result,npi_gate_checklist}',
- NULL,
- 'readonly', 10, TRUE,
- 'PE engineers — read-only on MRP tables, column deny from SSOT'),
-
-('pool:sales_readonly',
- 'nexus_sales_ro', '{public}',
- '{lot_status,sales_order,price_book}',
- NULL,
- 'readonly', 10, TRUE,
- 'Sales team — read-only on lot + sales tables, column deny from SSOT'),
-
-('pool:bi_readonly',
- 'nexus_bi_ro', '{public}',
- NULL,
- NULL,
- 'readonly', 20, TRUE,
- 'BI analysts — read-only on all tables, column deny from SSOT'),
-
-('pool:etl_readwrite',
- 'nexus_etl_rw', '{public}',
- '{lot_status,wip_inventory,cp_ft_result,reliability_report,rma_record}',
- NULL,
- 'readwrite', 5, FALSE,
- 'ETL service account — read/write on MRP+Quality tables, no RLS'),
-
-('pool:admin_full',
- 'nexus_admin_full', '{public}',
- NULL, NULL,
- 'admin', 3, FALSE,
- 'DBA/Admin — full access, no RLS');
-
--- Pool assignments (who can use which pool)
-INSERT INTO authz_db_pool_assignment (subject_id, profile_id, granted_by) VALUES
-    ('group:PE_SSD',      'pool:pe_readonly',     'system'),
-    ('group:PE_EMMC',     'pool:pe_readonly',     'system'),
-    ('group:PE_SD',       'pool:pe_readonly',     'system'),
-    ('group:SALES_TW',    'pool:sales_readonly',  'system'),
-    ('group:SALES_CN',    'pool:sales_readonly',  'system'),
-    ('group:SALES_US',    'pool:sales_readonly',  'system'),
-    ('group:BI_TEAM',     'pool:bi_readonly',     'system'),
-    ('svc:etl_pipeline',  'pool:etl_readwrite',   'system'),
-    ('user:sys_admin',    'pool:admin_full',      'system'),
-    ('group:DBA_TEAM',    'pool:admin_full',      'system');
-
--- Pool credentials (dev passwords — hashed with md5 for pgbouncer compatibility)
-INSERT INTO authz_pool_credentials (pg_role, password_hash) VALUES
-    ('nexus_pe_ro',       'md5' || md5('dev_pe_pass'      || 'nexus_pe_ro')),
-    ('nexus_sales_ro',    'md5' || md5('dev_sales_pass'    || 'nexus_sales_ro')),
-    ('nexus_bi_ro',       'md5' || md5('dev_bi_pass'       || 'nexus_bi_ro')),
-    ('nexus_etl_rw',      'md5' || md5('dev_etl_pass'      || 'nexus_etl_rw')),
-    ('nexus_admin_full',  'md5' || md5('dev_admin_pass'    || 'nexus_admin_full'));
-
--- ============================================================
--- 9. Group Membership (user ↔ group, synced from LDAP)
--- Requires V018__group_membership.sql migration
+-- 7. Group Membership (user ↔ group, synced from LDAP)
+--    Pruned 2026-04-28 to match minimal subject set.
 -- ============================================================
 INSERT INTO authz_group_member (group_id, user_id, source) VALUES
-    -- PE groups
-    ('group:PE_SSD',        'user:wang_pe',       'ldap_sync'),
-    ('group:PE_EMMC',       'user:chen_pe',       'ldap_sync'),
-    ('group:PE_SD',         'user:su_pe',         'ldap_sync'),
-    -- PM groups
-    ('group:PM_SSD',        'user:lin_pm',        'ldap_sync'),
-    ('group:PM_EMMC',       'user:kuo_pm',        'ldap_sync'),
-    -- QA
-    ('group:QA_ALL',        'user:huang_qa',      'ldap_sync'),
-    -- Sales by region
-    ('group:SALES_TW',      'user:lee_sales',     'ldap_sync'),
-    ('group:SALES_CN',      'user:zhang_sales',   'ldap_sync'),
-    ('group:SALES_US',      'user:smith_sales',   'ldap_sync'),
-    -- FAE by region
-    ('group:FAE_TW',        'user:wu_fae',        'ldap_sync'),
-    ('group:FAE_CN',        'user:zhou_fae',      'ldap_sync'),
-    -- R&D / Firmware
-    ('group:RD_FW',         'user:liu_fw',        'ldap_sync'),
-    ('group:RD_IC',         'user:tseng_rd',      'ldap_sync'),
-    -- OP
-    ('group:OP_SSD',        'user:hsu_op',        'ldap_sync'),
-    -- BI
     ('group:BI_TEAM',       'user:tsai_bi',       'ldap_sync'),
-    -- Finance
-    ('group:FINANCE_TEAM',  'user:yang_finance',  'ldap_sync'),
-    -- VP
-    ('group:VP_OFFICE',     'user:chang_vp',      'ldap_sync'),
-    -- DBA + AuthZ Admins (sys_admin belongs to both)
     ('group:DBA_TEAM',      'user:sys_admin',     'ldap_sync'),
     ('group:AUTHZ_ADMINS',  'user:sys_admin',     'ldap_sync');
 
 -- ============================================================
--- 10. Data Source Registry
--- Register the local database as the first data source (POC self-ref)
--- Requires V020__data_source_registry.sql migration
+-- Sections removed 2026-04-28 (徹底 prune per Adam):
+--   - Path C pool profiles / assignments / credentials
+--     (Adam manages pg_k8_read+ via dashboard pointing at real ds:pg_k8)
+--   - ds:local data source registration
+--     (real data sources onboarded via dashboard / discovery)
+-- See git history for the pre-prune version.
 -- ============================================================
-INSERT INTO authz_data_source (
-    source_id, display_name, description,
-    db_type, host, port, database_name, schemas,
-    connector_user, connector_password,
-    owner_subject, registered_by
-) VALUES
-('ds:local',
- 'Local Business Database',
- 'nexus_data — business data (lot_status, sales_order) separated from authz policy store',
- 'postgresql', 'localhost', 5432, 'nexus_data', '{public}',
- 'nexus_admin', 'nexus_dev_password',
- 'user:sys_admin', 'system');
-
--- Link existing pool profiles to the local data source
-UPDATE authz_db_pool_profile SET data_source_id = 'ds:local';
-
--- Tag business table/column resources with data_source_id
-UPDATE authz_resource SET attributes = attributes || '{"data_source_id": "ds:local"}'::jsonb
-WHERE resource_type IN ('table', 'column')
-  AND (resource_id LIKE 'table:lot_status%'
-    OR resource_id LIKE 'column:lot_status%'
-    OR resource_id LIKE 'table:sales_order%'
-    OR resource_id LIKE 'column:sales_order%'
-    OR resource_id LIKE 'table:price_book%'
-    OR resource_id LIKE 'column:price_book%');
