@@ -716,6 +716,76 @@ export const api = {
     request<{ case_id: number; verdict: 'good' | 'bad' }>('/ai-assist/eval-mark', {
       method: 'POST', body: JSON.stringify(params),
     }),
+
+  // V075/V076 composite-action workflow runtime (NPI gate sign-off dogfood).
+  workflowPending: (filters?: { policy_name?: string; subject_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (filters?.policy_name) qs.set('policy_name', filters.policy_name);
+    if (filters?.subject_id)  qs.set('subject_id',  filters.subject_id);
+    const query = qs.toString();
+    return request<WorkflowPendingRow[]>(`/workflow/pending${query ? `?${query}` : ''}`);
+  },
+  workflowGet: (request_id: string) =>
+    request<WorkflowRequestDetail>(`/workflow/${request_id}`),
+  workflowSubmit: (params: { policy_name: string; subject_id: string; request_reason?: string }) =>
+    request<WorkflowSubmitResponse>('/workflow/request', {
+      method: 'POST', body: JSON.stringify(params),
+    }),
+  workflowApprove: (request_id: string, note?: string) =>
+    request<WorkflowDecisionResponse>(`/workflow/${request_id}/approve`, {
+      method: 'POST', body: JSON.stringify({ note }),
+    }),
+  workflowReject: (request_id: string, note?: string) =>
+    request<WorkflowDecisionResponse>(`/workflow/${request_id}/reject`, {
+      method: 'POST', body: JSON.stringify({ note }),
+    }),
+};
+
+export type WorkflowChainStep = { step: number; role: string; label?: string };
+export type WorkflowPendingRow = {
+  request_id: string;
+  subject_id: string;
+  requested_by: string;
+  requested_at: string;
+  expires_at: string | null;
+  request_reason: string | null;
+  policy_name: string;
+  approval_chain: WorkflowChainStep[];
+  preconditions: { from_state?: string; to_state?: string };
+  approvals_recorded: number;
+  next_step: WorkflowChainStep | null;
+};
+export type WorkflowRequestDetail = WorkflowPendingRow & {
+  status: string;
+  resolved_at: string | null;
+  resolution_reason: string | null;
+  records: {
+    chain_step: number;
+    expected_role: string;
+    actor: string;
+    decision: 'approve' | 'reject';
+    decided_at: string;
+    note: string | null;
+    dogfood_self_chained: boolean;
+  }[];
+};
+export type WorkflowSubmitResponse = {
+  request_id: string;
+  requested_at: string;
+  expires_at: string;
+  status: string;
+  composite_action: string;
+  approval_chain: WorkflowChainStep[];
+  preconditions: { from_state?: string; to_state?: string };
+};
+export type WorkflowDecisionResponse = {
+  record_id: string;
+  decided_at: string;
+  chain_step: number;
+  expected_role: string;
+  dogfood_self_chained: boolean;
+  request_status: 'pending' | 'approved' | 'rejected' | 'expired';
+  lifecycle_advanced: { lifecycle_id: string; from: string; to: string } | null;
 };
 
 export type AIAssistUsage = {

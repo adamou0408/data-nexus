@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS npi_gate_checklist (
     gate_id       SERIAL PRIMARY KEY,
     product_line  TEXT NOT NULL,
     chip_model    TEXT NOT NULL,
-    gate_phase    TEXT NOT NULL,
+    gate_phase    TEXT NOT NULL,             -- NPI_G0_concept, NPI_G1_feasibility, NPI_G2_dev, NPI_G3_qualification, NPI_G4_mass_production (renamed in V072)
     checklist_item TEXT NOT NULL,
     status        TEXT NOT NULL DEFAULT 'pending',
     owner         TEXT NOT NULL,
@@ -82,18 +82,21 @@ CREATE TABLE IF NOT EXISTS npi_gate_checklist (
 );
 CREATE INDEX IF NOT EXISTS idx_npi_gate_product_line ON npi_gate_checklist(product_line);
 
+-- gate_phase values use NPI_ prefix (V072 namespace rename). Authoritative copy of
+-- npi_gate_checklist lives in nexus_data; the duplicate in nexus_authz (created by
+-- V021, renamed by V072) is vestigial and not read by Path A.
 INSERT INTO npi_gate_checklist (product_line, chip_model, gate_phase, checklist_item, status, owner, reviewer, due_date, completed_at) VALUES
-    ('SSD', 'E28',  'G0_concept',       'Market analysis report',             'passed', 'user:lin_pm',   'user:chang_vp', '2026-01-15', '2026-01-14'),
-    ('SSD', 'E28',  'G0_concept',       'Competitive benchmark',              'passed', 'user:lin_pm',   'user:chang_vp', '2026-01-15', '2026-01-13'),
-    ('SSD', 'E28',  'G1_feasibility',   'Architecture spec review',           'passed', 'user:liu_fw',   'user:wang_pe',  '2026-02-28', '2026-02-25'),
-    ('SSD', 'E28',  'G1_feasibility',   'Silicon area estimate',              'passed', 'user:tseng_rd', 'user:wang_pe',  '2026-02-28', '2026-02-27'),
-    ('SSD', 'E28',  'G2_dev',           'RTL design complete',                'passed', 'user:tseng_rd', 'user:liu_fw',   '2026-04-30', '2026-04-10'),
-    ('SSD', 'E28',  'G2_dev',           'Firmware alpha build',               'pending','user:liu_fw',   NULL,             '2026-05-15', NULL),
-    ('SSD', 'E28',  'G2_dev',           'CP test program ready',              'pending','user:wang_pe',  NULL,             '2026-05-30', NULL),
-    ('SSD', 'E28',  'G3_qualification', 'Reliability qualification (JEDEC)',  'pending','user:huang_qa', NULL,             '2026-07-31', NULL),
-    ('SSD', 'E28',  'G3_qualification', 'Customer sample approval',           'pending','user:lee_sales',NULL,             '2026-08-15', NULL),
-    ('eMMC','PS8220','G0_concept',      'Market sizing for automotive eMMC',  'passed', 'user:kuo_pm',   'user:chang_vp', '2026-02-01', '2026-01-28'),
-    ('eMMC','PS8220','G1_feasibility',  'AEC-Q100 compliance assessment',     'pending','user:huang_qa', NULL,             '2026-04-30', NULL);
+    ('SSD', 'E28',  'NPI_G0_concept',       'Market analysis report',             'passed', 'user:lin_pm',   'user:chang_vp', '2026-01-15', '2026-01-14'),
+    ('SSD', 'E28',  'NPI_G0_concept',       'Competitive benchmark',              'passed', 'user:lin_pm',   'user:chang_vp', '2026-01-15', '2026-01-13'),
+    ('SSD', 'E28',  'NPI_G1_feasibility',   'Architecture spec review',           'passed', 'user:liu_fw',   'user:wang_pe',  '2026-02-28', '2026-02-25'),
+    ('SSD', 'E28',  'NPI_G1_feasibility',   'Silicon area estimate',              'passed', 'user:tseng_rd', 'user:wang_pe',  '2026-02-28', '2026-02-27'),
+    ('SSD', 'E28',  'NPI_G2_dev',           'RTL design complete',                'passed', 'user:tseng_rd', 'user:liu_fw',   '2026-04-30', '2026-04-10'),
+    ('SSD', 'E28',  'NPI_G2_dev',           'Firmware alpha build',               'pending','user:liu_fw',   NULL,             '2026-05-15', NULL),
+    ('SSD', 'E28',  'NPI_G2_dev',           'CP test program ready',              'pending','user:wang_pe',  NULL,             '2026-05-30', NULL),
+    ('SSD', 'E28',  'NPI_G3_qualification', 'Reliability qualification (JEDEC)',  'pending','user:huang_qa', NULL,             '2026-07-31', NULL),
+    ('SSD', 'E28',  'NPI_G3_qualification', 'Customer sample approval',           'pending','user:lee_sales',NULL,             '2026-08-15', NULL),
+    ('eMMC','PS8220','NPI_G0_concept',      'Market sizing for automotive eMMC',  'passed', 'user:kuo_pm',   'user:chang_vp', '2026-02-01', '2026-01-28'),
+    ('eMMC','PS8220','NPI_G1_feasibility',  'AEC-Q100 compliance assessment',     'pending','user:huang_qa', NULL,             '2026-04-30', NULL);
 
 -- ─── reliability_report ───
 CREATE TABLE IF NOT EXISTS reliability_report (

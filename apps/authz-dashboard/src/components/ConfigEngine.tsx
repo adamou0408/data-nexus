@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { ModulesTab } from './modules/ModulesTab';
 import { AuditTab } from './AuditTab';
+import { NpiGateConsoleTab } from './NpiGateConsoleTab';
 
 // ============================================================
 // Types — all derived from API response, never hardcoded
@@ -118,6 +119,7 @@ const HANDLER_REGISTRY: Record<string, ComponentType<HandlerProps>> = {
   // share a handler (e.g. different module roots all using modules_home_handler).
   'modules_home_handler': ModulesTab,
   'audit_home_handler': AuditTab,
+  'npi_gate_console_handler': NpiGateConsoleTab,
 };
 
 // ============================================================

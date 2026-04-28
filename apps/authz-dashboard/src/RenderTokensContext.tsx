@@ -69,11 +69,11 @@ const FALLBACK_TOKENS: RenderTokens = {
     'Latch-up': 'bg-pink-100 text-pink-700',
   },
   gate_color: {
-    G0_concept: 'bg-slate-100 text-slate-700',
-    G1_feasibility: 'bg-blue-100 text-blue-700',
-    G2_dev: 'bg-indigo-100 text-indigo-700',
-    G3_qualification: 'bg-purple-100 text-purple-700',
-    G4_mass_production: 'bg-emerald-100 text-emerald-700',
+    NPI_G0_concept: 'bg-slate-100 text-slate-700',
+    NPI_G1_feasibility: 'bg-blue-100 text-blue-700',
+    NPI_G2_dev: 'bg-indigo-100 text-indigo-700',
+    NPI_G3_qualification: 'bg-purple-100 text-purple-700',
+    NPI_G4_mass_production: 'bg-emerald-100 text-emerald-700',
   },
   semantic_color: {
     material_no:    '#2563eb',
