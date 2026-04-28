@@ -202,7 +202,7 @@ dagRouter.post('/execute-node', async (req, res) => {
         resource_id?: string;              // fn nodes only — operator nodes derive from upstream
         inputs?: Array<{ name: string; semantic_type?: string; hasDefault?: boolean }>;
         bound_params?: Record<string, unknown>;
-        op_kind?: 'literal' | 'filter' | 'cast';
+        op_kind?: 'literal' | 'filter' | 'cast' | 'aggregate';
         op_config?: Record<string, unknown>;
       };
     };
@@ -219,7 +219,7 @@ dagRouter.post('/execute-node', async (req, res) => {
   // do not introduce new data access surface. Audit still fires under the
   // upstream's resource_id for forensic continuity.
   if (node.type && node.type !== 'fn') {
-    const opKind = node.data.op_kind || (node.type as 'literal' | 'filter' | 'cast');
+    const opKind = node.data.op_kind || (node.type as 'literal' | 'filter' | 'cast' | 'aggregate');
     const inbound = edges.filter((e) => e.target === node.id);
     const inheritedRid = deriveOperatorResourceId({
       op_kind: opKind,

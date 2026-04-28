@@ -73,9 +73,16 @@ export async function getDataSourceClient(sourceId: string): Promise<Client> {
   return client;
 }
 
-// Resolve which data source a table/view belongs to (via authz_resource.attributes)
+// Resolve which remote data source a table/view belongs to via
+// authz_resource.attributes->>'data_source_id'. Returns null when the
+// resource is not registered against any remote source — callers are
+// expected to fall back to getLocalDataPool() (nexus_data) for ARCH-01
+// business tables that live alongside authz state.
+//
+// Historical "first active datasource" fallback was removed: it made
+// behaviour depend on registration order and would silently route an
+// unmapped table to an unrelated remote DB.
 export async function resolveDataSource(table: string): Promise<string | null> {
-  // Try both table: and view: prefixes
   for (const prefix of ['table', 'view']) {
     const result = await authzPool.query(
       `SELECT attributes->>'data_source_id' AS ds_id
@@ -87,11 +94,7 @@ export async function resolveDataSource(table: string): Promise<string | null> {
       return result.rows[0].ds_id;
     }
   }
-  // Fallback: check if there's only one active data source
-  const fallback = await authzPool.query(
-    'SELECT source_id FROM authz_data_source WHERE is_active = TRUE LIMIT 1'
-  );
-  return fallback.rows.length > 0 ? fallback.rows[0].source_id : null;
+  return null;
 }
 
 // Close a cached data source pool (e.g., when DS is updated or deactivated)

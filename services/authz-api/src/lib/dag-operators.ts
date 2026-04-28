@@ -30,7 +30,14 @@ export interface OperatorRunResult {
   lineage: Array<{ input: string; source: string }>;
 }
 
-type OpKind = 'literal' | 'filter' | 'cast';
+type OpKind = 'literal' | 'filter' | 'cast' | 'aggregate';
+
+export type AggregateFn = 'sum' | 'count' | 'min' | 'max' | 'avg';
+export interface AggregateSpec {
+  fn: AggregateFn;
+  column: string;       // upstream column name; for 'count' the value is largely irrelevant — non-null rows
+  alias?: string;       // output column name; defaults to '<fn>_<column>'
+}
 
 // ── Coercion: turn a string-typed UI value into the right JS primitive based
 // on pgType so downstream PG fn binding doesn't choke. Mirrors the loose
@@ -56,6 +63,30 @@ export function coerceLiteral(raw: unknown, pgType?: string): unknown {
     return raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
   }
   return raw;
+}
+
+// ── Aggregate value reducer. NULLs are skipped (SQL semantics). For numeric
+// aggregations a non-finite cast yields NULL for that row's contribution —
+// keeps a single bad row from poisoning the whole group.
+function computeAgg(fn: AggregateFn, values: unknown[]): unknown {
+  const nonNull = values.filter((v) => v !== null && v !== undefined);
+  if (fn === 'count') return nonNull.length;
+  if (nonNull.length === 0) return null;
+  if (fn === 'min' || fn === 'max') {
+    return nonNull.reduce((acc, v) => {
+      if (acc === null) return v;
+      const aN = Number(acc), vN = Number(v);
+      const numericPath = Number.isFinite(aN) && Number.isFinite(vN);
+      if (numericPath) return fn === 'min' ? (vN < aN ? v : acc) : (vN > aN ? v : acc);
+      const aS = String(acc), vS = String(v);
+      return fn === 'min' ? (vS < aS ? v : acc) : (vS > aS ? v : acc);
+    }, null as unknown);
+  }
+  // sum / avg — numeric only.
+  const nums = nonNull.map(Number).filter((n) => Number.isFinite(n));
+  if (nums.length === 0) return null;
+  const total = nums.reduce((a, b) => a + b, 0);
+  return fn === 'sum' ? total : total / nums.length;
 }
 
 // ── Predicate evaluator for `filter` operator.
@@ -161,6 +192,81 @@ export function runOperator(opts: {
       columns: upCols,
       rows: filtered,
       row_count: filtered.length,
+      elapsed_ms: Date.now() - t0,
+      lineage,
+    };
+  }
+
+  if (op_kind === 'aggregate') {
+    // Composer-native group-by + aggregate. Curator UX mirrors Power Query /
+    // Alteryx: pick group_by columns, declare aggregations as a list. Output
+    // columns = group_by columns ++ one column per aggregation (alias falls
+    // back to '<fn>_<column>').
+    //
+    // Type inference: group_by columns inherit pgType from upstream; sum/min/
+    // max also inherit from upstream; avg becomes 'numeric' (precision wins);
+    // count becomes 'bigint'. This is a deliberate simplification — full
+    // numeric promotion (int → bigint on overflow, etc.) is downstream's
+    // problem, not the operator's.
+    const groupByRaw = op_config.group_by;
+    const groupBy: string[] = Array.isArray(groupByRaw) ? groupByRaw.map(String) : [];
+    const aggsRaw = op_config.aggregations;
+    const aggs: AggregateSpec[] = Array.isArray(aggsRaw)
+      ? (aggsRaw as unknown[]).map((a) => {
+          const o = a as Partial<AggregateSpec>;
+          return { fn: o.fn as AggregateFn, column: String(o.column || ''), alias: o.alias };
+        }).filter((a) => a.fn && a.column)
+      : [];
+    if (aggs.length === 0) {
+      throw new Error(`Operator ${node_id} (aggregate): op_config.aggregations[] is required (at least one).`);
+    }
+
+    const groups = new Map<string, Record<string, unknown>[]>();
+    if (groupBy.length === 0) {
+      groups.set('__all__', upRows);
+    } else {
+      for (const r of upRows) {
+        const key = groupBy.map((c) => `${c}=${String(r[c] ?? '')}`).join('|');
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(r);
+      }
+    }
+
+    const outRows: Record<string, unknown>[] = [];
+    for (const [, groupRows] of groups) {
+      const out: Record<string, unknown> = {};
+      if (groupBy.length > 0) {
+        for (const c of groupBy) out[c] = groupRows[0]?.[c] ?? null;
+      }
+      for (const a of aggs) {
+        const alias = a.alias || `${a.fn}_${a.column}`;
+        const values = groupRows.map((r) => r[a.column]);
+        out[alias] = computeAgg(a.fn, values);
+      }
+      outRows.push(out);
+    }
+
+    const outCols: OperatorColumn[] = [
+      ...groupBy.map((c) => upCols.find((u) => u.name === c) || { name: c, pgType: 'text' }),
+      ...aggs.map((a) => {
+        const alias = a.alias || `${a.fn}_${a.column}`;
+        const upCol = upCols.find((u) => u.name === a.column);
+        const pgType =
+          a.fn === 'count' ? 'bigint'
+          : a.fn === 'avg' ? 'numeric'
+          : (upCol?.pgType || 'numeric');
+        return { name: alias, pgType };
+      }),
+    ];
+
+    lineage.push({
+      input: '__upstream',
+      source: `${src.source} (aggregate group_by=${groupBy.join(',')||'<none>'} aggs=${aggs.map((a) => `${a.fn}(${a.column})`).join(',')})`,
+    });
+    return {
+      columns: outCols,
+      rows: outRows,
+      row_count: outRows.length,
       elapsed_ms: Date.now() - t0,
       lineage,
     };

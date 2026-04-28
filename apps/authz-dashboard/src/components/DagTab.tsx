@@ -34,11 +34,14 @@ type FnMeta = {
   return_shape: { shape: string; columns?: IO[] };
 };
 type ReturnShape = 'scalar' | 'table' | 'setof' | 'void' | 'unknown';
-type OpKind = 'literal' | 'filter' | 'cast';
+type OpKind = 'literal' | 'filter' | 'cast' | 'aggregate';
+type AggregateFn = 'sum' | 'count' | 'min' | 'max' | 'avg';
+type AggregateSpec = { fn: AggregateFn; column: string; alias?: string };
 type OpConfig =
   | { kind: 'literal'; value: string; pgType: string; semantic_type?: string }
   | { kind: 'filter'; column: string; op: 'eq' | 'ne' | 'in' | 'gt' | 'lt' | 'like'; value: string }
-  | { kind: 'cast'; source_column: string; target_pgType: string; target_semantic_type?: string };
+  | { kind: 'cast'; source_column: string; target_pgType: string; target_semantic_type?: string }
+  | { kind: 'aggregate'; group_by: string[]; aggregations: AggregateSpec[] };
 
 type NodeData = {
   resource_id: string;
@@ -297,9 +300,10 @@ function FunctionNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
 // Visual styling deliberately differs from fn nodes so curator sees at a
 // glance which nodes are platform primitives vs domain SQL fns.
 const OP_STYLES: Record<OpKind, { bg: string; accent: string; glyph: string }> = {
-  literal: { bg: '#fff7ed', accent: '#ea580c', glyph: '◇' },
-  filter:  { bg: '#ecfdf5', accent: '#059669', glyph: '⚲' },
-  cast:    { bg: '#eff6ff', accent: '#2563eb', glyph: '⇄' },
+  literal:   { bg: '#fff7ed', accent: '#ea580c', glyph: '◇' },
+  filter:    { bg: '#ecfdf5', accent: '#059669', glyph: '⚲' },
+  cast:      { bg: '#eff6ff', accent: '#2563eb', glyph: '⇄' },
+  aggregate: { bg: '#fffbeb', accent: '#b45309', glyph: 'Σ' },
 };
 
 function OperatorNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
@@ -317,6 +321,11 @@ function OperatorNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
     if (opKind === 'literal') return `= ${cfg.value ?? '?'} :: ${cfg.pgType || 'text'}`;
     if (opKind === 'filter') return `${cfg.column || '?'} ${cfg.op || 'eq'} ${cfg.value ?? '?'}`;
     if (opKind === 'cast') return `${cfg.source_column || '?'} → ${cfg.target_pgType || 'text'}`;
+    if (opKind === 'aggregate') {
+      const grp = (cfg.group_by || []).length > 0 ? `by ${(cfg.group_by || []).join(',')}` : '(no groups)';
+      const aggs = (cfg.aggregations || []).map((a: AggregateSpec) => `${a.fn}(${a.column || '?'})`).join(', ') || '(no aggs)';
+      return `${grp} | ${aggs}`;
+    }
     return '';
   })();
 
@@ -433,7 +442,7 @@ function OperatorNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
   );
 }
 
-const nodeTypes = { fn: FunctionNode, literal: OperatorNode, filter: OperatorNode, cast: OperatorNode };
+const nodeTypes = { fn: FunctionNode, literal: OperatorNode, filter: OperatorNode, cast: OperatorNode, aggregate: OperatorNode };
 
 // ── Main tab ──
 export function DagTab() {
@@ -649,7 +658,8 @@ export function DagTab() {
     const op_config: OpConfig =
       opKind === 'literal' ? { kind: 'literal', value: '', pgType: 'text' }
       : opKind === 'filter' ? { kind: 'filter', column: '', op: 'eq', value: '' }
-      : { kind: 'cast', source_column: '', target_pgType: 'text' };
+      : opKind === 'cast' ? { kind: 'cast', source_column: '', target_pgType: 'text' }
+      : { kind: 'aggregate', group_by: [], aggregations: [{ fn: 'count', column: '' }] };
     const node: Node<NodeData> = {
       id,
       type: opKind,
@@ -1136,7 +1146,7 @@ export function DagTab() {
               <Sparkles size={12} /> Operators
             </div>
             <div className="space-y-1">
-              {(['literal', 'filter', 'cast'] as const).map((k) => {
+              {(['literal', 'filter', 'cast', 'aggregate'] as const).map((k) => {
                 const style = OP_STYLES[k];
                 return (
                   <button
@@ -1147,7 +1157,8 @@ export function DagTab() {
                     title={
                       k === 'literal' ? 'Emit a typed constant'
                       : k === 'filter' ? 'Filter upstream rows by predicate'
-                      : 'Cast a column to a different pgType'
+                      : k === 'cast' ? 'Cast a column to a different pgType'
+                      : 'Group rows + sum/count/min/max/avg'
                     }
                   >
                     <span style={{ color: style.accent, fontSize: 14 }}>{style.glyph}</span>
@@ -1539,6 +1550,144 @@ function OperatorInspector({
             placeholder={c.op === 'in' ? 'comma-separated, e.g. A,B,C' : c.op === 'like' ? 'SQL LIKE: % _ wildcards' : 'value'}
             className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
           />
+        </div>
+      </div>
+    );
+  }
+
+  if (opKind === 'aggregate') {
+    const groupBy: string[] = c.group_by || [];
+    const aggs: AggregateSpec[] = c.aggregations || [];
+    const setGroupBy = (next: string[]) => onChange({ group_by: next });
+    const setAggs = (next: AggregateSpec[]) => onChange({ aggregations: next });
+    const colNames = upstreamColumns.map((col) => col.name);
+    return (
+      <div className="border border-amber-200 bg-amber-50 rounded p-2 space-y-2">
+        <div className="text-xs font-medium text-amber-800">Aggregate config</div>
+
+        <div>
+          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Group by</label>
+          <div className="space-y-1">
+            {groupBy.length === 0 && (
+              <div className="text-[10px] text-slate-500 italic">no groups → 1 row over all upstream rows</div>
+            )}
+            {groupBy.map((col, i) => (
+              <div key={i} className="flex gap-1">
+                {colNames.length > 0 ? (
+                  <select
+                    data-testid={`op-agg-groupby-${i}`}
+                    value={col}
+                    onChange={(e) => {
+                      const next = [...groupBy];
+                      next[i] = e.target.value;
+                      setGroupBy(next);
+                    }}
+                    className="flex-1 text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+                  >
+                    <option value="">— pick column —</option>
+                    {colNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    data-testid={`op-agg-groupby-${i}`}
+                    value={col}
+                    onChange={(e) => {
+                      const next = [...groupBy];
+                      next[i] = e.target.value;
+                      setGroupBy(next);
+                    }}
+                    placeholder="column name"
+                    className="flex-1 text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+                  />
+                )}
+                <button
+                  type="button"
+                  data-testid={`op-agg-groupby-remove-${i}`}
+                  onClick={() => setGroupBy(groupBy.filter((_, j) => j !== i))}
+                  className="text-xs px-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
+                >×</button>
+              </div>
+            ))}
+            <button
+              type="button"
+              data-testid="op-agg-groupby-add"
+              onClick={() => setGroupBy([...groupBy, ''])}
+              className="w-full text-[10px] uppercase tracking-wide px-2 py-1 rounded border border-dashed border-amber-300 text-amber-700 hover:bg-amber-100"
+            >+ group key</button>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Aggregations</label>
+          <div className="space-y-1">
+            {aggs.map((a, i) => (
+              <div key={i} className="grid grid-cols-[60px_1fr_1fr_auto] gap-1 items-center">
+                <select
+                  data-testid={`op-agg-fn-${i}`}
+                  value={a.fn}
+                  onChange={(e) => {
+                    const next = [...aggs];
+                    next[i] = { ...a, fn: e.target.value as AggregateFn };
+                    setAggs(next);
+                  }}
+                  className="text-xs border border-slate-200 rounded px-1 py-1"
+                >
+                  {(['sum', 'count', 'min', 'max', 'avg'] as const).map((fn) => <option key={fn} value={fn}>{fn}</option>)}
+                </select>
+                {colNames.length > 0 ? (
+                  <select
+                    data-testid={`op-agg-col-${i}`}
+                    value={a.column}
+                    onChange={(e) => {
+                      const next = [...aggs];
+                      next[i] = { ...a, column: e.target.value };
+                      setAggs(next);
+                    }}
+                    className="text-xs border border-slate-200 rounded px-1 py-1 font-mono"
+                  >
+                    <option value="">— column —</option>
+                    {colNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    data-testid={`op-agg-col-${i}`}
+                    value={a.column}
+                    onChange={(e) => {
+                      const next = [...aggs];
+                      next[i] = { ...a, column: e.target.value };
+                      setAggs(next);
+                    }}
+                    placeholder="column"
+                    className="text-xs border border-slate-200 rounded px-1 py-1 font-mono"
+                  />
+                )}
+                <input
+                  data-testid={`op-agg-alias-${i}`}
+                  value={a.alias || ''}
+                  onChange={(e) => {
+                    const next = [...aggs];
+                    const v = e.target.value.trim();
+                    next[i] = v ? { ...a, alias: v } : { fn: a.fn, column: a.column };
+                    setAggs(next);
+                  }}
+                  placeholder="alias"
+                  className="text-xs border border-slate-200 rounded px-1 py-1 font-mono"
+                />
+                <button
+                  type="button"
+                  data-testid={`op-agg-remove-${i}`}
+                  onClick={() => setAggs(aggs.filter((_, j) => j !== i))}
+                  className="text-xs px-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
+                >×</button>
+              </div>
+            ))}
+            <button
+              type="button"
+              data-testid="op-agg-add"
+              onClick={() => setAggs([...aggs, { fn: 'count', column: '' }])}
+              className="w-full text-[10px] uppercase tracking-wide px-2 py-1 rounded border border-dashed border-amber-300 text-amber-700 hover:bg-amber-100"
+            >+ aggregation</button>
+          </div>
         </div>
       </div>
     );
