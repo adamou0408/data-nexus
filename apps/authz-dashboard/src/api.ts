@@ -436,8 +436,31 @@ export const api = {
     rows: Record<string, unknown>[];
     overwrite?: boolean;
   }) =>
-    request<{ status: string; page_id: string; row_count: number; column_count: number }>(
+    request<{ status: 'created' | 'overwritten'; page_id: string; row_count: number; column_count: number }>(
       '/dag/save-as-page', { method: 'POST', body: JSON.stringify(payload) }
+    ),
+
+  // sink-as-node-kind plan §3.3 — composer-native sink dispatch.
+  dagExecuteSink: (payload: {
+    dag_id: string;
+    sink_node_id: string;
+    sink_kind: 'page';
+    sink_config: {
+      page_id: string;
+      title: string;
+      parent_page_id?: string;
+      description?: string;
+      overwrite?: boolean;
+    };
+    bound_params?: Record<string, unknown>;
+    columns: Array<{ name: string; semantic_type?: string; dataTypeID?: number }>;
+    rows: Record<string, unknown>[];
+  }) =>
+    request<{
+      status: 'created' | 'overwritten'; sink_kind: string; artifact_id: string;
+      page_id: string; row_count: number; column_count: number;
+    }>(
+      '/dag/execute-sink', { method: 'POST', body: JSON.stringify(payload) }
     ),
 
   discover: (params: { type?: 'table' | 'view' | 'function' | 'all'; unmapped_only?: boolean; q?: string; data_source_id?: string }) => {

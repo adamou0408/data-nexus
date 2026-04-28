@@ -140,6 +140,63 @@ test.describe('Flow Composer (W6+)', () => {
     await expect(aggNode).toContainText(/sum\(/);
   });
 
+  test('sink (page): palette → node + inspector renders config form', async ({ page }) => {
+    await page.goto('/');
+    await loginAs(page);
+    await navigateTo(page, 'Flow Composer');
+    await expect(page.getByTestId('dag-tab')).toBeVisible();
+
+    // Sink palette button is composer-native (no fn deploy required)
+    await page.getByTestId('palette-sink-page').click();
+
+    // Sink node renders
+    const sinkNode = page.locator('[data-testid^="sink-page-"]').first();
+    await expect(sinkNode).toBeVisible();
+    await sinkNode.click();
+
+    // Inspector form fields render with the expected testids
+    await expect(page.locator('[data-testid^="sink-kind-"]')).toBeVisible();
+    const pageIdInput = page.locator('[data-testid^="sink-page-id-"]').first();
+    await expect(pageIdInput).toBeVisible();
+    await expect(page.locator('[data-testid^="sink-title-"]').first()).toBeVisible();
+    await expect(page.locator('[data-testid^="sink-parent-"]').first()).toBeVisible();
+    await expect(page.locator('[data-testid^="sink-overwrite-"]').first()).toBeVisible();
+
+    // Default page_id is non-empty (auto-generated from dag/node)
+    const defaultPageId = await pageIdInput.inputValue();
+    expect(defaultPageId.length).toBeGreaterThan(0);
+    expect(defaultPageId).toMatch(/^[a-z][a-z0-9_]*$/);
+
+    // Editing page_id reflects in the field
+    await pageIdInput.fill('e2e_sink_smoke');
+    await expect(pageIdInput).toHaveValue('e2e_sink_smoke');
+
+    // Sink summary on canvas reflects the new page_id
+    await expect(sinkNode).toContainText('e2e_sink_smoke');
+  });
+
+  test('sink (page): execute without upstream surfaces actionable error', async ({ page }) => {
+    await page.goto('/');
+    await loginAs(page);
+    await navigateTo(page, 'Flow Composer');
+    await expect(page.getByTestId('dag-tab')).toBeVisible();
+
+    await page.getByTestId('palette-sink-page').click();
+    const sinkNode = page.locator('[data-testid^="sink-page-"]').first();
+    await sinkNode.click();
+
+    // Execute sink without saved DAG / upstream — should toast an error,
+    // not hang. (UX validation pass 4 in sink-as-node-kind plan §3.4.)
+    await page.locator('[data-testid^="execute-sink-"]').first().click();
+    // Either "Save the DAG first" or "no upstream" depending on dag save state
+    await expect(
+      page.getByText(/Save the DAG first|no upstream|Run upstream node/i),
+    ).toBeVisible({ timeout: 5000 });
+
+    // Sink chip should still read 'unsaved' (no successful run recorded)
+    await expect(sinkNode).toContainText(/unsaved/i);
+  });
+
   test('aggregate operator: add group key + extra aggregation', async ({ page }) => {
     await page.goto('/');
     await loginAs(page);

@@ -24,6 +24,22 @@ import {
 // ── Types ──
 type SemanticType = string; // free-form, e.g. 'material_no', 'product_family'
 type IO = { name: string; semantic_type?: SemanticType; hasDefault?: boolean; pgType?: string };
+type SinkKind = 'page'; // future: 'api' | 'scheduled_job' | 'alert'
+type PageSinkConfig = {
+  kind: 'page';
+  page_id: string;
+  title: string;
+  parent_page_id?: string;
+  description?: string;
+  overwrite?: boolean;
+};
+type SinkConfig = PageSinkConfig;
+type SinkLastRun = {
+  artifact_id: string;
+  at: string;             // ISO timestamp
+  row_count: number;
+  status: 'created' | 'overwritten';
+};
 type FnMeta = {
   resource_id: string;
   schema: string;
@@ -53,6 +69,9 @@ type NodeData = {
   return_shape?: ReturnShape;       // fn nodes only — surfaces multiplicity badge
   op_kind?: OpKind;                 // operator nodes only
   op_config?: OpConfig;             // operator nodes only
+  sink_kind?: SinkKind;              // sink nodes only — composer-native terminal
+  sink_config?: SinkConfig;          // sink nodes only
+  sink_last_run?: SinkLastRun;       // last successful sink execute
   last_result?: {
     columns: Array<{ name: string; semantic_type?: string; pgType?: string }>;
     rows: Record<string, unknown>[];
@@ -442,7 +461,129 @@ function OperatorNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
   );
 }
 
-const nodeTypes = { fn: FunctionNode, literal: OperatorNode, filter: OperatorNode, cast: OperatorNode, aggregate: OperatorNode };
+// ── Sink node (sink-as-node-kind plan §3.5) ──
+// Terminal in the DAG: takes an upstream rowset and lands it as a
+// platform-side artifact (Tier B page for MVP). Visually distinct from
+// fn (sky) and operators (warm) — uses slate to read as "endpoint".
+const SINK_STYLES: Record<SinkKind, { bg: string; accent: string; glyph: string; label: string }> = {
+  page: { bg: '#f8fafc', accent: '#475569', glyph: '🗄', label: 'page snapshot' },
+};
+
+function SinkNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
+  const dragSrc = useContext(DragSrcContext);
+  const sinkKind = (data.sink_kind || 'page') as SinkKind;
+  const s = SINK_STYLES[sinkKind];
+  const border = selected ? '#2563eb' : '#94a3b8';
+  const isSourceNode = dragSrc?.nodeId === id;
+
+  const cfg = data.sink_config as PageSinkConfig | undefined;
+  const lastRun = data.sink_last_run;
+  const subtitle = cfg?.page_id ? `→ ${cfg.page_id}` : '(unconfigured)';
+
+  // Lifecycle chip — UX validation pass 3 (sink-as-node-kind plan §3.4)
+  const chip = (() => {
+    if (!lastRun) return { text: 'unsaved', bg: '#fef3c7', fg: '#92400e' };
+    return {
+      text: `saved · ${lastRun.row_count} rows`,
+      bg: '#dcfce7',
+      fg: '#166534',
+    };
+  })();
+
+  return (
+    <div
+      data-testid={`sink-${sinkKind}-${id}`}
+      style={{
+        background: s.bg,
+        border: `2px solid ${border}`,
+        borderRadius: 8,
+        minWidth: 220,
+        fontSize: 12,
+        boxShadow: selected ? '0 4px 10px rgba(37,99,235,0.18)' : '0 1px 2px rgba(0,0,0,0.06)',
+      }}
+    >
+      <div
+        style={{
+          padding: '6px 10px',
+          background: 'rgba(255,255,255,0.7)',
+          borderBottom: '1px solid rgba(15,23,42,0.06)',
+          borderTopLeftRadius: 6,
+          borderTopRightRadius: 6,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 6,
+        }}
+      >
+        <span style={{ fontWeight: 600, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ fontSize: 14 }}>{s.glyph}</span>
+          {s.label}
+        </span>
+        <span
+          style={{
+            fontSize: 9,
+            letterSpacing: 0.5,
+            textTransform: 'uppercase',
+            padding: '1px 6px',
+            borderRadius: 999,
+            background: s.accent,
+            color: 'white',
+          }}
+        >
+          sink
+        </span>
+      </div>
+
+      <div
+        style={{
+          position: 'relative',
+          padding: '6px 14px',
+          color: '#475569',
+          fontSize: 11,
+          fontFamily: 'ui-monospace, monospace',
+          minHeight: ROW_H,
+          display: 'flex',
+          alignItems: 'center',
+        }}
+      >
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="__upstream"
+          style={{
+            background: '#94a3b8',
+            width: 10,
+            height: 10,
+            border: '2px solid white',
+            boxShadow: dragSrc && !isSourceNode ? '0 0 0 3px rgba(34,197,94,0.45)' : 'none',
+            transition: 'box-shadow 120ms',
+          }}
+        />
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {subtitle}
+        </span>
+        {/* No source handle — sink is terminal */}
+      </div>
+
+      <div
+        style={{
+          padding: '4px 10px',
+          background: chip.bg,
+          color: chip.fg,
+          fontSize: 10,
+          fontWeight: 500,
+          borderTop: `1px solid ${chip.fg}22`,
+          borderBottomLeftRadius: 6,
+          borderBottomRightRadius: 6,
+        }}
+      >
+        {chip.text}
+      </div>
+    </div>
+  );
+}
+
+const nodeTypes = { fn: FunctionNode, literal: OperatorNode, filter: OperatorNode, cast: OperatorNode, aggregate: OperatorNode, sink: SinkNode };
 
 // ── Main tab ──
 export function DagTab() {
@@ -680,6 +821,50 @@ export function DagTab() {
     setSelectedId(id);
   };
 
+  // sink-as-node-kind plan §3.4 — composer-native sink terminal.
+  // page_id default mirrors the legacy SaveAsPageDialog so curators who
+  // have memorized the dialog defaults stay oriented.
+  const addSinkNode = (sinkKind: SinkKind = 'page') => {
+    const id = nextNodeId();
+    const dagSlug = (currentDagId || 'untitled').replace(/^dag:/, '');
+    const sinkConfig: SinkConfig = {
+      kind: 'page',
+      page_id: `${dagSlug}__${id}_snapshot`.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+      title: `${displayName} — ${id} snapshot`,
+      parent_page_id: 'modules_home',
+      description: `DAG snapshot from ${currentDagId || '(unsaved DAG)'} sink ${id}`,
+      overwrite: false,
+    };
+    const node: Node<NodeData> = {
+      id,
+      type: 'sink',
+      position: { x: 80 + (nodes.length % 4) * 280, y: 80 + Math.floor(nodes.length / 4) * 260 },
+      data: {
+        resource_id: '',
+        label: `sink:${sinkKind}`,
+        subtype: 'sink',
+        inputs: [{ name: '__upstream', semantic_type: '__rowset' }],
+        outputs: [],
+        bound_params: {},
+        sink_kind: sinkKind,
+        sink_config: sinkConfig,
+      },
+    };
+    pushHistory();
+    setNodes((nds) => [...nds, node]);
+    setSelectedId(id);
+  };
+
+  const updateSinkConfig = (patch: Partial<PageSinkConfig>) => {
+    if (!selected) return;
+    pushHistory();
+    setNodes((nds) => nds.map((n) => {
+      if (n.id !== selected.id) return n;
+      const next = { ...(n.data.sink_config || { kind: 'page' as const }), ...patch } as SinkConfig;
+      return { ...n, data: { ...n.data, sink_config: next } };
+    }));
+  };
+
   const updateOpConfig = (patch: Record<string, unknown>) => {
     if (!selected) return;
     pushHistory();
@@ -898,6 +1083,71 @@ export function DagTab() {
     }
   };
 
+  // ── Execute a sink node (sink-as-node-kind plan §3.3) ──
+  // Snapshot semantics: sink emits the upstream's last_result (NOT
+  // re-executes upstream); user is expected to Run upstream first.
+  const executeSink = async (sinkId: string) => {
+    const sinkNode = nodes.find((n) => n.id === sinkId);
+    if (!sinkNode || sinkNode.type !== 'sink') return;
+    if (!currentDagId) {
+      showToast('Save the DAG first — sinks need a stable dag_id', 'error');
+      return;
+    }
+    const cfg = sinkNode.data.sink_config as PageSinkConfig | undefined;
+    if (!cfg?.page_id || !cfg?.title) {
+      showToast('Sink is unconfigured: page_id and title are required', 'error');
+      return;
+    }
+    const inEdge = edges.find((e) => e.target === sinkId);
+    if (!inEdge) {
+      showToast('Sink has no upstream — connect a fn or operator node first', 'error');
+      return;
+    }
+    const upNode = nodes.find((n) => n.id === inEdge.source);
+    const lr = upNode?.data.last_result;
+    if (!upNode || !lr || lr.rows.length === 0) {
+      showToast(`Run upstream node '${upNode?.data.label || inEdge.source}' first — sink snapshots its last result`, 'error');
+      return;
+    }
+
+    setRunning(sinkId);
+    try {
+      const r = await api.dagExecuteSink({
+        dag_id: currentDagId,
+        sink_node_id: sinkId,
+        sink_kind: 'page',
+        sink_config: {
+          page_id: cfg.page_id,
+          title: cfg.title,
+          parent_page_id: cfg.parent_page_id || undefined,
+          description: cfg.description || undefined,
+          overwrite: cfg.overwrite,
+        },
+        bound_params: upNode.data.bound_params,
+        columns: lr.columns,
+        rows: lr.rows,
+      });
+      const ranAt = new Date().toISOString();
+      setNodes((nds) => nds.map((n) => n.id === sinkId ? {
+        ...n,
+        data: {
+          ...n.data,
+          sink_last_run: {
+            artifact_id: r.artifact_id,
+            at: ranAt,
+            row_count: r.row_count,
+            status: r.status,
+          },
+        },
+      } : n));
+      showToast(`Sink ${cfg.page_id}: ${r.row_count} rows snapshotted`, 'success');
+    } catch (e) {
+      showToast(String(e), 'error');
+    } finally {
+      setRunning(null);
+    }
+  };
+
   // ── Run all nodes in topological order (Kahn's algorithm) ──
   const runAll = async () => {
     if (nodes.length === 0) return;
@@ -924,10 +1174,17 @@ export function DagTab() {
       showToast('Cycle detected — fix edges before running', 'error');
       return;
     }
+    let ran = 0;
+    let skipped = 0;
     for (const id of order) {
+      const n = nodes.find((nn) => nn.id === id);
+      // Sinks are explicit (▶ Execute Sink) — skip in runAll. (sink-as-node-kind §D8)
+      if (n?.type === 'sink') { skipped++; continue; }
       await executeNode(id);
+      ran++;
     }
-    showToast(`Ran ${order.length} node(s)`, 'success');
+    const suffix = skipped > 0 ? ` (skipped ${skipped} sink${skipped > 1 ? 's' : ''} — use ▶ Execute Sink)` : '';
+    showToast(`Ran ${ran} node(s)${suffix}`, 'success');
   };
 
   // ── Suggest compatible next nodes (W3-2 integration) ──
@@ -1170,6 +1427,26 @@ export function DagTab() {
             </div>
           </div>
 
+          {/* Sinks — composer-native terminal artifacts.
+              See .claude/plans/v3-phase-1/sink-as-node-kind-plan.md §3.5 */}
+          <div className="mb-3">
+            <div className="text-[10px] uppercase tracking-wide text-slate-700 flex items-center gap-1 mb-1">
+              <FileOutput size={12} /> Sinks
+            </div>
+            <div className="space-y-1">
+              <button
+                onClick={() => addSinkNode('page')}
+                data-testid="palette-sink-page"
+                className="w-full text-left text-xs px-2 py-1 rounded border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 flex items-center gap-1.5"
+                title="Snapshot upstream rows as a Tier B page (Curator can find it under Modules)"
+              >
+                <span style={{ fontSize: 14 }}>🗄</span>
+                <span className="font-medium">page snapshot</span>
+                <span className="text-[10px] text-slate-400 ml-auto">sink</span>
+              </button>
+            </div>
+          </div>
+
           <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">All Functions ({filteredFns.length})</div>
           <div className="space-y-1 overflow-y-auto flex-1">
             {filteredFns.map((fn) => (
@@ -1337,7 +1614,87 @@ export function DagTab() {
                 />
               )}
 
-              {!selected.data.op_kind && (
+              {/* Sink-specific config block — sink-as-node-kind plan §3.4 */}
+              {selected.data.sink_kind && (() => {
+                const cfg = (selected.data.sink_config || { kind: 'page' }) as PageSinkConfig;
+                const lastRun = selected.data.sink_last_run;
+                return (
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-slate-700">Sink kind</div>
+                    <select
+                      data-testid={`sink-kind-${selected.id}`}
+                      value={selected.data.sink_kind}
+                      disabled
+                      className="w-full text-xs border border-slate-200 rounded px-2 py-1 bg-slate-50 text-slate-700"
+                      title="MVP supports 'page' only; api / scheduled_job arriving in next sprint"
+                    >
+                      <option value="page">page snapshot</option>
+                    </select>
+
+                    <div>
+                      <label className="block text-xs text-slate-700 font-medium mb-1">Page ID</label>
+                      <input
+                        data-testid={`sink-page-id-${selected.id}`}
+                        value={cfg.page_id || ''}
+                        onChange={(e) => updateSinkConfig({ page_id: e.target.value.toLowerCase() })}
+                        className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+                        placeholder="lowercase, starts with letter"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs text-slate-700 font-medium mb-1">Title</label>
+                      <input
+                        data-testid={`sink-title-${selected.id}`}
+                        value={cfg.title || ''}
+                        onChange={(e) => updateSinkConfig({ title: e.target.value })}
+                        className="w-full text-xs border border-slate-200 rounded px-2 py-1"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs text-slate-700 font-medium mb-1">Parent page</label>
+                      <input
+                        data-testid={`sink-parent-${selected.id}`}
+                        value={cfg.parent_page_id || ''}
+                        onChange={(e) => updateSinkConfig({ parent_page_id: e.target.value })}
+                        className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+                        placeholder="modules_home"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs text-slate-700 font-medium mb-1">Description</label>
+                      <textarea
+                        data-testid={`sink-description-${selected.id}`}
+                        value={cfg.description || ''}
+                        onChange={(e) => updateSinkConfig({ description: e.target.value })}
+                        rows={2}
+                        className="w-full text-xs border border-slate-200 rounded px-2 py-1"
+                      />
+                    </div>
+
+                    <label className="flex items-center gap-2 text-xs text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={!!cfg.overwrite}
+                        onChange={(e) => updateSinkConfig({ overwrite: e.target.checked })}
+                        data-testid={`sink-overwrite-${selected.id}`}
+                      />
+                      Overwrite if page_id exists
+                    </label>
+
+                    {lastRun && (
+                      <div className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-1.5">
+                        ✓ {lastRun.status} {lastRun.row_count} rows<br/>
+                        artifact: <span className="font-mono">{lastRun.artifact_id}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {!selected.data.op_kind && !selected.data.sink_kind && (
               <div>
                 <div className="text-xs font-medium text-slate-700 mb-1">Inputs</div>
                 <div className="space-y-2">
@@ -1398,15 +1755,28 @@ export function DagTab() {
               </div>
               )}
 
-              <button
-                data-testid={`run-${selected.id}`}
-                onClick={() => executeNode(selected.id)}
-                disabled={running === selected.id}
-                className="w-full btn-primary text-sm flex items-center justify-center gap-1"
-              >
-                {running === selected.id ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-                Run this node
-              </button>
+              {selected.data.sink_kind ? (
+                <button
+                  data-testid={`execute-sink-${selected.id}`}
+                  onClick={() => executeSink(selected.id)}
+                  disabled={running === selected.id}
+                  className="w-full btn-primary text-sm flex items-center justify-center gap-1"
+                  title="Snapshot upstream's last_result into the configured Tier B page"
+                >
+                  {running === selected.id ? <Loader2 size={14} className="animate-spin" /> : <FileOutput size={14} />}
+                  Execute sink
+                </button>
+              ) : (
+                <button
+                  data-testid={`run-${selected.id}`}
+                  onClick={() => executeNode(selected.id)}
+                  disabled={running === selected.id}
+                  className="w-full btn-primary text-sm flex items-center justify-center gap-1"
+                >
+                  {running === selected.id ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                  Run this node
+                </button>
+              )}
 
               {selected.data.last_result && (
                 <div className="border-t border-slate-200 pt-3 space-y-2">

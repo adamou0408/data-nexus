@@ -12,6 +12,7 @@ import { getUserId, getClientIp, handleApiError } from '../lib/request-helpers';
 import { parseFunctionArgs } from '../lib/function-metadata';
 import { validateDag, DagDoc } from '../lib/dag-validate';
 import { runOperator, deriveOperatorResourceId, UpstreamFrame } from '../lib/dag-operators';
+import { emitPageSnapshot, deriveSinkUpstreamFn, SinkValidationError } from '../lib/sink-runtime';
 import { requireRole } from '../middleware/authz';
 
 export const dagRouter = Router();
@@ -436,13 +437,9 @@ dagRouter.post('/execute-node', async (req, res) => {
 //     rows:    [{ ... }, ...],
 //     overwrite?:     boolean
 //   }
-const PAGE_ID_RE = /^[a-z][a-z0-9_]*$/;
-const RENDER_BY_SEMANTIC: Record<string, string> = {
-  status: 'status_badge',
-  phase: 'phase_tag',
-  gate: 'gate_badge',
-};
-
+// Legacy alias (sink-as-node-kind plan §3.3, AC-6): kept fully intact so
+// existing button-driven Save-as-page UI + e2e are unaffected. New
+// node-driven path is /execute-sink. The two share emitPageSnapshot().
 dagRouter.post('/save-as-page', requirePageAuthor, async (req, res) => {
   const {
     page_id, title, parent_page_id, description,
@@ -462,98 +459,173 @@ dagRouter.post('/save-as-page', requirePageAuthor, async (req, res) => {
   };
   const userId = getUserId(req);
 
-  if (!page_id || !PAGE_ID_RE.test(page_id)) {
-    return res.status(400).json({ error: 'page_id must match ^[a-z][a-z0-9_]*$' });
-  }
-  if (!title || !dag_id || !node_id || !Array.isArray(columns) || !Array.isArray(rows)) {
-    return res.status(400).json({ error: 'title, dag_id, node_id, columns[], rows[] required' });
-  }
-  if (!dag_id.startsWith('dag:')) {
-    return res.status(400).json({ error: 'dag_id must start with "dag:"' });
-  }
-
   try {
-    if (parent_page_id) {
-      const pCheck = await authzPool.query(
-        `SELECT 1 FROM authz_ui_page WHERE page_id = $1`,
-        [parent_page_id]
-      );
-      if (pCheck.rowCount === 0) {
-        return res.status(400).json({ error: `parent_page_id not found: ${parent_page_id}` });
-      }
-    }
-
-    const exists = await authzPool.query(
-      `SELECT 1 FROM authz_ui_page WHERE page_id = $1`,
-      [page_id]
-    );
-    if (exists.rowCount && !overwrite) {
-      return res.status(409).json({
-        error: 'page_id already exists',
-        hint: 'Pass overwrite:true to replace the existing snapshot.',
-      });
-    }
-
-    // Normalize columns to ColumnDef shape (key/label/data_type/render).
-    // Default render is picked by semantic_type when we have a known mapping.
-    const normalizedColumns = columns.map((c) => ({
-      key: c.name,
-      label: c.name,
-      data_type: 'text',
-      render: c.semantic_type ? RENDER_BY_SEMANTIC[c.semantic_type] : undefined,
-      semantic_type: c.semantic_type,
-    }));
-
-    const snapshotData = {
-      columns: normalizedColumns,
-      rows,
-      origin: {
-        kind: 'dag',
-        dag_id,
-        node_id,
-        bound_params: bound_params || {},
-        captured_by: userId,
-        captured_at: new Date().toISOString(),
-      },
-    };
-
-    if (exists.rowCount && overwrite) {
-      await authzPool.query(
-        `UPDATE authz_ui_page
-            SET title = $2,
-                parent_page_id = $3,
-                description = $4,
-                snapshot_data = $5::jsonb,
-                is_active = TRUE
-          WHERE page_id = $1`,
-        [page_id, title, parent_page_id || null, description || null, JSON.stringify(snapshotData)]
-      );
-    } else {
-      await authzPool.query(
-        `INSERT INTO authz_ui_page
-           (page_id, title, layout, parent_page_id, description, icon,
-            snapshot_data, is_active)
-         VALUES ($1, $2, 'table', $3, $4, 'database', $5::jsonb, TRUE)`,
-        [page_id, title, parent_page_id || null, description || null, JSON.stringify(snapshotData)]
-      );
-    }
+    const result = await emitPageSnapshot(authzPool, {
+      page_id, title, parent_page_id, description,
+      dag_id, node_id, bound_params,
+      columns, rows, overwrite,
+      captured_by: userId,
+    });
 
     logAdminAction(authzPool, {
       userId,
-      action: overwrite && exists.rowCount ? 'DAG_SAVE_AS_PAGE_OVERWRITE' : 'DAG_SAVE_AS_PAGE',
+      action: result.status === 'overwritten' ? 'DAG_SAVE_AS_PAGE_OVERWRITE' : 'DAG_SAVE_AS_PAGE',
       resourceType: 'ui_page',
       resourceId: page_id,
-      details: { dag_id, node_id, row_count: rows.length, column_count: columns.length },
+      details: { dag_id, node_id, row_count: result.row_count, column_count: result.column_count },
       ip: getClientIp(req),
     });
 
-    res.status(exists.rowCount ? 200 : 201).json({
-      status: 'ok',
-      page_id,
-      row_count: rows.length,
-      column_count: columns.length,
+    res.status(result.status === 'overwritten' ? 200 : 201).json({
+      status: result.status,
+      page_id: result.page_id,
+      row_count: result.row_count,
+      column_count: result.column_count,
     });
   } catch (err) {
+    if (err instanceof SinkValidationError) {
+      return res.status(err.status).json({ error: err.message, ...(err.hint ? { hint: err.hint } : {}) });
+    }
+    handleApiError(res, err);
+  }
+});
+
+// ── New: composer-native sink dispatch (sink-as-node-kind plan §3.3) ──
+// Body:
+//   {
+//     dag_id:       'dag:foo',
+//     sink_node_id: 's1',                  // node.type='sink' inside the DAG
+//     sink_kind:    'page',                // future: 'api' | 'scheduled_job'
+//     sink_config:  { page_id, title, parent_page_id?, description?, overwrite? },
+//     bound_params?: { ... },
+//     columns:      [{ name, semantic_type? }],   // client-supplied snapshot
+//     rows:         [{...}, ...]                  //  (same contract as save-as-page;
+//                                                  //   server does NOT re-execute upstream)
+//   }
+//
+// AuthZ: walks DAG to find upstream fn ancestor; authz_check(execute,
+// fn:resource_id) gates the write. Maintains parity with operator
+// dispatch (composer-operator-and-sink §3.2). The L0 page-author role
+// is also required (writing to authz_ui_page is platform-side).
+dagRouter.post('/execute-sink', requirePageAuthor, async (req, res) => {
+  const {
+    dag_id, sink_node_id, sink_kind, sink_config,
+    bound_params, columns, rows,
+  } = req.body as {
+    dag_id: string;
+    sink_node_id: string;
+    sink_kind: 'page';
+    sink_config: {
+      page_id: string;
+      title: string;
+      parent_page_id?: string;
+      description?: string;
+      overwrite?: boolean;
+    };
+    bound_params?: Record<string, unknown>;
+    columns: Array<{ name: string; semantic_type?: string; dataTypeID?: number }>;
+    rows: Record<string, unknown>[];
+  };
+  const userId = getUserId(req);
+  const groups = (req.headers['x-user-groups'] as string || '').split(',').filter(Boolean);
+
+  if (!dag_id || !sink_node_id || !sink_kind || !sink_config) {
+    return res.status(400).json({ error: 'dag_id, sink_node_id, sink_kind, sink_config required' });
+  }
+  if (sink_kind !== 'page') {
+    return res.status(400).json({ error: `unsupported sink_kind '${sink_kind}' (MVP supports only 'page')` });
+  }
+
+  try {
+    // Walk DAG to find upstream fn ancestor for authz inheritance.
+    const dagRow = await authzPool.query(
+      `SELECT attributes FROM authz_resource
+        WHERE resource_id = $1 AND resource_type = 'dag' AND is_active = TRUE`,
+      [dag_id]
+    );
+    if (dagRow.rowCount === 0) {
+      return res.status(404).json({ error: `DAG not found: ${dag_id}` });
+    }
+    const attrs = dagRow.rows[0].attributes || {};
+    const dagNodes: Array<{ id: string; type?: string; data?: { resource_id?: string } }> = attrs.nodes || [];
+    const dagEdges: Array<{ source: string; target: string }> = attrs.edges || [];
+
+    const sinkNode = dagNodes.find((n) => n.id === sink_node_id);
+    if (!sinkNode) {
+      return res.status(400).json({ error: `sink_node_id '${sink_node_id}' not found in ${dag_id}` });
+    }
+    if (sinkNode.type !== 'sink') {
+      return res.status(400).json({ error: `node '${sink_node_id}' is not a sink (type=${sinkNode.type ?? 'fn'})` });
+    }
+
+    const upstreamFnRid = deriveSinkUpstreamFn(dagNodes, dagEdges, sink_node_id);
+    const auditResourceId = upstreamFnRid || `sink:${sink_kind}:no_upstream`;
+
+    if (upstreamFnRid && upstreamFnRid.startsWith('function:')) {
+      const chk = await authzPool.query(
+        'SELECT authz_check($1, $2, $3, $4) AS allowed',
+        [userId, groups, 'execute', upstreamFnRid]
+      );
+      if (!chk.rows[0].allowed) {
+        audit({
+          access_path: 'B', subject_id: userId,
+          action_id: `dag_sink_${sink_kind}`, resource_id: auditResourceId,
+          decision: 'deny',
+          context: { dag_id, sink_node_id, sink_kind, reason: 'upstream_fn_denied' },
+        });
+        return res.status(403).json({
+          error: 'Forbidden',
+          detail: `${userId} lacks execute on upstream ${upstreamFnRid}`,
+        });
+      }
+    }
+
+    const result = await emitPageSnapshot(authzPool, {
+      page_id: sink_config.page_id,
+      title: sink_config.title,
+      parent_page_id: sink_config.parent_page_id,
+      description: sink_config.description,
+      dag_id,
+      node_id: sink_node_id,
+      bound_params,
+      columns,
+      rows,
+      overwrite: sink_config.overwrite,
+      captured_by: userId,
+    });
+
+    audit({
+      access_path: 'B', subject_id: userId,
+      action_id: `dag_sink_${sink_kind}`, resource_id: auditResourceId,
+      decision: 'allow',
+      context: {
+        dag_id, sink_node_id, sink_kind,
+        page_id: result.page_id,
+        row_count: result.row_count,
+        snapshot_status: result.status,
+      },
+    });
+    logAdminAction(authzPool, {
+      userId,
+      action: result.status === 'overwritten' ? 'DAG_SINK_PAGE_OVERWRITE' : 'DAG_SINK_PAGE',
+      resourceType: 'ui_page',
+      resourceId: result.page_id,
+      details: { dag_id, sink_node_id, row_count: result.row_count, column_count: result.column_count },
+      ip: getClientIp(req),
+    });
+
+    res.status(result.status === 'overwritten' ? 200 : 201).json({
+      status: result.status,
+      sink_kind,
+      artifact_id: result.page_id,
+      page_id: result.page_id,
+      row_count: result.row_count,
+      column_count: result.column_count,
+    });
+  } catch (err) {
+    if (err instanceof SinkValidationError) {
+      return res.status(err.status).json({ error: err.message, ...(err.hint ? { hint: err.hint } : {}) });
+    }
     handleApiError(res, err);
   }
 });

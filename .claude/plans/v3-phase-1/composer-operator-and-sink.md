@@ -37,10 +37,9 @@ Flow Composer (DagTab) 目前只有一種 node kind: `fn`(指向 `authz_resource
 - [ ] Operator runtime: server `dag.ts` 新增 operator dispatch path,**不過 `authz_check`**(權限繼承上游 fn 的 resource_id)
 
 **In scope (Next sprint):**
-- [ ] Aggregator operator(`sum/count/min/max/avg` + group_by columns)
-- [ ] Sink-as-node-kind 重構 — `node.type='sink'`、`sink_kind ∈ { 'page'|'api'|'scheduled_job' }`
-  - Save-as-page button 改成「在 node 上 right-click → add sink」
-- [ ] Save-as-API sink — 把 sink node 暴露成 REST endpoint(讀 origin DAG + bound_params + per-call authz_check)
+- [x] Aggregator operator(`sum/count/min/max/avg` + group_by columns) — landed 2026-04-28 (COMPOSER-AGG-V01)
+- [x] Sink-as-node-kind 重構 — `node.type='sink'`、`sink_kind ∈ { 'page' (MVP) | 'api'|'scheduled_job' }` — page kind landed 2026-04-29 (COMPOSER-SINK-V01),sub-plan: [`./sink-as-node-kind-plan.md`](./sink-as-node-kind-plan.md)。舊 Save-as-page button 保留作真 alias(advisor:真 alias 而非 spawn-on-click)。
+- [ ] Save-as-API sink — 把 sink node 暴露成 REST endpoint(讀 origin DAG + bound_params + per-call authz_check) — 拆出獨立 sub-plan
 
 **In scope (After saved_view + V075 stable):**
 - [ ] Workflow trigger node — 綁 `authz_workflow_request` (V075)

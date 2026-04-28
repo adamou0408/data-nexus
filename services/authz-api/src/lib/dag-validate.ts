@@ -9,14 +9,19 @@
 
 export interface DagNode {
   id: string;
-  type?: string;                 // 'fn' | 'literal' | 'filter' | 'cast' (future: 'aggregate', 'sink', ...)
+  type?: string;                 // 'fn' (default) | 'literal' | 'filter' | 'cast' | 'aggregate' | 'sink'
+                                 // Validation is permissive: unknown types pass through; only edges
+                                 // and inputs/outputs metadata drive type/cycle/missing-input checks.
+                                 // Sinks have no outputs, so they never trigger type_mismatch.
   data?: {
     resource_id?: string;
     function_name?: string;
     inputs?: Array<{ name: string; semantic_type?: string; hasDefault?: boolean; pgType?: string }>;
     outputs?: Array<{ name: string; semantic_type?: string; pgType?: string }>;
     bound_params?: Record<string, unknown>; // user-supplied constants
-    op_kind?: 'literal' | 'filter' | 'cast';
+    op_kind?: 'literal' | 'filter' | 'cast' | 'aggregate';
+    sink_kind?: 'page';
+    sink_config?: Record<string, unknown>;
     op_config?: Record<string, unknown>;
   };
 }
