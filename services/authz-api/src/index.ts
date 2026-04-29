@@ -23,6 +23,7 @@ import { modulesRouter } from './routes/modules';
 import { uiRouter } from './routes/ui';
 import { workflowRouter } from './routes/workflow';
 import { savedViewRouter } from './routes/saved-view';
+import { feedbackRouter } from './routes/feedback';
 import { requireRole, requireAuth } from './middleware/authz';
 import { optionalJWT, buildJWTConfig } from './middleware/jwt';
 import { verifyCryptoKey } from './lib/crypto';
@@ -113,6 +114,11 @@ app.use('/api/workflow', workflowRouter);
 // Tier A primitive #2: per-user saved view CRUD (V080). Self-scope only —
 // every query filters on user_id = current user; cross-user 404.
 app.use('/api/saved-view', requireAuth, savedViewRouter);
+
+// Tier A primitive #3: per-user feedback (V082). POST/GET-mine for any
+// authenticated user; GET /inbox + PATCH /:id/status are gated by
+// requireRole('ADMIN','AUTHZ_ADMIN') inside the router.
+app.use('/api/feedback', requireAuth, feedbackRouter);
 
 // Config snapshot & bulk import (admin-only)
 app.use('/api/config/snapshot', requireRole('ADMIN', 'AUTHZ_ADMIN'), configSnapshotRouter);

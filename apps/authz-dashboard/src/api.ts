@@ -784,6 +784,27 @@ export const api = {
     request<{ status: string; view_id: string }>(`/saved-view/${encodeURIComponent(view_id)}`, {
       method: 'DELETE',
     }),
+
+  // Tier A primitive #3: per-user feedback (V082 + /api/feedback)
+  feedbackCreate: (params: { page_id: string; target_path: string; kind: FeedbackKind; body: string }) =>
+    request<{ feedback: FeedbackRow }>(`/feedback`, {
+      method: 'POST', body: JSON.stringify(params),
+    }),
+  feedbackMine: (page_id?: string) => {
+    const q = page_id ? `?page_id=${encodeURIComponent(page_id)}` : '';
+    return request<{ feedback: FeedbackRow[] }>(`/feedback/mine${q}`);
+  },
+  feedbackInbox: (filters?: { status?: FeedbackStatus; page_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (filters?.status)  qs.set('status',  filters.status);
+    if (filters?.page_id) qs.set('page_id', filters.page_id);
+    const query = qs.toString();
+    return request<{ feedback: FeedbackRow[] }>(`/feedback/inbox${query ? `?${query}` : ''}`);
+  },
+  feedbackPatchStatus: (feedback_id: string, status: Exclude<FeedbackStatus, 'open'>) =>
+    request<{ feedback: FeedbackRow }>(`/feedback/${encodeURIComponent(feedback_id)}/status`, {
+      method: 'PATCH', body: JSON.stringify({ status }),
+    }),
 };
 
 export type SavedViewConfig = {
@@ -799,6 +820,23 @@ export type SavedView = {
   name: string;
   config_json: SavedViewConfig;
   is_default: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FeedbackKind = 'data_wrong' | 'feature_request' | 'confusing' | 'other';
+export type FeedbackStatus = 'open' | 'triaged' | 'resolved' | 'dismissed';
+
+export type FeedbackRow = {
+  feedback_id: string;
+  user_id: string;
+  page_id: string;
+  target_path: string;
+  kind: FeedbackKind;
+  body: string;
+  status: FeedbackStatus;
+  curator_id: string | null;
+  resolved_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1182,6 +1220,7 @@ export type ModuleDetails = {
     modules: { resource_id: string; display_name: string; table_count: number }[];
     tables: { resource_id: string; display_name: string; resource_type: string; column_count: number; data_source_id: string | null }[];
     functions: { resource_id: string; display_name: string; data_source_id: string | null; schema: string | null }[];
+    pages: { resource_id: string; display_name: string; page_id: string; dag_id: string | null; node_id: string | null }[];
   };
   access: { role_id: string; role_name: string; actions: { action_id: string; effect: string }[] }[];
   profiles: { profile_id: string; pg_role: string; connection_mode: string; data_source_id: string | null }[];

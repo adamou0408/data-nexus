@@ -24,7 +24,7 @@
 |----|------|------|---------|------|------------|
 | **A1** | help_text | §82 #1 | Curator → end-user | ✅ DONE (HELP-TEXT-V01, 2026-04-29) | primitive 完整,seed→live wire 等首個 ConfigEngine page |
 | **A2** | saved_view | §82 #2 | end-user | ✅ DONE (SAVED-VIEW-V01, 2026-04-29) | V080 + 6 routes + ConfigEngine wrap + URL `?view=<id>`;AC-5 browser e2e 未驗證 caveat |
-| **A3** | feedback | §82 #3 | end-user → Curator | ⏳ greenfield | 0 個 `authz_feedback` table |
+| **A3** | feedback | §82 #3 | end-user → Curator | ✅ DONE (FEEDBACK-V01, 2026-04-29) | V082 + 4 routes + smoke 10/10 + FeedbackButton wire 進 `TablePageWithSavedView`;Curator Inbox tab 切 FU commit `FEEDBACK-V01-INBOX-FU` |
 | **A4** | subscription | §82 #4 | end-user / AI agent | ⏳ greenfield, gated | 0 個 `authz_event` / `authz_subscription` table、0 已知 event consumer |
 | **C** | business_term-driven column mask | PROGRESS 候選 C | Curator | ⏳ gated on blessing backlog | **0 blessed business_term**(共 2620 resource);C 上線 unlocks 0 value 直到 blessing 填到 ≥10 |
 | **D** | default-by-convention permission preset | PROGRESS 候選 D | new user(onboarding) | 🟡 IN-PROGRESS — `permission-default-allow-pilot-plan.md` Phase 0 已開工 | 已有獨立 sub-plan,本 roadmap 不 re-design |
@@ -42,7 +42,7 @@
 |------|------|------|------|---------------|
 | 1 | **D — default-perm pilot** | now → 4 週 | 已開工(reference 既有 plan) | onboarding 5-10 天 → 0.5-1 天(★★★★★) |
 | ✅ | ~~**A2 — saved_view**~~ | DONE 2026-04-29 (SAVED-VIEW-V01) | — | 每次重設 filter / sort / 欄位(★★★★) |
-| 2 | **A3 — feedback** | Q4 2026 中段 | ~1.5 週 | 「這欄錯了」沒地方提(★★★) |
+| ✅ | ~~**A3 — feedback**~~ | DONE 2026-04-29 (FEEDBACK-V01) | — | 「這欄錯了」沒地方提(★★★) |
 | 4 | **C — business_term mask 自動化** | gated (blessed_term ≥ 10);無 concrete schedule | ~1 週 | Curator 重複寫 mask rule(★★ 直到 blessing 填足) |
 | 5 | **A4 — subscription** | gated (named consumer ≥ 2-3);無 concrete schedule | ~2-3 週 | 目前無 concrete consumer(★ 無 anchor 不開) |
 | ⛔ | **E — page-level help_text** | Deferred,trigger-based | n/a | 觸發前不算 backlog |
@@ -195,3 +195,4 @@
 | 2026-04-29 | Adam | → ROADMAP | 初版排序 + 6 項 inventory + 每項 key decisions;advisor pre-draft 抓出 C 無上游(blessed_term=0)、E 已 deferred、D 別 fork SSOT 三個關鍵 framing |
 | 2026-04-29 | Adam (advisor post-draft review) | ROADMAP → ROADMAP-revised | Advisor 抓 1 blocker + 2 notes:(1) §3.1 saved_view scope 沒分 ConfigEngine vs descriptor/handler page → 加「Page 類型範圍 (v1)」row 顯式限 ConfigEngine `columns_override`。(2) §2.3 saved_view-before-feedback 用「dependency framing」(DataTable hook reuse) 不準確 → 改成「user-value purity + Curator Inbox UX 風險集中」framing。(3) §3.4 C gate 沒指定 blessing-fill owner → 加 Tier 2 admin form pilot 種子 + Adam 每月 audit + Curator 抱怨可踏 trigger 三條 |
 | 2026-04-29 | Adam (executor) | A2 row → DONE | SAVED-VIEW-V01 落地:V080 + `/api/saved-view` 6 routes + smoke 10/10 + tsc×2 clean + ConfigEngine `TablePageWithSavedView` wrapper + `useSavedView` hook + `SavedViewBar` toolbar + URL `?view=<id>` 雙向同步;**AC-5 frontend round-trip 未在瀏覽器手動驗證** caveat 寫在 plan + commit body |
+| 2026-04-29 | Adam (executor) | A3 row → DONE | FEEDBACK-V01 落地:V082 + `/api/feedback` 4 routes + smoke 10/10 + tsc×2 clean + `FeedbackButton` 浮動 UI + `useFeedback` hook + wire 進 `TablePageWithSavedView`;append-only user 模型、any-to-any status flow、PG-side CHECK constraints。**AC-7 frontend round-trip 未在瀏覽器手動驗證** caveat;Curator Inbox tab UI 切 FU commit `FEEDBACK-V01-INBOX-FU` |

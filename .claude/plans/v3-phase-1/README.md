@@ -42,6 +42,8 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | [`help-text-primitive-plan.md`](./help-text-primitive-plan.md) | Tier A primitive #1 — `help_text` JSONB 欄擴張 + `HelpIcon` (`?` tooltip) wire 進 Path A column header + filter label |
 | [`tier-a-primitives-roadmap.md`](./tier-a-primitives-roadmap.md) | 6 個 Tier A 項目排序 + 每項 key decisions(saved_view / feedback / subscription gated / business_term mask gated / D reference / E deferred) |
 | [`tier-a-saved-view-plan.md`](./tier-a-saved-view-plan.md) | Tier A primitive #2 — `authz_user_view` (per-user × per-page filters/sort/hidden_cols) + URL `?view=<id>` + ConfigEngine 自動套 default |
+| [`sink-as-authz-resource-plan.md`](./sink-as-authz-resource-plan.md) | 從 sink-as-node-kind §2.2 deferred 拆出 — sink page 升為 first-class `authz_resource(resource_type='ui_page')`,讓 ModulesTab 統一渲染、V070 cascade 通用,reload-safe Tier B 入口 |
+| [`tier-a-feedback-plan.md`](./tier-a-feedback-plan.md) | Tier A primitive #3 — `authz_feedback` (per-user × per-page) + 4 routes + `FeedbackButton` 浮動按鈕。User append-only / Curator 4-status triage;v1 page-level only(column/filter v2);Curator Inbox UI 切 FU commit |
 
 ---
 
@@ -78,6 +80,8 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | help-text-primitive-plan | Adam (this session) | **DONE** (2026-04-29：JSONB-only column+filter help_text + HelpIcon + 4 demo seed + tsc×2 clean;page-level + DAG inspector 顯式 defer;FIX commit 補 stopPropagation + visibility caveat) | Q3 2026 rolling |
 | tier-a-primitives-roadmap | Adam (this session) | **ROADMAP** (2026-04-29：6 項 Tier A 排序 + per-decision 評估;D reference 既有 plan、E deferred、A4/C gated) | 持續 — 每個 primitive 完工後 re-audit |
 | tier-a-saved-view-plan | Adam (this session) | **READY-FOR-REVIEW** (2026-04-29：V080 applied + 6 routes + smoke 10/10 + tsc×2 clean + ConfigEngine `TablePageWithSavedView` wrapper + URL `?view=<id>` 雙向同步;**AC-5 frontend round-trip 未在瀏覽器手動驗證**) | Q3 2026 rolling — A2 |
+| sink-as-authz-resource-plan | Adam (planner) → TBD executor | **DRAFT** (2026-04-29：response to Adam's "complete solution, no short-term workaround" request after asking how to find saved snapshot post-reload;golden seed `dag:material_search_fanout` 已 ship 同日) | rolling — close before Q4 2026 Tier B 自助 AC |
+| tier-a-feedback-plan | Adam (this session) | **DONE** (2026-04-29：V082 applied + 4 routes + smoke 10/10 + tsc×2 clean + FeedbackButton 浮動 UI wire 進 `TablePageWithSavedView`;**AC-7 frontend round-trip 未在瀏覽器手動驗證**;Curator Inbox tab UI 切 FU commit `FEEDBACK-V01-INBOX-FU`) | Q3 2026 rolling — A3 |
 
 **Status legend:** STUB → draft → in-progress → ready-for-review → approved
 

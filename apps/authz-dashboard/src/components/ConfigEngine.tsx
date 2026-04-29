@@ -14,6 +14,7 @@ import { AuditTab } from './AuditTab';
 import { NpiGateConsoleTab } from './NpiGateConsoleTab';
 import { useSavedView } from '../hooks/useSavedView';
 import { SavedViewBar } from './SavedViewBar';
+import { FeedbackButton } from './FeedbackButton';
 
 // ============================================================
 // Types — all derived from API response, never hardcoded
@@ -613,6 +614,7 @@ function TablePageWithSavedView(props: {
         initialHiddenCols={initialFromView.hidden}
         onStateChange={setLiveState}
       />
+      <FeedbackButton pageId={props.pageId} />
     </>
   );
 }
