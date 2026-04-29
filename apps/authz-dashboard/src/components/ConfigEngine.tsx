@@ -6,6 +6,7 @@ import {
   Home, ChevronRight, ArrowLeft, Loader2, AlertTriangle,
   Package, ShoppingCart, ShieldCheck, FlaskConical, Undo2,
   DollarSign, ClipboardCheck, Layers, Database, Boxes,
+  HelpCircle,
   LucideIcon,
 } from 'lucide-react';
 import { ModulesTab } from './modules/ModulesTab';
@@ -23,6 +24,7 @@ type ColumnDef = {
   render?: string;
   sortable?: boolean;
   align?: string;
+  help_text?: string;
 };
 
 type FilterDef = {
@@ -30,6 +32,7 @@ type FilterDef = {
   type: string;
   options: string[];
   default: string;
+  help_text?: string;
 };
 
 type DrilldownDef = {
@@ -189,6 +192,23 @@ function resolveParams(
 }
 
 // ============================================================
+// HelpIcon — inline ? icon + native title tooltip (Tier A primitive)
+// ============================================================
+
+function HelpIcon({ text }: { text?: string }) {
+  if (!text) return null;
+  return (
+    <span
+      title={text}
+      className="inline-flex items-center text-slate-400 hover:text-slate-600 cursor-help align-middle ml-1"
+      aria-label={text}
+    >
+      <HelpCircle className="w-3.5 h-3.5" />
+    </span>
+  );
+}
+
+// ============================================================
 // FilterBar — renders from config.filters (options from DISTINCT)
 // ============================================================
 
@@ -206,8 +226,9 @@ function FilterBar({
     <div className="flex flex-wrap gap-3 mb-4">
       {filters.map((f) => (
         <div key={f.field} className="flex items-center gap-1.5">
-          <label className="text-xs font-medium text-slate-500 capitalize">
+          <label className="text-xs font-medium text-slate-500 capitalize inline-flex items-center">
             {f.field.replace(/_/g, ' ')}
+            <HelpIcon text={f.help_text} />
           </label>
           <select
             value={values[f.field] || f.default}
@@ -321,6 +342,7 @@ function DataTable({
                   title={columnMasks[col.key] || undefined}
                 >
                   {col.label}
+                  <HelpIcon text={col.help_text} />
                   {col.sortable && sortKey === col.key && (
                     <span className="ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>
                   )}

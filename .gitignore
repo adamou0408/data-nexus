@@ -23,6 +23,7 @@ venv/
 dist/
 build/
 *.egg
+*.tsbuildinfo
 
 # Data files (local, top-level only)
 /data/

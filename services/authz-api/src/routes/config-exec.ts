@@ -244,9 +244,9 @@ async function buildExtraWhere(
 async function resolveFilterOptions(
   dataPool: any,
   table: string,
-  filtersConfig: { field: string; type: string; default?: string }[],
+  filtersConfig: { field: string; type: string; default?: string; help_text?: string }[],
   validColumns: Set<string>,  // SSOT from information_schema via buildMaskedSelect
-): Promise<{ field: string; type: string; options: string[]; default: string }[]> {
+): Promise<{ field: string; type: string; options: string[]; default: string; help_text?: string }[]> {
   const results = [];
 
   for (const filter of filtersConfig) {
@@ -267,6 +267,7 @@ async function resolveFilterOptions(
       type: filter.type,
       options,
       default: filter.default || 'All',
+      ...(filter.help_text ? { help_text: filter.help_text } : {}),
     });
   }
 

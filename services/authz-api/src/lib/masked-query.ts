@@ -25,6 +25,7 @@ export type ColumnDef = {
   sortable?: boolean;
   align?: string;
   hidden?: boolean;
+  help_text?: string;
 };
 
 export type MaskedQueryResult = {

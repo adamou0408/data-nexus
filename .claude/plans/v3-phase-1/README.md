@@ -39,6 +39,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | [`npi-gate-signoff-dogfood.md`](./npi-gate-signoff-dogfood.md) | First composite-action workflow dogfood — V073-V078 + workflow router + NpiGateConsoleTab; closes wishlist W-MGR-03 |
 | [`composer-operator-and-sink.md`](./composer-operator-and-sink.md) | Flow Composer 補 operator (literal/filter/cast/aggregate) + sink-as-node-kind primitives — 擋 catalog bloat ~30 fn/季 |
 | [`sink-as-node-kind-plan.md`](./sink-as-node-kind-plan.md) | Composer sink primitive (`sink_kind='page'` MVP, api/cron 延後) — Q4 2026 Tier B AC 最後一塊;舊 Save-as-page button 真 alias 保留 |
+| [`help-text-primitive-plan.md`](./help-text-primitive-plan.md) | Tier A primitive #1 — `help_text` JSONB 欄擴張 + `HelpIcon` (`?` tooltip) wire 進 Path A column header + filter label |
 
 ---
 
@@ -72,6 +73,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | npi-gate-signoff-dogfood | Adam (this session) | **READY-FOR-REVIEW** (2026-04-28：V072-V078 applied + workflow router + handler + E2E walkthrough verified) | Q3 2026 platform primitive dogfood |
 | composer-operator-and-sink | Adam (this session) | **IN-PROGRESS** (Now sprint DONE 2026-04-29：multiplicity badge + AC-2 2-tier validate msg + operator(literal/filter/cast/aggregate) + sink(page) 全落地;test-validate.ts 7/7 + test-sink.ts 8/8 + tsc×2 clean。Next:save-as-API sink) | Q3 2026 rolling |
 | sink-as-node-kind-plan | Adam (this session) | **DONE** (2026-04-29：page sink MVP 落地、smoke 10/10 + e2e 4/4、advisor 三 blocker 修完;api/cron sink kind 延到 Q4 統一處理) | Q3 2026 rolling |
+| help-text-primitive-plan | Adam (this session) | **DONE** (2026-04-29：JSONB-only column+filter help_text + HelpIcon + 4 demo seed + tsc×2 clean;page-level + DAG inspector 顯式 defer) | Q3 2026 rolling |
 
 **Status legend:** STUB → draft → in-progress → ready-for-review → approved
 

@@ -30,18 +30,18 @@ INSERT INTO authz_ui_page (page_id, title, subtitle, layout, resource_id, data_t
     10,
     '{"page_id": "lot_detail", "param_mapping": {"lot_id": "$row.lot_id", "product_line": "$row.product_line"}}'::jsonb,
     '{
-        "grade":      {"render": "status_badge", "sortable": true},
-        "status":     {"render": "status_badge", "sortable": true},
+        "grade":      {"render": "status_badge", "sortable": true, "help_text": "A/B/C 等級由 final-test yield 與外觀檢驗決定;A=>98% pass、B=95-98%、C<95%"},
+        "status":     {"render": "status_badge", "sortable": true, "help_text": "WIP=製程中、QC=待品檢、SHIPPED=已出貨;批號狀態由 ERP 即時同步"},
         "unit_price": {"align": "right", "sortable": true},
         "cost":       {"align": "right", "sortable": true},
-        "lot_id":     {"sortable": true},
+        "lot_id":     {"sortable": true, "help_text": "格式 LOTYYYYMMDD-NNN;同一 lot_id 對應同 wafer 起始批"},
         "product_line": {"sortable": true},
         "chip_model": {"sortable": true},
         "customer":   {"sortable": true}
     }'::jsonb,
     '[
         {"field": "product_line", "type": "select"},
-        {"field": "status",       "type": "select"},
+        {"field": "status",       "type": "select", "help_text": "篩選批號狀態;選 All 顯示全部"},
         {"field": "site",         "type": "select"}
     ]'::jsonb
 ),
@@ -83,8 +83,8 @@ INSERT INTO authz_ui_page (page_id, title, subtitle, layout, resource_id, data_t
     15,
     NULL,
     '{
-        "test_type":  {"render": "phase_tag", "sortable": true},
-        "yield_rate": {"render": "yield_bar", "align": "right"},
+        "test_type":  {"render": "phase_tag", "sortable": true, "help_text": "CP=Chip Probing(裸 die 測試)、FT=Final Test(封裝後測試)"},
+        "yield_rate": {"render": "yield_bar", "align": "right", "help_text": "良率 = pass_count / (pass_count + fail_count);<90% 進 RMA review"},
         "pass_count": {"align": "right"},
         "fail_count": {"align": "right"},
         "lot_id":     {"sortable": true}
