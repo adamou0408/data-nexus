@@ -202,6 +202,7 @@ function HelpIcon({ text }: { text?: string }) {
       title={text}
       className="inline-flex items-center text-slate-400 hover:text-slate-600 cursor-help align-middle ml-1"
       aria-label={text}
+      onClick={(e) => e.stopPropagation()}
     >
       <HelpCircle className="w-3.5 h-3.5" />
     </span>

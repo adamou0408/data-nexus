@@ -143,6 +143,7 @@ function HelpIcon({ text }: { text?: string }) {
 | Date | From → To | Status change | Note |
 |------|-----------|---------------|------|
 | 2026-04-29 | Adam | → DRAFT → READY → IN-PROGRESS → DONE | 單 session 完工：JSONB-only + HelpIcon + 4 demo seed + tsc×2 |
+| 2026-04-29 | Adam (advisor post-commit review) | DONE → DONE-with-caveats | Advisor 抓 2 blocker:(1) `HelpIcon` `<span>` 沒 `stopPropagation`,點 `?` icon 會 bubble 到 `<th onClick={handleSort}>` 觸發 sort(`lot_id` 同時 sortable + help_text 實際 trigger);**已修** — 加 `onClick={(e) => e.stopPropagation()}`。(2) Demo seed 落在 `_demo/`,不被 `init-db.sh` (`seed/*.sql` non-recursive) auto-load,且現有 live ConfigEngine ui_page 全 handler-driven 或 descriptor-pattern,**dev stack 無任何 live page 實際渲染 `?` icon**。primitive 本身完整,seed→live wire-up 列為下個 sprint 待辦(等真實 Path A 業務 demo / Tier 2 admin 第一個 form 出現時 inline 加 help_text 即可)。tsc × 2 重跑 clean。 |
 
 ---
 
