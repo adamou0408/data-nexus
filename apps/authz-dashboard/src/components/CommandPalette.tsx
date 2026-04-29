@@ -16,7 +16,7 @@ export function CommandPalette({
   onNavigate: (tab: TabId) => void;
   onOpenConfigTools: () => void;
 }) {
-  const { isAdmin, users, login } = useAuthz();
+  const { isAdmin, isAuthzAdmin, isSteward, users, login } = useAuthz();
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -32,7 +32,13 @@ export function CommandPalette({
   const allActions = useMemo<Action[]>(() => {
     const tabActions: Action[] = navGroups.flatMap(g =>
       g.items
-        .filter(i => !i.adminOnly || isAdmin)
+        .filter(i => {
+          if (!i.requires) return true;
+          if (i.requires === 'authzAdmin') return isAuthzAdmin;
+          if (i.requires === 'steward')    return isSteward;
+          if (i.requires === 'admin')      return isAdmin;
+          return false;
+        })
         .map(i => ({
           kind: 'tab' as const,
           id: i.id,

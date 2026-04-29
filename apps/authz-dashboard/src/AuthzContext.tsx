@@ -9,6 +9,7 @@ type ResolvedConfig = {
   user_id: string;
   resolved_roles: string[];
   access_path: string;
+  is_sysadmin?: boolean;
   L0_functional: { resource: string; action: string }[];
   L1_data_scope: Record<string, { has_rls?: boolean; rls_expression?: string; resource_condition?: unknown; subject_condition?: unknown }>;
   L2_column_masks: Record<string, Record<string, { mask_type: string; function?: string }>>;
@@ -31,7 +32,9 @@ type AuthzState = {
   loading: boolean;
   users: UserProfile[];
   usersLoading: boolean;
-  isAdmin: boolean;
+  isAdmin: boolean;          // any governance role: SYSADMIN | AUTHZ_ADMIN | DATA_STEWARD
+  isAuthzAdmin: boolean;     // SYSADMIN | AUTHZ_ADMIN — Govern stage (Subjects/Roles/Actions/Policies)
+  isSteward: boolean;        // SYSADMIN | DATA_STEWARD — Ingest/Catalog/curator surfaces
   adminStats: AdminStats | null;
   refreshAdminStats: () => void;
   login: (user: UserProfile) => Promise<void>;
@@ -109,7 +112,16 @@ export function AuthzProvider({ children }: { children: ReactNode }) {
     return config.resolved_roles.includes(role);
   }, [config]);
 
-  const isAdmin = config?.resolved_roles?.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN') ?? false;
+  // V083 5-role gating. SYSADMIN is god-mode (V066/V067) — implies all three.
+  // V066 returns is_sysadmin sidecar; fall back to resolved_roles for robustness
+  // if backend version is older.
+  const isSysadmin = (config?.is_sysadmin === true)
+    || (config?.resolved_roles?.includes('SYSADMIN') ?? false);
+  const isAuthzAdmin = isSysadmin
+    || (config?.resolved_roles?.includes('AUTHZ_ADMIN') ?? false);
+  const isSteward = isSysadmin
+    || (config?.resolved_roles?.includes('DATA_STEWARD') ?? false);
+  const isAdmin = isAuthzAdmin || isSteward;
 
   const [adminStats, setAdminStats] = useState<AdminStats | null>(null);
   const refreshAdminStats = useCallback(() => {
@@ -131,7 +143,7 @@ export function AuthzProvider({ children }: { children: ReactNode }) {
   useEffect(() => { refreshAdminStats(); }, [refreshAdminStats]);
 
   return (
-    <AuthzContext.Provider value={{ user, config, loading, users, usersLoading, isAdmin, adminStats, refreshAdminStats, login, logout, hasPermission, hasRole }}>
+    <AuthzContext.Provider value={{ user, config, loading, users, usersLoading, isAdmin, isAuthzAdmin, isSteward, adminStats, refreshAdminStats, login, logout, hasPermission, hasRole }}>
       {children}
     </AuthzContext.Provider>
   );

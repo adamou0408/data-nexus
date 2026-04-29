@@ -25,7 +25,11 @@ type NavItem = {
   label: string;
   icon: ReactNode;
   shortcut?: string;        // e.g. 'g p' (display only — wired via useGoToShortcuts)
-  adminOnly?: boolean;
+  // V083 sidebar gate. SYSADMIN passes everything via god-mode.
+  //   'authzAdmin' — Govern stage (Subjects/Roles/Actions/Policies/Audit write)
+  //   'steward'    — Ingest + Catalog + curator surfaces (BizTerms/AI/Feedback)
+  //   'admin'      — either of the above (e.g. Resources, Audit read)
+  requires?: 'authzAdmin' | 'steward' | 'admin';
   countKey?: 'subjects' | 'roles' | 'resources' | 'policies'; // pulls from adminStats
   alertKey?: 'audit';        // shows red dot when condition matches
 };
@@ -48,27 +52,27 @@ const navGroups: NavGroup[] = [
   {
     label: 'Ingest',
     items: [
-      { id: 'pool',     label: 'Sources',  icon: <Server size={18} />, adminOnly: true, shortcut: 'g s' },
-      { id: 'discover', label: 'Discover', icon: <Search size={18} />, adminOnly: true, shortcut: 'g d' },
+      { id: 'pool',     label: 'Sources',  icon: <Server size={18} />, requires: 'steward', shortcut: 'g s' },
+      { id: 'discover', label: 'Discover', icon: <Search size={18} />, requires: 'steward', shortcut: 'g d' },
     ],
   },
   {
     label: 'Catalog',
     items: [
-      { id: 'access-resources', label: 'Resources',  icon: <FolderTree size={18} />, adminOnly: true, countKey: 'resources' },
+      { id: 'access-resources', label: 'Resources',  icon: <FolderTree size={18} />, requires: 'admin', countKey: 'resources' },
       { id: 'modules',          label: 'Modules',    icon: <Boxes size={18} />,      shortcut: 'g m' },
-      { id: 'raw-tables',       label: 'Raw Tables', icon: <Table2 size={18} />,     adminOnly: true },
+      { id: 'raw-tables',       label: 'Raw Tables', icon: <Table2 size={18} />,     requires: 'steward' },
     ],
   },
   {
     label: 'Govern',
     items: [
-      { id: 'access-subjects', label: 'Subjects', icon: <Users size={18} />,       adminOnly: true, countKey: 'subjects' },
-      { id: 'access-roles',    label: 'Roles',    icon: <KeyRound size={18} />,    adminOnly: true, countKey: 'roles' },
-      { id: 'access-actions',  label: 'Actions',  icon: <Zap size={18} />,         adminOnly: true },
-      { id: 'access-policies', label: 'Policies', icon: <ShieldCheck size={18} />, adminOnly: true, countKey: 'policies' },
-      { id: 'business-terms',  label: 'Business Terms', icon: <BookOpen size={18} />, adminOnly: true, shortcut: 'g t' },
-      { id: 'ai-providers',    label: 'AI Providers', icon: <Sparkles size={18} />, adminOnly: true, shortcut: 'g a' },
+      { id: 'access-subjects', label: 'Subjects', icon: <Users size={18} />,       requires: 'authzAdmin', countKey: 'subjects' },
+      { id: 'access-roles',    label: 'Roles',    icon: <KeyRound size={18} />,    requires: 'authzAdmin', countKey: 'roles' },
+      { id: 'access-actions',  label: 'Actions',  icon: <Zap size={18} />,         requires: 'authzAdmin' },
+      { id: 'access-policies', label: 'Policies', icon: <ShieldCheck size={18} />, requires: 'authzAdmin', countKey: 'policies' },
+      { id: 'business-terms',  label: 'Business Terms', icon: <BookOpen size={18} />, shortcut: 'g t' },
+      { id: 'ai-providers',    label: 'AI Providers',   icon: <Sparkles size={18} />, requires: 'steward', shortcut: 'g a' },
     ],
   },
   {
@@ -84,8 +88,8 @@ const navGroups: NavGroup[] = [
   {
     label: 'Observe',
     items: [
-      { id: 'audit',          label: 'Audit Log',      icon: <FileText size={18} />, adminOnly: true, alertKey: 'audit' },
-      { id: 'feedback-inbox', label: 'Feedback Inbox', icon: <Inbox size={18} />,    adminOnly: true, shortcut: 'g i' },
+      { id: 'audit',          label: 'Audit Log',      icon: <FileText size={18} />, requires: 'admin',   alertKey: 'audit' },
+      { id: 'feedback-inbox', label: 'Feedback Inbox', icon: <Inbox size={18} />,    requires: 'steward', shortcut: 'g i' },
     ],
   },
 ];
@@ -106,7 +110,7 @@ export function Layout({
   onOpenConfigTools?: () => void;
   children: ReactNode;
 }) {
-  const { user, config, loading, users, usersLoading, isAdmin, adminStats, login, logout } = useAuthz();
+  const { user, config, loading, users, usersLoading, isAdmin, isAuthzAdmin, isSteward, adminStats, login, logout } = useAuthz();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -210,7 +214,13 @@ export function Layout({
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto px-3 py-2">
           {navGroups.map((group, gi) => {
-            const visibleItems = group.items.filter(item => !item.adminOnly || isAdmin);
+            const visibleItems = group.items.filter(item => {
+              if (!item.requires) return true;
+              if (item.requires === 'authzAdmin') return isAuthzAdmin;
+              if (item.requires === 'steward')    return isSteward;
+              if (item.requires === 'admin')      return isAdmin;
+              return false;
+            });
             if (visibleItems.length === 0) return null;
             return (
               <div key={gi}>

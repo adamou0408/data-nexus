@@ -191,7 +191,7 @@ function AppInner() {
 function isAdminOnly(tab: TabId): boolean {
   for (const g of navGroups) {
     for (const item of g.items) {
-      if (item.id === tab) return !!item.adminOnly;
+      if (item.id === tab) return !!item.requires;
     }
   }
   return false;

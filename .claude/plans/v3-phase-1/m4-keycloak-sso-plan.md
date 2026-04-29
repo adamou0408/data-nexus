@@ -1,10 +1,10 @@
 # M4 Keycloak SSO — Sub-plan
 
 - **Owner:** authz-api (additive code) + Adam (LDAP bind, password set)
-- **Status:** S1 additive scaffolding ✅ 2026-04-29 · S2 LDAP federation ✅ Adam-set 2026-04-29 · S3 dashboard wiring ✅ 2026-04-29 · S4 partial: local `adam_ou` retired in favor of LDAP-federated entry (歐瀝元) ✅ 2026-04-29 · remaining S4 (dev-seed sys_admin/tsai_bi cleanup) 🔴 gated on full e2e login proof
+- **Status:** S1 additive scaffolding ✅ 2026-04-29 · S2 LDAP federation ✅ Adam-set 2026-04-29 · S3 dashboard wiring ✅ 2026-04-29 · S4 partial: local `adam_ou` retired in favor of LDAP-federated entry (歐瀝元) ✅ 2026-04-29 · `sys_admin` user removed via V083 realm sync ✅ 2026-04-29 · `tsai_bi` retained as V083 BI_USER test fixture (no longer S4 cleanup target) · remaining S4 (`X-User-Id` smoke-script migration, `extractUser` fallback removal) 🔴 gated on full e2e login proof
 - **Linked from:** [`m4-prod-ready-tracker.md`](m4-prod-ready-tracker.md) item #3 · runbook [`docs/keycloak-setup.md`](../../../docs/keycloak-setup.md)
 - **Hard gate:** M4 prod-ready (G1, 2026-09)
-- **Blast radius:** 57 `X-User-Id` occurrences across 33 files; ~12 smoke scripts depending on `sys_admin` / `tsai_bi` fixtures
+- **Blast radius:** 57 `X-User-Id` occurrences across 33 files; ~12 smoke scripts depending on now-V083 fixtures (`auth_admin_test` / `steward_test` / `tsai_bi` / `etl_pipeline`)
 
 ---
 
@@ -60,11 +60,14 @@ token attached to all `/api/*` calls.
 
 Only execute *after* adam_ou e2e login proven via S3 dashboard:
 
-- Remove `database/seed/dev-seed.sql` rows: `user:sys_admin`, `user:tsai_bi`,
-  `svc:etl_pipeline` (+ dependent `authz_subject_role` and `authz_group_member`)
+- ~~Remove dev-seed mock-user rows~~ — superseded by V083 (2026-04-29):
+  `auth_admin_test` / `steward_test` / `tsai_bi` / `etl_pipeline` are now the
+  active 4-role test fixtures. `sys_admin` was deleted from Keycloak during
+  V083 sync. No further dev-seed cleanup needed.
 - Remove `deploy/ldap/seed/02-people.ldif` + `03-groups.ldif` (or repurpose
   to point at corporate LDAP, depending on S2 decision)
 - Replace `X-User-Id: sys_admin` in smoke scripts with token-bearing flow
+  (substitute the V083 test users where role-specific fixtures are needed)
 - Remove `extractUser` `X-User-Id` fallback in `services/authz-api/src/middleware/authz.ts`
 
 **Constitutional consent required:** `docs/constitution.md` §1 protects
@@ -76,7 +79,7 @@ from Adam.
 - **S1:** ✅ realm responds to `/realms/data-nexus/.well-known/openid-configuration`; backend boots with `JWT_ISSUER` set without errors
 - **S2:** Adam logs in at `/realms/data-nexus/account` with corporate creds; users sync visible in admin console
 - **S3:** Dashboard renders Keycloak login button; after login, `whoami` returns adam_ou's token claims; `X-User-Id` fallback still works when env vars unset
-- **S4:** Mock users removed from DB + LDIF; all smoke scripts pass; `extractUser` fallback removed; `grep -r "X-User-Id" services/ | wc -l` = 0
+- **S4:** V083 retired the mock-user removal scope; remaining: smoke scripts migrated to token flow; `extractUser` fallback removed; `grep -r "X-User-Id" services/ | wc -l` = 0
 
 ## Rollback per stage
 
