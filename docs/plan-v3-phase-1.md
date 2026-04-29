@@ -1,7 +1,7 @@
 # Design: v3 Phase 1 — Data Nexus Universal Platform
 
 **狀態:** Locked (2026-04-22 透過 8 輪 AskUserQuestion 決議)，2026-04-24 修訂（去除 cross-team ghost path）
-**Owner:** Adam Ou (adam_ou@aixmoment.com)
+**Owner:** Adam Ou (adam_ou@phison.com)
 **Demo target:** Q2 2027 (2027-05 ± 2 週)
 **Runway:** 12 個月 (2026-05 → 2027-05)
 

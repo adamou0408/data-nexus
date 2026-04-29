@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "tsx watch src/ldap-sync.ts",
-    "sync": "tsx src/ldap-sync.ts",
+    "dev": "tsx watch --env-file-if-exists=../../.env src/ldap-sync.ts",
+    "sync": "tsx --env-file-if-exists=../../.env src/ldap-sync.ts",
     "build": "tsc",
     "start": "node dist/ldap-sync.js"
   },

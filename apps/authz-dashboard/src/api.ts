@@ -1,6 +1,8 @@
+import { keycloak, ssoEnabled, ensureFreshToken } from './lib/keycloak';
+
 const BASE = '/api';
 
-// Current user context for authenticated API calls
+// Current user context for authenticated API calls (X-User-Id fallback path)
 let _currentUserId = '';
 let _currentGroups: string[] = [];
 
@@ -24,8 +26,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  // Attach auth headers for admin APIs
-  if (_currentUserId) {
+  // Bearer-first when Keycloak SSO is active; X-User-Id remains the dev fallback
+  // (see services/authz-api/src/middleware/jwt.ts — backend accepts both).
+  if (ssoEnabled && keycloak?.authenticated) {
+    const token = await ensureFreshToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+  } else if (_currentUserId) {
     headers['X-User-Id'] = _currentUserId;
     headers['X-User-Groups'] = _currentGroups.join(',');
   }
@@ -35,7 +41,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `API error: ${res.status}`);
+    // Surface server `detail` field — many routes (dag/execute-node, sink, etc) put the
+    // underlying PG / connection error there. Keeping it out of the toast forced curators
+    // to open DevTools to diagnose run-all failures (see Q2 redesign 2026-04-29).
+    const head = body.error || `API error: ${res.status}`;
+    throw new Error(body.detail ? `${head}: ${body.detail}` : head);
   }
   return res.json();
 }

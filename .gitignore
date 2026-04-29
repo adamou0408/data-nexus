@@ -1,7 +1,14 @@
-# Environment
+# Environment — never commit real connection values
+# .env at any depth (root + every service/app subdir in this monorepo)
 .env
 .env.local
 .env.*.local
+**/.env
+**/.env.local
+**/.env.*.local
+.env.development
+.env.production
+.env.staging
 
 # Secrets / credentials (SEC-06d)
 *.pem

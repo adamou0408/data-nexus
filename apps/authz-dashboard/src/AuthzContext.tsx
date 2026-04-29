@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
 import { api, setApiUser, UserProfile } from './api';
+import { ssoEnabled, ssoUserProfile, ssoLogout, keycloak } from './lib/keycloak';
 
 // Resolved config from authz_resolve() — sanitized by API (SEC-01)
 // Non-admin: rls_expression stripped, L2 mask function names stripped
@@ -48,8 +49,13 @@ export function AuthzProvider({ children }: { children: ReactNode }) {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
 
-  // Fetch user profiles from DB on mount
+  // Fetch user profiles from DB on mount (used by legacy X-User-Id picker only)
   useEffect(() => {
+    if (ssoEnabled) {
+      // SSO mode: identity comes from the Keycloak token, no user picker needed.
+      setUsersLoading(false);
+      return;
+    }
     api.subjectProfiles()
       .then(setUsers)
       .catch(() => setUsers([]))
@@ -70,10 +76,24 @@ export function AuthzProvider({ children }: { children: ReactNode }) {
     setLoading(false);
   }, []);
 
+  // Auto-login from Keycloak token claims when SSO is active. The token is
+  // already attached by api.ts (Bearer header); this just hydrates the React
+  // user/config state so the rest of the dashboard renders normally.
+  useEffect(() => {
+    if (!ssoEnabled || !keycloak?.authenticated) return;
+    const profile = ssoUserProfile();
+    if (profile) {
+      void login(profile);
+    }
+  }, [login]);
+
   const logout = useCallback(() => {
     setUser(null);
     setConfig(null);
     setApiUser('', []);
+    if (ssoEnabled && keycloak?.authenticated) {
+      ssoLogout();
+    }
   }, []);
 
   const hasPermission = useCallback((action: string, resource: string): boolean => {

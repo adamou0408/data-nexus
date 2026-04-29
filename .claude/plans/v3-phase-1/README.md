@@ -2,7 +2,7 @@
 
 **Master plan:** [`docs/plan-v3-phase-1.md`](../../../docs/plan-v3-phase-1.md)
 
-**Phase 1 owner:** Adam Ou (adam_ou@aixmoment.com)
+**Phase 1 owner:** Adam Ou (adam_ou@phison.com)
 **Demo target:** Q2 2027 (2027-05 ± 2 週)
 **Runway:** 2026-05 → 2027-05
 

@@ -19,7 +19,7 @@ Track the five M4 production-ready work items to go-live by end of Q3 2026. M4 i
 |---|------|-------|------------|
 | 1 | **SEC-06 secrets** (Vault / external-secrets) | SRE | — |
 | 2 | **Helm chart** for authz-api / identity-sync / dashboard | SRE | — |
-| 3 | **Keycloak SSO** (replace `X-User-Id` header) | SRE + authz-api | SEC-06 |
+| 3 | **Keycloak SSO** (replace `X-User-Id` header) — sub-plan: [`m4-keycloak-sso-plan.md`](m4-keycloak-sso-plan.md), runbook: [`docs/keycloak-setup.md`](../../../docs/keycloak-setup.md). S1 scaffolding ✅ 2026-04-29 (realm `data-nexus`, OIDC clients, realm roles, smoke user adam_ou) | SRE + authz-api | SEC-06 |
 | 4 | **LDAP CronJob** (replace local identity-sync cadence) | SRE + identity-sync | Helm chart |
 | 5 | **Redis cache** for authz_resolve hot paths — in-process MVP done 2026-04-23 (FEAT-01); Redis backend swap blocked on Helm | authz-api | Helm chart |
 
