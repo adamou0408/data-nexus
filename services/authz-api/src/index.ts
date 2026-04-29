@@ -79,25 +79,28 @@ app.use('/api/filter', filterRouter);
 app.use('/api/matrix', matrixRouter);
 app.use('/api/rls', rlsRouter);
 app.use('/api/browse', browseReadRouter);
-app.use('/api/browse', requireRole('ADMIN', 'AUTHZ_ADMIN'), browseAdminRouter);
+app.use('/api/browse', requireRole('AUTHZ_ADMIN'), browseAdminRouter);
 
 // Config-Driven UI (requires auth — fine-grained checks done internally)
 app.use('/api/config-exec', requireAuth, configExecRouter);
 
-// Admin APIs (require ADMIN or AUTHZ_ADMIN role via X-User-Id header)
-app.use('/api/pool', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), poolRouter);
+// V083 admin APIs (matrix: docs/role-permission-matrix.md)
+//   pool / datasources / ai-providers / discover / business-term / modules-write / feedback-inbox → DATA_STEWARD
+//   browse-admin / config-snapshot / config-bulk / ai-assist (DDL) → AUTHZ_ADMIN
+//   SYSADMIN bypass handled inside requireRole() (allow-side short-circuit).
+app.use('/api/pool', requireRole('DATA_STEWARD'), poolRouter);
 // Datasource lite list — any authenticated user (Flow Composer, Data Query need DS picker).
 // Must be registered BEFORE the admin-gated mount so Express matches it first.
 app.get('/api/datasources/list', requireAuth, listDataSourcesLite);
-app.use('/api/datasources', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), datasourceRouter);
+app.use('/api/datasources', requireRole('DATA_STEWARD'), datasourceRouter);
 // AI providers lite list — any authenticated user (sidebar copilot needs to pick a provider).
 // Registered BEFORE the admin-gated mount so Express matches it first.
 app.get('/api/ai-providers/list', requireAuth, listAIProvidersLite);
-app.use('/api/ai-providers', requireRole('ADMIN', 'AUTHZ_ADMIN'), aiProviderRouter);
+app.use('/api/ai-providers', requireRole('DATA_STEWARD'), aiProviderRouter);
 // AI-assisted authoring (dogfood): draft / refine / explain PG functions.
-// Admin-gated to mirror function deploy permissions; Constitution §11.3 keeps
-// Deploy human-clicked, so this endpoint never executes generated SQL.
-app.use('/api/ai-assist', requireRole('ADMIN', 'AUTHZ_ADMIN'), aiAssistRouter);
+// AUTHZ_ADMIN-gated to mirror function deploy permissions; Constitution §11.3
+// keeps Deploy human-clicked, so this endpoint never executes generated SQL.
+app.use('/api/ai-assist', requireRole('AUTHZ_ADMIN', 'DATA_STEWARD'), aiAssistRouter);
 // Modules: read open to all authenticated users (per-resource authz_check inside),
 // write operations (DELETE) protected by requireRole inside the router
 app.use('/api/modules', requireAuth, modulesRouter);
@@ -106,7 +109,7 @@ app.use('/api/ui', requireAuth, uiRouter);
 app.use('/api/oracle-exec', requireAuth, oracleExecRouter);
 app.use('/api/data-query', requireAuth, dataQueryRouter);
 app.use('/api/dag', requireAuth, dagRouter);
-app.use('/api/discover', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), discoverRouter);
+app.use('/api/discover', requireRole('DATA_STEWARD'), discoverRouter);
 
 // Composite-action workflow runtime (V075 + V076). requireAuth lives inside
 // the router; per-decision gating uses authz_check + chain-step role match.
@@ -118,18 +121,18 @@ app.use('/api/saved-view', requireAuth, savedViewRouter);
 
 // Tier A primitive #3: per-user feedback (V082). POST/GET-mine for any
 // authenticated user; GET /inbox + PATCH /:id/status are gated by
-// requireRole('ADMIN','AUTHZ_ADMIN') inside the router.
+// requireRole('DATA_STEWARD') inside the router (V083 curator surface).
 app.use('/api/feedback', requireAuth, feedbackRouter);
 
 // Tier A gate-prep: business-term admin (V044 semantic-layer columns on
-// authz_resource). Admin-only — every route here is curator workflow,
-// no end-user surface. Closes the schema-without-tooling gap that
-// blocks §3.4 C primitive's blessed_term ≥ 10 gate.
-app.use('/api/business-term', requireRole('ADMIN', 'AUTHZ_ADMIN'), businessTermRouter);
+// authz_resource). DATA_STEWARD-only per V083 (curator workflow under Govern).
+// Closes the schema-without-tooling gap that blocks §3.4 C primitive's
+// blessed_term ≥ 10 gate.
+app.use('/api/business-term', requireRole('DATA_STEWARD'), businessTermRouter);
 
-// Config snapshot & bulk import (admin-only)
-app.use('/api/config/snapshot', requireRole('ADMIN', 'AUTHZ_ADMIN'), configSnapshotRouter);
-app.use('/api/config/bulk', requireRole('ADMIN', 'AUTHZ_ADMIN'), configBulkRouter);
+// Config snapshot & bulk import — AUTHZ_ADMIN per V083 (Govern stage).
+app.use('/api/config/snapshot', requireRole('AUTHZ_ADMIN'), configSnapshotRouter);
+app.use('/api/config/bulk', requireRole('AUTHZ_ADMIN'), configBulkRouter);
 
 validateProductionEnv();
 

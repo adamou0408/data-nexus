@@ -29,7 +29,9 @@ import { buildSchemaContext } from '../lib/ai-context';
 
 export const aiAssistRouter = Router();
 
-const PURPOSE = 'sql_authoring';
+// Purpose tag must match a value in AIProvidersTab's PURPOSE_PRESETS so admins
+// can select it via the chip UI. `text_to_sql` is the user-facing label.
+const PURPOSE = 'text_to_sql';
 const FEATURE_TAG = 'pg_function_authoring';
 
 const SYSTEM_PROMPT_BASE = `You are an expert PostgreSQL function author embedded in an internal data platform.
@@ -48,7 +50,7 @@ function handleAIError(res: any, err: unknown) {
     return res.status(503).json({
       error: 'No AI provider available',
       detail: err.message,
-      hint: 'Open the AI Providers tab and register one with purpose_tags including \'sql_authoring\'.',
+      hint: 'Open the AI Providers tab → tap your provider → enable the `text_to_sql` purpose tag (or register a new provider with that tag).',
     });
   }
   if (err instanceof DestructiveSqlError) {

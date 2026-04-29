@@ -31,7 +31,8 @@ async function isAdminRequest(req: Request): Promise<boolean> {
       [user_id, groups]
     );
     const roles: string[] = result.rows[0]?.roles || [];
-    const isAdmin = roles.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN');
+    // V083: "admin" view of module tree = anyone who can curate it.
+    const isAdmin = roles.some(r => r === 'SYSADMIN' || r === 'AUTHZ_ADMIN' || r === 'DATA_STEWARD');
     (req as any)._isAdmin = isAdmin;
     (req as any).authzRoles = roles;
     return isAdmin;
@@ -259,9 +260,9 @@ modulesRouter.get('/:id/details', async (req, res) => {
   } catch (err) { handleApiError(res, err); }
 });
 
-// DELETE /api/modules/:id — admin-only enhanced delete with cascade
+// DELETE /api/modules/:id — DATA_STEWARD-only (V083 Catalog Modules)
 // Protected by requireRole middleware (mounted in index.ts for write operations)
-modulesRouter.delete('/:id', requireRole('ADMIN', 'AUTHZ_ADMIN'), async (req, res) => {
+modulesRouter.delete('/:id', requireRole('DATA_STEWARD'), async (req, res) => {
   const moduleId = req.params.id;
   const cascade = req.body?.cascade === true;
   const userId = getUserId(req);

@@ -19,11 +19,12 @@ export const dagRouter = Router();
 
 // L0 functional gates for write operations (FC-AUTHZ-01).
 // Authoring a DAG = mutating authz_resource (resource_type='dag'); same blast
-// radius as datasource/discover writes, so mirror their role set.
-const requireDagAuthor = requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA');
+// radius as datasource/discover writes, so mirror their V083 role
+// (DATA_STEWARD owns Catalog/Ingest data ops).
+const requireDagAuthor = requireRole('DATA_STEWARD');
 // save-as-page writes to authz_ui_page, the Tier A platform metadata table —
-// gate it the same way config/snapshot is gated.
-const requirePageAuthor = requireRole('ADMIN', 'AUTHZ_ADMIN');
+// gate it the same way config/snapshot is gated (AUTHZ_ADMIN per V083).
+const requirePageAuthor = requireRole('AUTHZ_ADMIN');
 
 const MAX_ROWS = 1000;
 

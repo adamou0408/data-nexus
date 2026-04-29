@@ -44,26 +44,21 @@ function AppInner() {
   // BU-08: auto-generated page preview slot. When set, the 'auto-page' tab
   // renders ConfigEngine for the auto page_id (auto:<source>:<schema>.<table>).
   const [autoPagePreview, setAutoPagePreview] = useState<string | null>(null);
-  const { isAdmin } = useAuthz();
+  const { isAdmin, isAuthzAdmin, isSteward } = useAuthz();
 
   const navigate = (next: TabId | string) => {
     const redirect = legacyTabRedirect[next];
     setTab((redirect ?? next) as TabId);
   };
 
+  // V083 tri-flag gate — mirrors Layout.tsx sidebar visibility. Admin and steward
+  // are NOT the same: a steward must NOT land on Subjects/Roles/Actions/Policies
+  // even though they pass the coarse isAdmin check (steward is in adminTabs set).
   useEffect(() => {
-    const adminTabs: TabId[] = [
-      'pool', 'audit', 'raw-tables', 'discover',
-      'access-subjects', 'access-roles', 'access-resources', 'access-policies', 'access-actions',
-      'ai-providers',
-      'feedback-inbox',
-      'business-terms',
-      'config-tools',
-    ];
-    if (adminTabs.includes(tab) && !isAdmin) {
+    if (!canAccessTab(tab, { isAuthzAdmin, isSteward, isAdmin })) {
       setTab('overview');
     }
-  }, [isAdmin, tab]);
+  }, [isAuthzAdmin, isSteward, isAdmin, tab]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -126,7 +121,7 @@ function AppInner() {
         const target = shortcutMap[k];
         clearTimeout(goPending.current);
         goPending.current = null;
-        if (target && (!isAdminOnly(target) || isAdmin)) {
+        if (target && canAccessTab(target, { isAuthzAdmin, isSteward, isAdmin })) {
           e.preventDefault();
           setTab(target);
         }
@@ -138,7 +133,7 @@ function AppInner() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isAdmin, paletteOpen, configToolsOpen]);
+  }, [isAuthzAdmin, isSteward, isAdmin, paletteOpen, configToolsOpen]);
 
   const accessSection = accessTabMap[tab];
 
@@ -188,13 +183,27 @@ function AppInner() {
   );
 }
 
-function isAdminOnly(tab: TabId): boolean {
+// V083 tri-flag gate — must mirror the visibility logic in Layout.tsx so that
+// keyboard shortcuts and redirect-on-tab-change agree with what the sidebar
+// shows. Tabs without `requires` are open to everyone (incl. anonymous BI).
+function canAccessTab(
+  tab: TabId,
+  flags: { isAuthzAdmin: boolean; isSteward: boolean; isAdmin: boolean },
+): boolean {
+  // Slot tabs (no sidebar entry) — opt-in by id.
+  if (tab === 'auto-page') return true;
   for (const g of navGroups) {
     for (const item of g.items) {
-      if (item.id === tab) return !!item.requires;
+      if (item.id !== tab) continue;
+      if (!item.requires) return true;
+      if (item.requires === 'authzAdmin') return flags.isAuthzAdmin;
+      if (item.requires === 'steward')    return flags.isSteward;
+      if (item.requires === 'admin')      return flags.isAdmin;
+      return false;
     }
   }
-  return false;
+  // Tabs not in any nav group (e.g. internal preview slots) — allow.
+  return true;
 }
 
 function ConfigToolsModal({ onClose }: { onClose: () => void }) {

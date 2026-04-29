@@ -68,11 +68,20 @@ export function rejectIfDestructive(sql: string): void {
 }
 
 /**
- * Pick the highest-priority provider that advertises the requested purpose.
- * Active fallback wins ties so admins can pin a default.
+ * Pick the highest-priority provider for the requested purpose.
+ *
+ * Resolution order:
+ *   1. Active provider whose `purpose_tags` includes `purpose` (is_fallback wins ties).
+ *   2. Active provider with `is_fallback=TRUE` regardless of tags — admin's pinned
+ *      default for "anything that doesn't match a more specific tag".
+ *   3. Throw NoProviderError.
+ *
+ * Step 2 makes single-provider dev setups work out of the box: if an admin
+ * marks their only provider as fallback, every purpose resolves to it instead
+ * of returning a 503 the user can't recover from without opening Settings.
  */
 export async function resolveProvider(purpose: string): Promise<ProviderRow> {
-  const result = await authzPool.query<ProviderRow>(
+  const tagged = await authzPool.query<ProviderRow>(
     `SELECT provider_id, display_name, base_url, api_key_encrypted,
             default_model, default_temperature, default_max_tokens,
             timeout_ms, pricing, purpose_tags
@@ -83,8 +92,20 @@ export async function resolveProvider(purpose: string): Promise<ProviderRow> {
      LIMIT 1`,
     [purpose],
   );
-  if (result.rows.length === 0) throw new NoProviderError(purpose);
-  return result.rows[0];
+  if (tagged.rows.length > 0) return tagged.rows[0];
+
+  const fallback = await authzPool.query<ProviderRow>(
+    `SELECT provider_id, display_name, base_url, api_key_encrypted,
+            default_model, default_temperature, default_max_tokens,
+            timeout_ms, pricing, purpose_tags
+     FROM authz_ai_provider
+     WHERE is_active = TRUE AND is_fallback = TRUE
+     ORDER BY display_name
+     LIMIT 1`,
+  );
+  if (fallback.rows.length > 0) return fallback.rows[0];
+
+  throw new NoProviderError(purpose);
 }
 
 function priceFor(provider: ProviderRow, model: string, prompt: number, completion: number): number | null {

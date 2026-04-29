@@ -1,8 +1,15 @@
 import { Router } from 'express';
 import { pool, getLocalDataPool } from '../db';
 import { handleApiError } from '../lib/request-helpers';
+import { requireRole } from '../middleware/authz';
 
 export const browseReadRouter = Router();
+
+// V083: audit-logs read-only is AUTHZ_ADMIN + DATA_STEWARD (SYSADMIN bypassed
+// inside requireRole). Other browseReadRouter routes stay open — they expose
+// metadata (subjects/roles/resources/actions) the dashboard needs to render
+// every gate's detail panel.
+const requireAuditReader = requireRole('AUTHZ_ADMIN', 'DATA_STEWARD');
 
 browseReadRouter.get('/subjects', async (_req, res) => {
   try {
@@ -557,7 +564,7 @@ browseReadRouter.get('/resources/functions', async (req, res) => {
   }
 });
 
-browseReadRouter.get('/audit-logs', async (req, res) => {
+browseReadRouter.get('/audit-logs', requireAuditReader, async (req, res) => {
   const format = (req.query.format as string | undefined)?.toLowerCase();
   const isCsv = format === 'csv';
   // CSV export bumps the cap to 50k rows for SOX auditor pulls; JSON keeps the

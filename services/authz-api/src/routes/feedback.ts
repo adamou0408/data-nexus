@@ -91,7 +91,7 @@ feedbackRouter.get('/mine', async (req, res) => {
 });
 
 // GET /api/feedback/inbox?status=&page_id= — Curator inbox
-feedbackRouter.get('/inbox', requireRole('ADMIN', 'AUTHZ_ADMIN'), async (req, res) => {
+feedbackRouter.get('/inbox', requireRole('DATA_STEWARD'), async (req, res) => {
   const status = req.query.status as string | undefined;
   const pageId = req.query.page_id as string | undefined;
   try {
@@ -120,7 +120,7 @@ feedbackRouter.get('/inbox', requireRole('ADMIN', 'AUTHZ_ADMIN'), async (req, re
 });
 
 // PATCH /api/feedback/:id/status — Curator triage
-feedbackRouter.patch('/:id/status', requireRole('ADMIN', 'AUTHZ_ADMIN'), async (req, res) => {
+feedbackRouter.patch('/:id/status', requireRole('DATA_STEWARD'), async (req, res) => {
   const userId = getUserId(req);
   const ip = getClientIp(req);
   const { id } = req.params;

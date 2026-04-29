@@ -47,6 +47,8 @@ export function handleApiError(res: Response, err: unknown): void {
   res.status(500).json({ error: message });
 }
 
+// V083: "admin" for unsanitized resolve output = any non-BI staff role.
+// Includes SYSADMIN (god-mode), AUTHZ_ADMIN (governance), DATA_STEWARD (data ops).
 export async function isAdminUser(pool: Pool, userId: string, groups: string[]): Promise<boolean> {
   try {
     const result = await pool.query(
@@ -54,7 +56,7 @@ export async function isAdminUser(pool: Pool, userId: string, groups: string[]):
       [userId, groups]
     );
     const roles: string[] = result.rows[0]?.roles || [];
-    return roles.some(r => r === 'ADMIN' || r === 'AUTHZ_ADMIN');
+    return roles.some(r => r === 'SYSADMIN' || r === 'AUTHZ_ADMIN' || r === 'DATA_STEWARD');
   } catch {
     return false;
   }

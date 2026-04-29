@@ -16,7 +16,7 @@
 //   GET    /:id/audit            — recent config changes (last 20)
 //
 // Security:
-//   * Router mounted behind requireRole('ADMIN','AUTHZ_ADMIN') for config ops.
+//   * Router mounted behind requireRole('DATA_STEWARD') for config ops (V083).
 //   * `listAIProvidersLite` exported for requireAuth-only mount (runtime callers).
 //   * api_key stored via lib/crypto.ts (enc:iv:tag:data). Never returned to client.
 //

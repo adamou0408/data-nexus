@@ -5,8 +5,9 @@
 // authz_resource (business_term / definition / formula /
 // owner_subject_id / status / blessed_at / blessed_by).
 //
-// Mounted under requireRole('ADMIN','AUTHZ_ADMIN') in index.ts —
-// every route here assumes the caller is already admin.
+// Mounted under requireRole('DATA_STEWARD') in index.ts (V083 curator
+// surface under Govern) — every route here assumes the caller is already
+// a steward (or SYSADMIN via god-mode bypass).
 //
 // Transition endpoint is the only path that touches
 // status/blessed_at/blessed_by, to keep V044 invariants

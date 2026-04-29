@@ -446,10 +446,11 @@ dataQueryRouter.post('/functions/deploy', async (req, res) => {
       [resource_id, display_name, JSON.stringify(attrs)]
     );
 
-    // Auto-grant ADMIN execute
+    // Auto-grant DATA_STEWARD execute (V083: data-function deploy = data ops).
+    // ADMIN/DBA grants would FK-fail since V083 dropped those roles.
     await authzPool.query(
       `INSERT INTO authz_role_permission (role_id, action_id, resource_id, effect)
-       VALUES ('ADMIN', 'execute', $1, 'allow')
+       VALUES ('DATA_STEWARD', 'execute', $1, 'allow')
        ON CONFLICT (role_id, action_id, resource_id) DO UPDATE SET effect='allow', is_active=TRUE`,
       [resource_id]
     );
