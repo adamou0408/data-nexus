@@ -2,11 +2,11 @@
 
 - **Planner Owner:** Adam Ou
 - **Executor Owner:** Adam (this session)
-- **Status:** IN-PROGRESS
+- **Status:** IN-PROGRESS — Now sprint DONE 2026-04-29(operator + agg + sink + AC-2 test lockdown);Next sprint = save-as-API sink
 - **Linked from:** [`docs/plan-v3-phase-1.md`](../../../docs/plan-v3-phase-1.md) §2.1 / [`./two-tier-platform-model.md`](./two-tier-platform-model.md)
 - **Target:** Q3 2026 — Tier B authoring tool 補齊 operator + sink (rolling, no hard gate)
 - **Created:** 2026-04-28
-- **Last updated:** 2026-04-28
+- **Last updated:** 2026-04-29
 
 ---
 
@@ -28,13 +28,13 @@ Flow Composer (DagTab) 目前只有一種 node kind: `fn`(指向 `authz_resource
 
 ## 2. Scope
 
-**In scope (Now sprint, ~5 天):**
-- [ ] Multiplicity badge — `FunctionNode` header 顯示 scalar / table / setof
-- [ ] `dag-validate` 錯誤訊息升級 — `type_mismatch` 帶 expected vs got + pgType
-- [ ] Literal operator node — `node.type='literal'`,emit 單列常數
-- [ ] Filter operator node — `node.type='filter'`,upstream rows → 子集
-- [ ] Cast operator node — `node.type='cast'`,改一個 column 的 pgType
-- [ ] Operator runtime: server `dag.ts` 新增 operator dispatch path,**不過 `authz_check`**(權限繼承上游 fn 的 resource_id)
+**In scope (Now sprint, ~5 天) — DONE 2026-04-29:**
+- [x] Multiplicity badge — `FunctionNode` header 顯示 scalar / table / setof / void / unknown (DagTab.tsx SHAPE_BADGE)
+- [x] `dag-validate` 錯誤訊息升級 — `type_mismatch` 帶 `<handle>(<sem>/<pgType>)` 兩端 + hint;鎖在 `services/authz-api/scripts/test-validate.ts` 7/7 pass
+- [x] Literal operator node — `node.type='literal'`,emit 單列常數
+- [x] Filter operator node — `node.type='filter'`,upstream rows → 子集
+- [x] Cast operator node — `node.type='cast'`,改一個 column 的 pgType
+- [x] Operator runtime: server `dag.ts` 新增 operator dispatch path,**不過 `authz_check`**(權限繼承上游 fn 的 resource_id)
 
 **In scope (Next sprint):**
 - [x] Aggregator operator(`sum/count/min/max/avg` + group_by columns) — landed 2026-04-28 (COMPOSER-AGG-V01)
@@ -154,18 +154,18 @@ Edge e1: 'p_material' (unknown / varchar) → 'p_input' (material_no / text):
 
 ## 4. Acceptance Criteria
 
-### Now sprint
+### Now sprint — DONE 2026-04-29
 
-- [ ] **AC-1:** `FunctionNode` header 顯示 multiplicity chip(scalar / table / setof / void)
-- [ ] **AC-2:** `dag-validate` `type_mismatch` 訊息含 `<handle>(<semantic>/<pgType>) → <handle>(<semantic>/<pgType>)` 兩端詳情 + 一行 hint
-- [ ] **AC-3:** Palette 出現 Operators section,含 Literal / Filter / Cast 三個 node;點擊加上 canvas
-- [ ] **AC-4:** Literal node 可 Inspector 設 value + pgType,Run this node 後 last_result 為單列 `{ value: <typed> }`
-- [ ] **AC-5:** Filter node 可 Inspector 設 column + op (eq/ne/in/gt/lt/like) + value,Run this node 後 last_result 為 upstream rows 的子集,且 column 結構不變
-- [ ] **AC-6:** Cast node 可 Inspector 設 source_column + target_pgType,Run this node 後 last_result 該 column pgType 標記更新
-- [ ] **AC-7:** Operator 不過 `authz_check`,但 audit log 有對應 `dag_op_<kind>` row
-- [ ] **AC-8:** Save DAG 含 operator node 後 reload,結構保留;`dag-validate` 不噴錯
-- [ ] **AC-9:** TypeScript build pass(`tsc -p` for both authz-api 和 authz-dashboard)
-- [ ] **AC-10:** PROGRESS.md 加 `COMPOSER-OPERATOR-V01` 條目
+- [x] **AC-1:** Multiplicity chip in `FunctionNode` header (DagTab.tsx SHAPE_BADGE,5 shapes inc. unknown)
+- [x] **AC-2:** `dag-validate` `type_mismatch` 訊息含 `<handle>(<sem>/<pg>) → ...` 兩端 + 一行 hint;`scripts/test-validate.ts` 7/7 pass(semantic-strict + pgType-fallback 兩條 path 都鎖)
+- [x] **AC-3:** Palette Operators section(Literal / Filter / Cast / Aggregate)+ Sink,點擊上 canvas
+- [x] **AC-4:** Literal node Inspector(value + pgType)+ run 出單列(COMPOSER-OPERATOR-V01)
+- [x] **AC-5:** Filter node Inspector(column + op + value)+ run 出子集(COMPOSER-OPERATOR-V01)
+- [x] **AC-6:** Cast node Inspector(source_column + target_pgType)+ run 改 column pgType(COMPOSER-OPERATOR-V01)
+- [x] **AC-7:** Operator 不過 `authz_check`,audit `dag_op_<kind>` 寫入(`dag.ts` operator dispatch + audit row 已驗)
+- [x] **AC-8:** Save DAG 含 operator node 後 reload 結構保留;sink JSONB roundtrip 由 `test-sink.ts` Test 8 守
+- [x] **AC-9:** `tsc -p` clean for authz-api 與 authz-dashboard(2026-04-29 verified)
+- [x] **AC-10:** PROGRESS.md COMPOSER-OPERATOR-V01 / COMPOSER-AGG-V01 / COMPOSER-SINK-V01 三條 ship 記錄已落
 
 ### Next / After sprints
 
@@ -175,15 +175,18 @@ Edge e1: 'p_material' (unknown / varchar) → 'p_input' (material_no / text):
 
 ## 5. Implementation Plan
 
-### Now sprint tasks
+### Now sprint tasks — DONE 2026-04-29
 
 - [x] Sub-plan + README 更新
-- [ ] V0xx migration: 無(operator state 全在 `authz_resource.attributes` JSONB)
-- [ ] `apps/authz-dashboard/src/components/DagTab.tsx` — 加 operator node types + palette section + Inspector branches
-- [ ] `services/authz-api/src/routes/dag.ts` — execute-node 加 operator dispatch
-- [ ] `services/authz-api/src/lib/dag-validate.ts` — 訊息升級 + operator-aware validation
-- [ ] `services/authz-api/src/lib/dag-operators.ts` (new) — 隔離 operator runtime
-- [ ] PROGRESS.md 加條
+- [x] V0xx migration: 無(operator state 全在 `authz_resource.attributes` JSONB,sink 同樣 JSONB)
+- [x] `apps/authz-dashboard/src/components/DagTab.tsx` — 加 operator + sink node types + palette + Inspector branches
+- [x] `services/authz-api/src/routes/dag.ts` — execute-node 加 operator + sink dispatch
+- [x] `services/authz-api/src/lib/dag-validate.ts` — 訊息升級(2-tier)+ operator passthrough + sink-only DAG 接受
+- [x] `services/authz-api/src/lib/dag-operators.ts` (new) — operator runtime
+- [x] `services/authz-api/src/lib/sink-runtime.ts` (new) — sink runtime + emitPageSnapshot + deriveSinkUpstreamFn
+- [x] `services/authz-api/scripts/test-validate.ts` (new) — AC-2 spec lockdown 7/7 pass
+- [x] `services/authz-api/scripts/test-sink.ts` (new) — sink runtime + JSONB roundtrip 8/8 pass
+- [x] PROGRESS.md 加條(OPERATOR / AGG / SINK 三條)
 
 ### Files touched
 
@@ -219,6 +222,7 @@ Edge e1: 'p_material' (unknown / varchar) → 'p_input' (material_no / text):
 | Date | From → To | Status change | Note |
 |------|-----------|---------------|------|
 | 2026-04-28 | Adam | → DRAFT → IN-PROGRESS | 一人 session,planner = executor;直接開工 |
+| 2026-04-29 | Adam | Now sprint DONE | multiplicity badge + AC-2 訊息(2-tier render)+ operator(literal/filter/cast/aggregate)+ sink(page kind)+ test-validate.ts 7/7 + test-sink.ts 8/8 + tsc clean × 2。Next:save-as-API sink |
 
 ---
 

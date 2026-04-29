@@ -70,7 +70,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | design-mining-vision | — | GATED (Phase 2+) | post-Milestone 0 |
 | doc-reorg-proposal | Adam | executed 2026-04-22 | historical |
 | npi-gate-signoff-dogfood | Adam (this session) | **READY-FOR-REVIEW** (2026-04-28：V072-V078 applied + workflow router + handler + E2E walkthrough verified) | Q3 2026 platform primitive dogfood |
-| composer-operator-and-sink | Adam (this session) | **IN-PROGRESS** (2026-04-28：sub-plan 起草 + Now-sprint 開工:multiplicity badge / validate msg / literal / filter / cast) | Q3 2026 rolling |
+| composer-operator-and-sink | Adam (this session) | **IN-PROGRESS** (Now sprint DONE 2026-04-29：multiplicity badge + AC-2 2-tier validate msg + operator(literal/filter/cast/aggregate) + sink(page) 全落地;test-validate.ts 7/7 + test-sink.ts 8/8 + tsc×2 clean。Next:save-as-API sink) | Q3 2026 rolling |
 | sink-as-node-kind-plan | Adam (this session) | **DONE** (2026-04-29：page sink MVP 落地、smoke 10/10 + e2e 4/4、advisor 三 blocker 修完;api/cron sink kind 延到 Q4 統一處理) | Q3 2026 rolling |
 
 **Status legend:** STUB → draft → in-progress → ready-for-review → approved
