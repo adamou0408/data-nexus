@@ -113,11 +113,13 @@ export function validateDag(doc: DagDoc): { ok: boolean; issues: ValidationIssue
       srcOut?.semantic_type === '__rowset' || tgtIn?.semantic_type === '__rowset';
     if (isOperatorHandle) continue;
 
-    // DV-01 — type consistency. Two-tier check mirrors handleCompat.ts:
-    //   1. If both sides have a non-'unknown' semantic_type → strict equality
-    //   2. Otherwise fall back to pgType kind family
-    // Error message includes both sides' (semantic / pgType) plus a hint so
-    // curator knows whether to insert a Cast node or fix upstream metadata.
+    // DV-01 — type consistency. Hybrid model (mirrors apps/.../utils/handleCompat.ts
+    // post-2026-04-29 redesign):
+    //   • pgType family mismatch → severity='error' (hard rule, blocks save).
+    //   • Same pgType but different semantic_type → severity='warn' (advisory only).
+    //     Curator may insert a Cast or align metadata, but is not forced.
+    //   • semantic_type is no longer the SSOT — it's a curator-defined string with no
+    //     canonical vocabulary, so we don't fail saves on it. PG runtime is the truth.
     const outSem = srcOut?.semantic_type;
     const inSem = tgtIn?.semantic_type;
     const outPg = srcOut?.pgType;
@@ -127,16 +129,12 @@ export function validateDag(doc: DagDoc): { ok: boolean; issues: ValidationIssue
       const pgPart = pg || 'unknown';
       return `${semPart}/${pgPart}`;
     };
-    const semStrictMismatch =
-      outSem && inSem && outSem !== 'unknown' && inSem !== 'unknown' && outSem !== inSem;
-    const kindFallbackMismatch =
-      !semStrictMismatch && (!outSem || outSem === 'unknown' || !inSem || inSem === 'unknown') &&
+    const kindMismatch =
       kindFamily(outPg) !== 'any' && kindFamily(inPg) !== 'any' &&
       kindFamily(outPg) !== kindFamily(inPg);
-    if (semStrictMismatch || kindFallbackMismatch) {
-      const hint = semStrictMismatch
-        ? `Hint: insert a Cast node, or align semantic_type on upstream output.`
-        : `Hint: insert a Cast node to coerce ${kindFamily(outPg)} → ${kindFamily(inPg)}.`;
+    const semStrictMismatch =
+      !!(outSem && inSem && outSem !== 'unknown' && inSem !== 'unknown' && outSem !== inSem);
+    if (kindMismatch) {
       issues.push({
         severity: 'error',
         code: 'type_mismatch',
@@ -144,10 +142,20 @@ export function validateDag(doc: DagDoc): { ok: boolean; issues: ValidationIssue
           `Edge ${e.id}: ` +
           `'${outName}' (${renderSide(outSem, outPg)}) → ` +
           `'${inName}' (${renderSide(inSem, inPg)}) — ` +
-          (semStrictMismatch
-            ? `semantic_type mismatch (${outSem} vs ${inSem}).`
-            : `pgType family mismatch (${kindFamily(outPg)} vs ${kindFamily(inPg)}).`) +
-          ` ${hint}`,
+          `pgType family mismatch (${kindFamily(outPg)} vs ${kindFamily(inPg)}). ` +
+          `Hint: insert a Cast node to coerce ${kindFamily(outPg)} → ${kindFamily(inPg)}.`,
+        edge_id: e.id,
+      });
+    } else if (semStrictMismatch) {
+      issues.push({
+        severity: 'warn',
+        code: 'type_mismatch',
+        message:
+          `Edge ${e.id}: ` +
+          `'${outName}' (${renderSide(outSem, outPg)}) → ` +
+          `'${inName}' (${renderSide(inSem, inPg)}) — ` +
+          `semantic_type mismatch (${outSem} vs ${inSem}, advisory). ` +
+          `pgType is compatible; curator may align semantic_type or insert a Cast if domains truly differ.`,
         edge_id: e.id,
       });
     }

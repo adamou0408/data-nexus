@@ -46,7 +46,9 @@ VALUES (
           'label', 'search_cimzr067_by_keys',
           'subtype', 'function',
           'inputs', jsonb_build_array(
-            jsonb_build_object('name','p_keywords','semantic_type','keyword','hasDefault',false,'pgType','text')
+            -- p_keywords is text[] in PG (verified via authz_resource.parsed_args).
+            -- pgType MUST match — bind layer uses node-pg arg coercion.
+            jsonb_build_object('name','p_keywords','semantic_type','keyword','hasDefault',false,'pgType','text[]')
           ),
           'outputs', jsonb_build_array(
             jsonb_build_object('name','tc_ima001','semantic_type','material_no','pgType','character varying'),
@@ -57,11 +59,16 @@ VALUES (
             jsonb_build_object('name','tc_ima025','semantic_type','unknown','pgType','character varying')
           ),
           'bound_params', jsonb_build_object(
-            'p_keywords', 'PC7250020H-00000-01229'
+            -- text[] bind: a JSON array → node-pg passes it as PG array literal.
+            'p_keywords', jsonb_build_array('PC7250020H-00000-01229')
           )
         )
       ),
       -- n2: get_work_orders_by_part (csfzr120 work-order header)
+      -- Real PG arg name is `p_searchkey` (verified authz_resource.parsed_args),
+      -- NOT `p_material_no` — earlier seed had this wrong, so the edge bind walk
+      -- saw "no upstream edge" for p_searchkey and refused to execute. Edge e1
+      -- targetHandle is now `p_searchkey` to match.
       jsonb_build_object(
         'id', 'n2', 'type', 'fn',
         'position', jsonb_build_object('x', 520, 'y', 80),
@@ -70,7 +77,7 @@ VALUES (
           'label', 'get_work_orders_by_part',
           'subtype', 'function',
           'inputs', jsonb_build_array(
-            jsonb_build_object('name','p_material_no','semantic_type','material_no','hasDefault',false,'pgType','text')
+            jsonb_build_object('name','p_searchkey','semantic_type','material_no','hasDefault',false,'pgType','character varying')
           ),
           'outputs', jsonb_build_array(
             jsonb_build_object('name','工單編號','semantic_type','wo_no','pgType','character varying'),
@@ -106,7 +113,9 @@ VALUES (
       )
     ),
     'edges', jsonb_build_array(
-      jsonb_build_object('id','e1','source','n1','target','n2','sourceHandle','tc_ima001','targetHandle','p_material_no'),
+      -- e1 → p_searchkey (work-orders fn's real arg name)
+      -- e2 → p_material_no (shipment fn keeps p_material_no)
+      jsonb_build_object('id','e1','source','n1','target','n2','sourceHandle','tc_ima001','targetHandle','p_searchkey'),
       jsonb_build_object('id','e2','source','n1','target','n3','sourceHandle','tc_ima001','targetHandle','p_material_no')
     )
   ),

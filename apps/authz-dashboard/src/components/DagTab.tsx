@@ -7,7 +7,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api } from '../api';
-import { isCompatibleHandle } from '../utils/handleCompat';
+import { isCompatibleHandle, checkHandleCompat } from '../utils/handleCompat';
 
 type DataSourceLite = { source_id: string; display_name: string; db_type: string };
 import { useToast } from './Toast';
@@ -192,12 +192,19 @@ function FunctionNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
         <div style={{ padding: '4px 0' }}>
           {data.inputs.map((i) => {
             // Highlight compatibility: while user is dragging from an output handle
-            // on another node, dim incompatible inputs and ring compatible ones.
-            const compatible = dragSrc && !isSourceNode
-              ? isCompatibleHandle(dragSrc.out, i)
-              : true;
-            const dim = !!(dragSrc && !isSourceNode && !compatible);
-            const ring = !!(dragSrc && !isSourceNode && compatible);
+            // on another node, dim block-level mismatches, green-ring exact matches,
+            // amber-ring advisory (semantic) mismatches.
+            const compat = dragSrc && !isSourceNode
+              ? checkHandleCompat(dragSrc.out, i)
+              : null;
+            const dim = !!(compat && compat.level === 'block');
+            const ringOk = !!(compat && compat.level === 'ok');
+            const ringWarn = !!(compat && compat.level === 'warn');
+            const ringShadow = ringOk
+              ? '0 0 0 3px rgba(34,197,94,0.45)'      // green
+              : ringWarn
+                ? '0 0 0 3px rgba(245,158,11,0.55)'   // amber — advisory
+                : 'none';
             return (
               <div
                 key={`in-${i.name}`}
@@ -222,9 +229,10 @@ function FunctionNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
                     height: 10,
                     border: '2px solid white',
                     opacity: dim ? 0.25 : 1,
-                    boxShadow: ring ? '0 0 0 3px rgba(34,197,94,0.45)' : 'none',
+                    boxShadow: ringShadow,
                     transition: 'opacity 120ms, box-shadow 120ms',
                   }}
+                  title={compat?.reason}
                 />
                 <span style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: colorFor(i.semantic_type), display: 'inline-block' }} />
@@ -931,10 +939,11 @@ export function DagTab() {
     return isCompatibleHandle(o, i);
   }, [nodes]);
 
-  // Edge type-check on connect (W6-5 — do it client-side for instant feedback;
-  // server revalidates on save/execute). Loose match: pgType kind family
-  // (text/number/...) covers the case where semantic_type is missing — see
-  // utils/handleCompat.ts.
+  // Edge type-check on connect — hybrid model post-2026-04-29:
+  //   block (pgType family mismatch) → reject with error toast.
+  //   warn  (semantic mismatch but pgType OK) → allow + advisory toast (curator decides).
+  //   ok    (both pgType + semantic match) → allow silently.
+  // Server /validate revalidates on save and only blocks when severity='error'.
   const onConnect = useCallback((conn: Connection) => {
     const src = nodes.find((n) => n.id === conn.source);
     const tgt = nodes.find((n) => n.id === conn.target);
@@ -942,17 +951,26 @@ export function DagTab() {
     const srcOut = src.data.outputs.find((o) => o.name === conn.sourceHandle);
     const tgtIn = tgt.data.inputs.find((i) => i.name === conn.targetHandle);
     if (!srcOut || !tgtIn) return;
-    if (!isCompatibleHandle(srcOut, tgtIn)) {
-      const sLabel = srcOut.semantic_type || srcOut.pgType || 'unknown';
-      const tLabel = tgtIn.semantic_type || tgtIn.pgType || 'unknown';
-      showToast(`Type mismatch: ${sLabel} → ${tLabel}`, 'error');
+    const compat = checkHandleCompat(srcOut, tgtIn);
+    if (compat.level === 'block') {
+      const sLabel = srcOut.pgType || 'unknown';
+      const tLabel = tgtIn.pgType || 'unknown';
+      showToast(`Type mismatch (blocked): ${sLabel} → ${tLabel}`, 'error');
       return;
     }
+    if (compat.level === 'warn') {
+      showToast(`Advisory: ${compat.reason} — connection allowed`, 'info');
+    }
     pushHistory();
+    // Edge stroke colour: warn = amber dashed so the advisory is visible on the canvas,
+    // ok = upstream semantic colour (existing behaviour).
+    const isAdvisory = compat.level === 'warn';
     setEdges((eds) => addEdge({
       ...conn,
       id: `e${eds.length + 1}_${Date.now()}`,
-      style: { stroke: colorFor(srcOut.semantic_type), strokeWidth: 2 },
+      style: isAdvisory
+        ? { stroke: '#f59e0b', strokeWidth: 2, strokeDasharray: '6 3' }
+        : { stroke: colorFor(srcOut.semantic_type), strokeWidth: 2 },
     }, eds));
   }, [nodes, pushHistory]);
 
@@ -1478,8 +1496,12 @@ export function DagTab() {
             const list = Array.from(present);
             if (list.length === 0) return null;
             return (
-              <div className="px-3 py-1.5 border-b border-slate-200 bg-slate-50 flex items-center gap-3 flex-wrap text-[10px] text-slate-600">
+              <div
+                className="px-3 py-1.5 border-b border-slate-200 bg-slate-50 flex items-center gap-3 flex-wrap text-[10px] text-slate-600"
+                title="Connection compatibility is enforced by pgType family (text / number / date / json / …). semantic_type is advisory: same pgType + different semantic shows an amber dashed edge but is still allowed."
+              >
                 <span className="font-semibold uppercase tracking-wide">Types</span>
+                <span className="text-slate-400">advisory · pgType is the hard rule</span>
                 {list.map((t) => (
                   <span key={t} className="inline-flex items-center gap-1">
                     <span className="inline-block w-2 h-2 rounded-full" style={{ background: colorFor(t) }} />
