@@ -22,6 +22,7 @@ import { configBulkRouter } from './routes/config-bulk';
 import { modulesRouter } from './routes/modules';
 import { uiRouter } from './routes/ui';
 import { workflowRouter } from './routes/workflow';
+import { savedViewRouter } from './routes/saved-view';
 import { requireRole, requireAuth } from './middleware/authz';
 import { optionalJWT, buildJWTConfig } from './middleware/jwt';
 import { verifyCryptoKey } from './lib/crypto';
@@ -108,6 +109,10 @@ app.use('/api/discover', requireRole('ADMIN', 'AUTHZ_ADMIN', 'DBA'), discoverRou
 // Composite-action workflow runtime (V075 + V076). requireAuth lives inside
 // the router; per-decision gating uses authz_check + chain-step role match.
 app.use('/api/workflow', workflowRouter);
+
+// Tier A primitive #2: per-user saved view CRUD (V080). Self-scope only —
+// every query filters on user_id = current user; cross-user 404.
+app.use('/api/saved-view', requireAuth, savedViewRouter);
 
 // Config snapshot & bulk import (admin-only)
 app.use('/api/config/snapshot', requireRole('ADMIN', 'AUTHZ_ADMIN'), configSnapshotRouter);

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, ReactNode, useMemo, ComponentType } from 'react';
 import { useAuthz } from '../AuthzContext';
 import { useRenderTokens, RenderTokens } from '../RenderTokensContext';
-import { api } from '../api';
+import { api, SavedViewConfig } from '../api';
 import {
   Home, ChevronRight, ArrowLeft, Loader2, AlertTriangle,
   Package, ShoppingCart, ShieldCheck, FlaskConical, Undo2,
@@ -12,6 +12,8 @@ import {
 import { ModulesTab } from './modules/ModulesTab';
 import { AuditTab } from './AuditTab';
 import { NpiGateConsoleTab } from './NpiGateConsoleTab';
+import { useSavedView } from '../hooks/useSavedView';
+import { SavedViewBar } from './SavedViewBar';
 
 // ============================================================
 // Types — all derived from API response, never hardcoded
@@ -259,6 +261,10 @@ function DataTable({
   columnMasks,
   meta,
   onRowClick,
+  initialSort,
+  initialFilters,
+  initialHiddenCols,
+  onStateChange,
 }: {
   columns: ColumnDef[];
   data: Record<string, unknown>[];
@@ -267,11 +273,40 @@ function DataTable({
   columnMasks: Record<string, string>;
   meta?: PageMeta;
   onRowClick?: (row: Record<string, unknown>) => void;
+  initialSort?: { col: string; dir: 'asc' | 'desc' };
+  initialFilters?: Record<string, string>;
+  initialHiddenCols?: string[];
+  onStateChange?: (s: {
+    sortKey: string;
+    sortDir: 'asc' | 'desc';
+    filterValues: Record<string, string>;
+    hiddenCols: string[];
+  }) => void;
 }) {
   const tokens = useRenderTokens();
-  const [sortKey, setSortKey] = useState<string>('');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const [filterValues, setFilterValues] = useState<Record<string, string>>({});
+  const [sortKey, setSortKey] = useState<string>(initialSort?.col || '');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(initialSort?.dir || 'asc');
+  const [filterValues, setFilterValues] = useState<Record<string, string>>(initialFilters || {});
+  const [hiddenCols, setHiddenCols] = useState<string[]>(initialHiddenCols || []);
+
+  // Sync internal state when a saved view is applied/cleared from above.
+  // String identity of the JSON form is used so re-renders with the same
+  // values don't trigger churn.
+  const initialKey = useMemo(
+    () => JSON.stringify({ initialSort, initialFilters, initialHiddenCols }),
+    [initialSort, initialFilters, initialHiddenCols]
+  );
+  useEffect(() => {
+    setSortKey(initialSort?.col || '');
+    setSortDir(initialSort?.dir || 'asc');
+    setFilterValues(initialFilters || {});
+    setHiddenCols(initialHiddenCols || []);
+  }, [initialKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Report state up so the parent can persist via "save as" / "update"
+  useEffect(() => {
+    onStateChange?.({ sortKey, sortDir, filterValues, hiddenCols });
+  }, [sortKey, sortDir, filterValues, hiddenCols, onStateChange]);
 
   const handleSort = (key: string) => {
     if (sortKey === key) {
@@ -285,6 +320,11 @@ function DataTable({
   const handleFilterChange = (field: string, value: string) => {
     setFilterValues(prev => ({ ...prev, [field]: value }));
   };
+
+  const visibleColumns = useMemo(
+    () => columns.filter(c => !hiddenCols.includes(c.key)),
+    [columns, hiddenCols]
+  );
 
   // Client-side filter + sort
   const processedData = useMemo(() => {
@@ -332,7 +372,7 @@ function DataTable({
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">
-              {columns.map((col) => (
+              {visibleColumns.map((col) => (
                 <th
                   key={col.key}
                   onClick={() => col.sortable && handleSort(col.key)}
@@ -354,7 +394,7 @@ function DataTable({
           <tbody>
             {processedData.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-3 py-8 text-center text-slate-400">
+                <td colSpan={visibleColumns.length} className="px-3 py-8 text-center text-slate-400">
                   No data available
                 </td>
               </tr>
@@ -366,7 +406,7 @@ function DataTable({
                   className={`border-b border-slate-100 hover:bg-blue-50/50 transition-colors
                     ${drilldown ? 'cursor-pointer' : ''}`}
                 >
-                  {columns.map((col) => (
+                  {visibleColumns.map((col) => (
                     <td
                       key={col.key}
                       className={`px-3 py-2 ${col.align === 'right' ? 'text-right' : ''}`}
@@ -474,6 +514,106 @@ function NavigationBar({
         ))}
       </div>
     </div>
+  );
+}
+
+// ============================================================
+// TablePageWithSavedView — bridges DataTable internal state with
+// the per-user saved view primitive (Tier A #2).
+// ============================================================
+
+function TablePageWithSavedView(props: {
+  pageId: string;
+  columns: ColumnDef[];
+  data: Record<string, unknown>[];
+  filters: FilterDef[];
+  drilldown?: DrilldownDef;
+  columnMasks: Record<string, string>;
+  meta?: PageMeta;
+  onRowClick?: (row: Record<string, unknown>) => void;
+}) {
+  // Read ?view=<id> once at mount; subsequent applyView updates the URL
+  // via history.replaceState so no router dep is needed.
+  const initialViewId = useMemo(() => {
+    if (typeof window === 'undefined') return undefined;
+    return new URLSearchParams(window.location.search).get('view') || undefined;
+  }, []);
+
+  const sv = useSavedView({ pageId: props.pageId, initialViewId });
+
+  // Mirror live ConfigEngine state up so SavedViewBar can persist via
+  // saveAsView / updateActiveView.
+  const [liveState, setLiveState] = useState<{
+    sortKey: string;
+    sortDir: 'asc' | 'desc';
+    filterValues: Record<string, string>;
+    hiddenCols: string[];
+  }>({ sortKey: '', sortDir: 'asc', filterValues: {}, hiddenCols: [] });
+
+  const liveConfig: SavedViewConfig = useMemo(() => ({
+    filters: Object.entries(liveState.filterValues)
+      .filter(([, v]) => v && v !== 'All')
+      .map(([field, value]) => ({ field, op: 'eq', value })),
+    sort: liveState.sortKey
+      ? { col: liveState.sortKey, dir: liveState.sortDir }
+      : undefined,
+    hidden_cols: liveState.hiddenCols.length ? liveState.hiddenCols : undefined,
+  }), [liveState]);
+
+  // Mirror activeView ↔ URL
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (sv.activeView) url.searchParams.set('view', sv.activeView.view_id);
+    else url.searchParams.delete('view');
+    window.history.replaceState({}, '', url.toString());
+  }, [sv.activeView]);
+
+  // Materialize active view config → DataTable initial props
+  const initialFromView = useMemo(() => {
+    const cfg = sv.activeView?.config_json;
+    if (!cfg) return { sort: undefined, filters: undefined, hidden: undefined };
+    const filterValues: Record<string, string> = {};
+    for (const f of cfg.filters || []) {
+      if (f.op === 'eq') filterValues[f.field] = f.value;
+    }
+    return {
+      sort: cfg.sort,
+      filters: filterValues,
+      hidden: cfg.hidden_cols || [],
+    };
+  }, [sv.activeView]);
+
+  return (
+    <>
+      <SavedViewBar
+        views={sv.views}
+        active={sv.activeView}
+        loading={sv.loading}
+        currentConfig={liveConfig}
+        onApply={sv.applyView}
+        onClear={sv.clearActive}
+        onSaveAs={(name, cfg, isDefault) => sv.saveAsView(name, cfg, isDefault).then(() => undefined)}
+        onUpdateActive={sv.updateActiveView}
+        onRename={sv.renameView}
+        onSetDefault={sv.setDefault}
+        onDelete={sv.deleteView}
+      />
+      <DataTable
+        key={sv.activeView?.view_id || 'no-view'}
+        columns={props.columns}
+        data={props.data}
+        filters={props.filters}
+        drilldown={props.drilldown}
+        columnMasks={props.columnMasks}
+        meta={props.meta}
+        onRowClick={props.onRowClick}
+        initialSort={initialFromView.sort}
+        initialFilters={initialFromView.filters}
+        initialHiddenCols={initialFromView.hidden}
+        onStateChange={setLiveState}
+      />
+    </>
   );
 }
 
@@ -656,7 +796,8 @@ export function ConfigEngine({ initialPageId }: { initialPageId?: string } = {})
           )}
 
           {current.config.layout === 'table' && current.config.columns && (
-            <DataTable
+            <TablePageWithSavedView
+              pageId={current.pageId}
               columns={current.config.columns}
               data={current.data}
               filters={current.config.filters || []}

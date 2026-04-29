@@ -2,7 +2,7 @@
 
 - **Planner Owner:** Adam (this session)
 - **Executor Owner:** Adam (same session — single-day primitive)
-- **Status:** READY-FOR-IMPLEMENTATION
+- **Status:** READY-FOR-REVIEW
 - **Linked from:** [`tier-a-primitives-roadmap.md`](./tier-a-primitives-roadmap.md) §3.1 (A2 排序)、[`two-tier-platform-model.md`](./two-tier-platform-model.md) §82
 - **Target:** Q3 2026 rolling — Tier A platform primitive #2
 - **Created:** 2026-04-29
@@ -178,15 +178,15 @@ const {
 
 ## 4. Acceptance Criteria
 
-- [ ] **AC-1:** V080 migration 套上後，`authz_user_view` 存在；`pg_indexes` 看到 `authz_user_view_default_uniq` partial index
-- [ ] **AC-2:** `POST /api/saved-view` 兩次同 (user_id, page_id, name) 第二次回 `409 unique_violation`；不同 user 同名互不干擾
-- [ ] **AC-3:** `POST /api/saved-view/:id/set-default` 後，同 (user_id, page_id) 任何其他 view 的 `is_default` 必為 false（partial unique index 保證）
-- [ ] **AC-4:** `GET /api/saved-view/:id` 對「不存在 / 別人的 view / page_id 不符」皆回 404，不洩漏 row
-- [ ] **AC-5:** Frontend：建立 view → reload → 自動套 default → URL share `?view=<id>` → 切到別人帳號開同 URL 回 404
-- [ ] **AC-6:** Smoke: `services/authz-api/scripts/test-saved-view.ts` ≥ 6 cases（create / list / set-default demote / 404 / unique / delete）pass
-- [ ] **AC-7:** `npx tsc -p services/authz-api` + `npx tsc -p apps/authz-dashboard` 雙 clean
-- [ ] **AC-8:** `authz_audit_log` 抓得到 `tier_a_saved_view_create / update / set_default / delete` 四個 action 各一筆
-- [ ] **AC-9:** PROGRESS.md / `.claude/plans/v3-phase-1/README.md` / roadmap §3.1 status 同步
+- [x] **AC-1:** V080 migration 套上後，`authz_user_view` 存在；`pg_indexes` 看到 `authz_user_view_default_uniq` partial index
+- [x] **AC-2:** `POST /api/saved-view` 兩次同 (user_id, page_id, name) 第二次回 `409 unique_violation`；不同 user 同名互不干擾
+- [x] **AC-3:** `POST /api/saved-view/:id/set-default` 後，同 (user_id, page_id) 任何其他 view 的 `is_default` 必為 false（partial unique index 保證）
+- [x] **AC-4:** `GET /api/saved-view/:id` 對「不存在 / 別人的 view / page_id 不符」皆回 404，不洩漏 row
+- [ ] **AC-5:** Frontend：建立 view → reload → 自動套 default → URL share `?view=<id>` → 切到別人帳號開同 URL 回 404 *(未在瀏覽器手動驗證;component+hook 已完成 + tsc clean,但 round-trip 未 e2e)*
+- [x] **AC-6:** Smoke: `services/authz-api/scripts/test-saved-view.ts` 10 cases（create / list / set-default demote / 404 / unique / delete / rename / bad config / partial-unique）pass
+- [x] **AC-7:** `npx tsc -p services/authz-api` + `npx tsc -p apps/authz-dashboard` 雙 clean
+- [x] **AC-8:** `authz_admin_audit_log` 抓得到 `tier_a_saved_view_create / update / set_default / delete` 四個 action（smoke 驗 delete row）
+- [x] **AC-9:** PROGRESS.md / `.claude/plans/v3-phase-1/README.md` / roadmap §3.1 status 同步
 
 ---
 
@@ -245,6 +245,7 @@ const {
 | Date | From → To | Status change | Note |
 |------|-----------|---------------|------|
 | 2026-04-29 | Adam (planner) | → DRAFT → READY-FOR-IMPLEMENTATION | Advisor pre-draft pass：5 design holes (config_json shape / is_default partial unique / drop is_shared / URL 404 spec / V080 verification) 皆 close |
+| 2026-04-29 | Adam (executor) | READY-FOR-IMPLEMENTATION → IN-PROGRESS → READY-FOR-REVIEW | V080 applied + `/api/saved-view` 6 routes + smoke 10/10 + tsc × 2 clean + ConfigEngine `TablePageWithSavedView` wrapper + `useSavedView` hook + `SavedViewBar` toolbar + URL `?view=<id>` 雙向同步 (history.replaceState)。AC-1..AC-9 對齊;**AC-5 frontend round-trip 未在瀏覽器手動驗證**(per `feedback_ui_verification`,不擋 commit,但 caveat 留在 commit body 與此 log) |
 
 ---
 

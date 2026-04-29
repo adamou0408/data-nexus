@@ -762,6 +762,45 @@ export const api = {
     request<WorkflowDecisionResponse>(`/workflow/${request_id}/reject`, {
       method: 'POST', body: JSON.stringify({ note }),
     }),
+
+  // Tier A primitive #2: per-user saved view (V080 + /api/saved-view)
+  savedViewList: (page_id: string) =>
+    request<{ views: SavedView[] }>(`/saved-view?page_id=${encodeURIComponent(page_id)}`),
+  savedViewGet: (view_id: string, page_id?: string) => {
+    const q = page_id ? `?page_id=${encodeURIComponent(page_id)}` : '';
+    return request<{ view: SavedView }>(`/saved-view/${encodeURIComponent(view_id)}${q}`);
+  },
+  savedViewCreate: (params: { page_id: string; name: string; config_json: SavedViewConfig; is_default?: boolean }) =>
+    request<{ view: SavedView }>(`/saved-view`, { method: 'POST', body: JSON.stringify(params) }),
+  savedViewUpdate: (view_id: string, params: { name?: string; config_json?: SavedViewConfig }) =>
+    request<{ view: SavedView }>(`/saved-view/${encodeURIComponent(view_id)}`, {
+      method: 'PATCH', body: JSON.stringify(params),
+    }),
+  savedViewSetDefault: (view_id: string) =>
+    request<{ view: SavedView }>(`/saved-view/${encodeURIComponent(view_id)}/set-default`, {
+      method: 'POST',
+    }),
+  savedViewDelete: (view_id: string) =>
+    request<{ status: string; view_id: string }>(`/saved-view/${encodeURIComponent(view_id)}`, {
+      method: 'DELETE',
+    }),
+};
+
+export type SavedViewConfig = {
+  filters?: { field: string; op: string; value: string }[];
+  sort?: { col: string; dir: 'asc' | 'desc' };
+  hidden_cols?: string[];
+};
+
+export type SavedView = {
+  view_id: string;
+  user_id: string;
+  page_id: string;
+  name: string;
+  config_json: SavedViewConfig;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 export type WorkflowChainStep = { step: number; role: string; label?: string };

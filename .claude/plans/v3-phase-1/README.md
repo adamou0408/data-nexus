@@ -77,7 +77,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | sink-as-node-kind-plan | Adam (this session) | **DONE** (2026-04-29：page sink MVP 落地、smoke 10/10 + e2e 4/4、advisor 三 blocker 修完;api/cron sink kind 延到 Q4 統一處理) | Q3 2026 rolling |
 | help-text-primitive-plan | Adam (this session) | **DONE** (2026-04-29：JSONB-only column+filter help_text + HelpIcon + 4 demo seed + tsc×2 clean;page-level + DAG inspector 顯式 defer;FIX commit 補 stopPropagation + visibility caveat) | Q3 2026 rolling |
 | tier-a-primitives-roadmap | Adam (this session) | **ROADMAP** (2026-04-29：6 項 Tier A 排序 + per-decision 評估;D reference 既有 plan、E deferred、A4/C gated) | 持續 — 每個 primitive 完工後 re-audit |
-| tier-a-saved-view-plan | Adam (this session) | **READY-FOR-IMPLEMENTATION** (2026-04-29：advisor pre-draft 5 design holes 全 close — config_json shape / is_default partial unique / drop is_shared / URL 404 / V080 verified) | Q3 2026 rolling — A2 |
+| tier-a-saved-view-plan | Adam (this session) | **READY-FOR-REVIEW** (2026-04-29：V080 applied + 6 routes + smoke 10/10 + tsc×2 clean + ConfigEngine `TablePageWithSavedView` wrapper + URL `?view=<id>` 雙向同步;**AC-5 frontend round-trip 未在瀏覽器手動驗證**) | Q3 2026 rolling — A2 |
 
 **Status legend:** STUB → draft → in-progress → ready-for-review → approved
 
