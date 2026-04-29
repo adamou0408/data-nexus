@@ -50,12 +50,13 @@
 - [x] **COMPOSER-OPERATOR-V01 AC-7/AC-8 verified** — AC-7:filter operator 跑完寫 1 條 `dag_op_filter` audit row(`authz_audit_batch_insert` 1000ms TTL flush 後可見、actor=`group:SYSADMINS`、target_resource 繼承上游 fn)。AC-8:save→reload roundtrip,5 nodes(3 fn + 2 op)+ 4 edges 完全還原,`op_kind`/`op_config` 在 `attributes.nodes[*].data` 內持久化(2026-04-28)。
 - [x] **COMPOSER-AGG-V01 (aggregator operator)** — 第四個 composer-native operator kind 落地。Backend `services/authz-api/src/lib/dag-operators.ts` 加 `aggregate` branch:支援 `group_by[]` + `aggregations: {fn:'sum'|'count'|'min'|'max'|'avg', column, alias?}[]`;SQL NULL semantics(skip nulls,all-null group → null,count(*)/count(col) 不算 null);type inference: count→bigint、avg→numeric、sum/min/max→inherit upstream pgType。Frontend `apps/authz-dashboard/src/components/DagTab.tsx` 加 `OpKind='aggregate'` + `OpConfig.aggregate` variant + amber Σ palette button + `OperatorInspector` aggregate 分支(group_by add/remove + aggregations row editor 含 fn dropdown / column dropdown / alias input);node summary `by col1,col2 | sum(x), count(*)` 自說明。Authz 模型同其他 operator(繼承上游 fn ancestor)。Smoke `services/authz-api/agg-smoke.ts` 7/7 pass(group-by 1 col + sum、all-null 群組 sum=null、group-by 2 cols + count+avg + 型別推斷、no group-by 1-row 全集計、empty aggregations throws)。TS 兩 service clean、vite build 9.41s。Plan 對齊 `.claude/plans/v3-phase-1/composer-operator-and-sink.md` operator-as-platform-primitive 主軸,擋 `authz_resource` catalog bloat。
 
-**下一個 sprint 候選**(not commit yet):
+**下一個 sprint 候選**(not commit yet) — **Tier A 統一排序見 [`.claude/plans/v3-phase-1/tier-a-primitives-roadmap.md`](../.claude/plans/v3-phase-1/tier-a-primitives-roadmap.md)**:
 - ~~A) ICON_MAP / STATUS_COLORS 動態化~~ ✅ done (RENDER-TOKEN-01, 2026-04-26)
 - ~~B) `help_text` primitive~~ ✅ done (HELP-TEXT-V01, 2026-04-29)
-- C) business_term-driven column mask 自動化 (Tier A,depends on V044,1 週)
-- D) default-by-convention permission preset (Tier A,1-2 週)
-- E) page-level help_text / `description` 收編(若驗證後決定不再用 description 當 subtitle)
+- **下一動作:Tier A roadmap §2.1 排序第 #2 = saved_view (~1 週,Q3 2026 後段)**;#1 default-perm pilot 已獨立 IN-PROGRESS plan
+- C) business_term-driven column mask 自動化 — **gated**(blessed_term ≥ 10 才開,目前 = 0)
+- E) page-level help_text — **deferred**(help_text plan §2,trigger 條件見 roadmap §3.6)
+- A4 subscription — **gated**(named consumer ≥ 2-3 才開,Q1 2027 預留)
 
 ### Hard gates(only these warrant phase-style guarding — everything else is pure additive)
 
