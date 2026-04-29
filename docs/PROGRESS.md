@@ -57,8 +57,8 @@
 - ~~A) ICON_MAP / STATUS_COLORS 動態化~~ ✅ done (RENDER-TOKEN-01, 2026-04-26)
 - ~~B) `help_text` primitive~~ ✅ done (HELP-TEXT-V01, 2026-04-29)
 - ~~A2) `saved_view` primitive~~ ✅ done (SAVED-VIEW-V01, 2026-04-29 — V080 + 6 routes + ConfigEngine wrap + URL `?view=<id>`;AC-5 browser e2e 未驗證 caveat)
-- ~~A3) `feedback` primitive~~ ✅ done (FEEDBACK-V01, 2026-04-29 — V082 + 4 routes + FeedbackButton 浮動 UI;AC-7 browser e2e 未驗證 caveat;Curator Inbox tab 切 FU commit `FEEDBACK-V01-INBOX-FU`)
-- **下一動作:** 兩條候選 — (a) **Curator Inbox FU commit** — 把 `/api/feedback/inbox` API 包成 dashboard tab (list / status filter / triage actions),完成 Curator-side 閉環;(b) **A4 subscription gated → 找 named consumer** 或 **C business_term mask gated → blessed_term 補 ≥10**(roadmap §2.1 排序);#1 default-perm pilot 已獨立 IN-PROGRESS plan
+- ~~A3) `feedback` primitive~~ ✅ done (FEEDBACK-V01, 2026-04-29 — V082 + 4 routes + FeedbackButton 浮動 UI + Curator Inbox tab `FEEDBACK-V01-INBOX-FU`;AC-7 browser e2e 未驗證 caveat)
+- **下一動作:** **A4 subscription gated → 找 named consumer**(可從 Curator Inbox 觀察是否有 page 的 feedback 反覆出現,推導 subscribe 需求)或 **C business_term mask gated → blessed_term 補 ≥10**(roadmap §2.1 排序);#1 default-perm pilot 已獨立 IN-PROGRESS plan
 - C) business_term-driven column mask 自動化 — **gated**(blessed_term ≥ 10 才開,目前 = 0)
 - E) page-level help_text — **deferred**(help_text plan §2,trigger 條件見 roadmap §3.6)
 - A4 subscription — **gated**(named consumer ≥ 2-3 才開,Q1 2027 預留)

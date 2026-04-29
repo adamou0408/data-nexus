@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronsLeft, ChevronsRight, LogOut, Loader2, User,
   Menu, X, Code2, Layers, BarChart3,
   Users, ShieldCheck, KeyRound, FolderTree,
-  Settings2, Boxes, Workflow, Search, Zap, Sparkles,
+  Settings2, Boxes, Workflow, Search, Zap, Sparkles, Inbox,
 } from 'lucide-react';
 
 export type TabId =
@@ -14,6 +14,7 @@ export type TabId =
   | 'tables' | 'raw-tables' | 'metabase' | 'data-query' | 'flow-composer'
   | 'access-resources' | 'access-policies' | 'pool' | 'modules' | 'discover'
   | 'access-subjects' | 'access-roles' | 'access-actions' | 'audit'
+  | 'feedback-inbox'
   | 'ai-providers'
   | 'config-tools'
   | 'auto-page';   // BU-08 schema-driven UI preview slot (no sidebar entry)
@@ -81,7 +82,8 @@ const navGroups: NavGroup[] = [
   {
     label: 'Observe',
     items: [
-      { id: 'audit', label: 'Audit Log', icon: <FileText size={18} />, adminOnly: true, alertKey: 'audit' },
+      { id: 'audit',          label: 'Audit Log',      icon: <FileText size={18} />, adminOnly: true, alertKey: 'audit' },
+      { id: 'feedback-inbox', label: 'Feedback Inbox', icon: <Inbox size={18} />,    adminOnly: true, shortcut: 'g i' },
     ],
   },
 ];

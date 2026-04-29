@@ -14,6 +14,7 @@ import { DataQueryTab } from './components/DataQueryTab';
 import { DagTab } from './components/DagTab';
 import { DiscoverTab } from './components/DiscoverTab';
 import { AIProvidersTab } from './components/AIProvidersTab';
+import { FeedbackInboxTab } from './components/FeedbackInboxTab';
 import { ConfigToolsTab } from './components/ConfigToolsTab';
 import { CommandPalette } from './components/CommandPalette';
 import { X } from 'lucide-react';
@@ -54,6 +55,7 @@ function AppInner() {
       'pool', 'audit', 'raw-tables', 'discover',
       'access-subjects', 'access-roles', 'access-resources', 'access-policies', 'access-actions',
       'ai-providers',
+      'feedback-inbox',
       'config-tools',
     ];
     if (adminTabs.includes(tab) && !isAdmin) {
@@ -167,6 +169,7 @@ function AppInner() {
       {accessSection && <AccessSectionPage key={accessSection} section={accessSection} />}
       {tab === 'ai-providers' && <AIProvidersTab />}
       {tab === 'audit' && <ConfigEngine initialPageId="audit_home" />}
+      {tab === 'feedback-inbox' && <FeedbackInboxTab />}
 
       <CommandPalette
         open={paletteOpen}
