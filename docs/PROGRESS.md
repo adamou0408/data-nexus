@@ -53,7 +53,7 @@
 **下一個 sprint 候選**(not commit yet) — **Tier A 統一排序見 [`.claude/plans/v3-phase-1/tier-a-primitives-roadmap.md`](../.claude/plans/v3-phase-1/tier-a-primitives-roadmap.md)**:
 - ~~A) ICON_MAP / STATUS_COLORS 動態化~~ ✅ done (RENDER-TOKEN-01, 2026-04-26)
 - ~~B) `help_text` primitive~~ ✅ done (HELP-TEXT-V01, 2026-04-29)
-- **下一動作:Tier A roadmap §2.1 排序第 #2 = saved_view (~1 週,Q3 2026 後段)**;#1 default-perm pilot 已獨立 IN-PROGRESS plan
+- **下一動作:Tier A roadmap §2.1 排序第 #2 = saved_view** — sub-plan `.claude/plans/v3-phase-1/tier-a-saved-view-plan.md` READY-FOR-IMPLEMENTATION (2026-04-29);V080 `authz_user_view` + `/api/saved-view` CRUD + ConfigEngine `useSavedView` hook + URL `?view=<id>`;#1 default-perm pilot 已獨立 IN-PROGRESS plan
 - C) business_term-driven column mask 自動化 — **gated**(blessed_term ≥ 10 才開,目前 = 0)
 - E) page-level help_text — **deferred**(help_text plan §2,trigger 條件見 roadmap §3.6)
 - A4 subscription — **gated**(named consumer ≥ 2-3 才開,Q1 2027 預留)
