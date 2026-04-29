@@ -5,7 +5,7 @@ import { TablesPanel } from './TablesPanel';
 import { AccessPanel } from './AccessPanel';
 import { MetadataGrid } from '../shared/MetadataGrid';
 import { DangerConfirmModal, ConfirmState } from '../shared/DangerConfirmModal';
-import { Loader2, Trash2, Pencil, FolderPlus, ChevronRight, Code2 } from 'lucide-react';
+import { Loader2, Trash2, Pencil, FolderPlus, ChevronRight, Code2, FileText } from 'lucide-react';
 import { EmptyState } from '../shared/atoms/EmptyState';
 import { ModuleFormModal } from './ModuleFormModal';
 
@@ -96,6 +96,7 @@ export function ModuleDetail({
   const sectionDataCount: Record<string, number> = {
     tables: children.tables.length,
     functions: children.functions?.length ?? 0,
+    pages: children.pages?.length ?? 0,
     access: access.length,
     profiles: profiles.length,
   };
@@ -225,6 +226,42 @@ export function ModuleDetail({
                       </td>
                       <td className="py-2 pr-3 font-mono text-slate-600">{f.schema || '—'}</td>
                       <td className="py-2 pr-3 font-mono text-slate-600">{f.data_source_id || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+        {subTab === 'pages' && (
+          (children.pages?.length ?? 0) === 0 ? (
+            <EmptyState icon={<FileText size={32} />} message="No saved pages under this module yet — save a DAG snapshot via Composer to populate." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 text-left text-slate-500">
+                    <th className="pb-2 font-medium">Page</th>
+                    <th className="pb-2 font-medium">Page ID</th>
+                    <th className="pb-2 font-medium">Source DAG</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {children.pages.map(p => (
+                    <tr
+                      key={p.resource_id}
+                      className="border-b border-slate-100 hover:bg-blue-50/50 cursor-pointer transition-colors"
+                      onClick={() => window.dispatchEvent(new CustomEvent('open-auto-page', { detail: { page_id: p.page_id } }))}
+                      title="Open page snapshot"
+                    >
+                      <td className="py-2 pr-3">
+                        <div className="flex items-center gap-1.5">
+                          <FileText size={12} className="text-blue-600" />
+                          <span className="font-medium text-slate-800">{p.display_name}</span>
+                        </div>
+                      </td>
+                      <td className="py-2 pr-3 font-mono text-slate-600">{p.page_id}</td>
+                      <td className="py-2 pr-3 font-mono text-slate-600">{p.dag_id || '—'}</td>
                     </tr>
                   ))}
                 </tbody>

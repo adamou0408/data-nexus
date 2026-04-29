@@ -185,6 +185,19 @@ modulesRouter.get('/:id/details', async (req, res) => {
       ORDER BY r.display_name
     `, [moduleId]);
 
+    // V081: Direct child pages (sink-as-authz_resource Tier B artifacts).
+    // page_id stripped from resource_id ('page:<id>' → '<id>') so frontend
+    // can dispatch open-auto-page directly without re-parsing.
+    const childPages = await pool.query(`
+      SELECT r.resource_id, r.display_name,
+        r.attributes->>'page_id' AS page_id,
+        r.attributes->>'dag_id'  AS dag_id,
+        r.attributes->>'node_id' AS node_id
+      FROM authz_resource r
+      WHERE r.parent_id = $1 AND r.resource_type = 'page' AND r.is_active = TRUE
+      ORDER BY r.display_name
+    `, [moduleId]);
+
     // Access summary: which roles have permissions on this module
     const access = await pool.query(`
       SELECT rp.role_id, ro.display_name AS role_name, rp.action_id, rp.effect
@@ -234,6 +247,7 @@ modulesRouter.get('/:id/details', async (req, res) => {
         modules: childModules.rows.map(r => ({ ...r, table_count: Number(r.table_count) })),
         tables: childTables.rows.map(r => ({ ...r, column_count: Number(r.column_count) })),
         functions: childFunctions.rows,
+        pages: childPages.rows,
       },
       access: Object.values(accessByRole),
       profiles: profiles.rows,

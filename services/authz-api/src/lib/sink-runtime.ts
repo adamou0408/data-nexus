@@ -1,5 +1,6 @@
 // ============================================================
-// Composer sink runtime (sink-as-node-kind plan §3.3).
+// Composer sink runtime (sink-as-node-kind plan §3.3 +
+// sink-as-authz_resource plan).
 //
 // MVP supports sink_kind='page' only. The page handler is a refactor of
 // the inline body that used to live in dagRouter.post('/save-as-page'),
@@ -9,13 +10,21 @@
 //   2. Future sink_kind values (api / scheduled_job / alert) plug in as
 //      additional handler modules without touching the page path
 //
+// V081 dual-write:
+//   emitPageSnapshot now writes both authz_ui_page (Tier B snapshot
+//   table) AND authz_resource(resource_type='page') in a single tx.
+//   Why: bridges the two-tree gap so saved pages show up in
+//   ModulesTab + inherit V070 cascade + V079 cascade_policy without a
+//   separate primitive. parent_id derivation lives in
+//   derivePageParentResource (mirrors dag's parent_id, falls back to
+//   module:pg_tiptop_v1 when DAG is orphan).
+//
 // Deliberately *not* introduced here:
 //   - Server-side upstream re-execution (snapshot is "what the Curator
 //     just saw", not "what's fresh now"); the always-fresh contract is a
 //     separate Refresh-sink feature, see plan §3.3 rationale.
-//   - sink-as-authz_resource (deferred to saved_view sub-plan, Q4 2026).
 // ============================================================
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 
 export const PAGE_ID_RE = /^[a-z][a-z0-9_]*$/;
 
@@ -24,6 +33,8 @@ const RENDER_BY_SEMANTIC: Record<string, string> = {
   phase: 'phase_tag',
   gate: 'gate_badge',
 };
+
+const FALLBACK_PAGE_PARENT = 'module:pg_tiptop_v1';
 
 export interface PageSinkInput {
   page_id: string;
@@ -44,6 +55,8 @@ export interface PageSinkResult {
   page_id: string;
   row_count: number;
   column_count: number;
+  authz_resource_id: string;
+  authz_parent_id: string;
 }
 
 export class SinkValidationError extends Error {
@@ -56,10 +69,36 @@ export class SinkValidationError extends Error {
   }
 }
 
+// ── derivePageParentResource (V081) ──
+// Returns the authz_resource.parent_id to attach to the new
+// 'page:'+page_id row. Walk order:
+//   1. dag_id → authz_resource(resource_type='dag').parent_id
+//      (the page lives "under the same module as its DAG")
+//   2. fallback FALLBACK_PAGE_PARENT
+//
+// Why dag.parent_id and not deriveSinkUpstreamFn → fn.parent_id:
+//   The DAG itself is the authz boundary the user already navigated.
+//   Inheriting from dag.parent_id keeps page-vs-dag siblings under the
+//   same module. fn.parent_id may point at db_schema (deeper) which
+//   would scatter saved pages across schemas instead of grouping them.
+export async function derivePageParentResource(
+  client: PoolClient | Pool,
+  dag_id: string,
+): Promise<string> {
+  const r = await client.query(
+    `SELECT parent_id FROM authz_resource
+      WHERE resource_id = $1 AND resource_type = 'dag'`,
+    [dag_id]
+  );
+  const parent = r.rows[0]?.parent_id;
+  return (parent && typeof parent === 'string') ? parent : FALLBACK_PAGE_PARENT;
+}
+
 // ── Page snapshot handler ──
-// Writes (or overwrites) one row in authz_ui_page. Caller is responsible
-// for L0 gating + authz inheritance check; this function only validates
-// shape and performs the persistence.
+// Writes (or overwrites) one row in authz_ui_page AND mirrors it as a
+// authz_resource(resource_type='page') row inside the same tx.
+// Caller is responsible for L0 gating + authz inheritance check;
+// this function only validates shape and performs the persistence.
 export async function emitPageSnapshot(
   pool: Pool,
   input: PageSinkInput,
@@ -78,28 +117,6 @@ export async function emitPageSnapshot(
   }
   if (!dag_id.startsWith('dag:')) {
     throw new SinkValidationError('dag_id must start with "dag:"');
-  }
-
-  if (parent_page_id) {
-    const pCheck = await pool.query(
-      `SELECT 1 FROM authz_ui_page WHERE page_id = $1`,
-      [parent_page_id]
-    );
-    if (pCheck.rowCount === 0) {
-      throw new SinkValidationError(`parent_page_id not found: ${parent_page_id}`);
-    }
-  }
-
-  const exists = await pool.query(
-    `SELECT 1 FROM authz_ui_page WHERE page_id = $1`,
-    [page_id]
-  );
-  if (exists.rowCount && !overwrite) {
-    throw new SinkValidationError(
-      'page_id already exists',
-      409,
-      'Pass overwrite:true to replace the existing snapshot.',
-    );
   }
 
   const normalizedColumns = columns.map((c) => ({
@@ -123,28 +140,104 @@ export async function emitPageSnapshot(
     },
   };
 
-  if (exists.rowCount && overwrite) {
-    await pool.query(
-      `UPDATE authz_ui_page
-          SET title = $2,
-              parent_page_id = $3,
-              description = $4,
-              snapshot_data = $5::jsonb,
-              is_active = TRUE
-        WHERE page_id = $1`,
-      [page_id, title, parent_page_id || null, description || null, JSON.stringify(snapshotData)]
-    );
-    return { status: 'overwritten', page_id, row_count: rows.length, column_count: columns.length };
-  }
+  const authzResourceId = `page:${page_id}`;
 
-  await pool.query(
-    `INSERT INTO authz_ui_page
-       (page_id, title, layout, parent_page_id, description, icon,
-        snapshot_data, is_active)
-     VALUES ($1, $2, 'table', $3, $4, 'database', $5::jsonb, TRUE)`,
-    [page_id, title, parent_page_id || null, description || null, JSON.stringify(snapshotData)]
-  );
-  return { status: 'created', page_id, row_count: rows.length, column_count: columns.length };
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    if (parent_page_id) {
+      const pCheck = await client.query(
+        `SELECT 1 FROM authz_ui_page WHERE page_id = $1`,
+        [parent_page_id]
+      );
+      if (pCheck.rowCount === 0) {
+        throw new SinkValidationError(`parent_page_id not found: ${parent_page_id}`);
+      }
+    }
+
+    const exists = await client.query(
+      `SELECT 1 FROM authz_ui_page WHERE page_id = $1`,
+      [page_id]
+    );
+    if (exists.rowCount && !overwrite) {
+      throw new SinkValidationError(
+        'page_id already exists',
+        409,
+        'Pass overwrite:true to replace the existing snapshot.',
+      );
+    }
+
+    const authzParentId = await derivePageParentResource(client, dag_id);
+    const authzAttributes = {
+      page_id,
+      origin_kind: 'dag',
+      dag_id,
+      node_id,
+    };
+
+    let status: 'created' | 'overwritten';
+    if (exists.rowCount && overwrite) {
+      await client.query(
+        `UPDATE authz_ui_page
+            SET title = $2,
+                parent_page_id = $3,
+                description = $4,
+                snapshot_data = $5::jsonb,
+                is_active = TRUE
+          WHERE page_id = $1`,
+        [page_id, title, parent_page_id || null, description || null, JSON.stringify(snapshotData)]
+      );
+      status = 'overwritten';
+    } else {
+      await client.query(
+        `INSERT INTO authz_ui_page
+           (page_id, title, layout, parent_page_id, description, icon,
+            snapshot_data, is_active)
+         VALUES ($1, $2, 'table', $3, $4, 'database', $5::jsonb, TRUE)`,
+        [page_id, title, parent_page_id || null, description || null, JSON.stringify(snapshotData)]
+      );
+      status = 'created';
+    }
+
+    // ── Mirror into authz_resource(resource_type='page') ──
+    // Upsert so overwrite path also keeps mirror row in sync (parent_id
+    // may move if the DAG was reparented since last save).
+    await client.query(
+      `INSERT INTO authz_resource
+         (resource_id, resource_type, parent_id, display_name, attributes, is_active)
+       VALUES ($1, 'page', $2, $3, $4::jsonb, TRUE)
+       ON CONFLICT (resource_id) DO UPDATE
+         SET parent_id    = EXCLUDED.parent_id,
+             display_name = EXCLUDED.display_name,
+             attributes   = EXCLUDED.attributes,
+             is_active    = TRUE`,
+      [authzResourceId, authzParentId, title, JSON.stringify(authzAttributes)]
+    );
+
+    await client.query('COMMIT');
+
+    // module_tree_stats refresh is best-effort outside tx — caller may
+    // also trigger via /api/modules; failing here must not 500 the sink.
+    pool.query('SELECT refresh_module_tree_stats()').catch((e) => {
+      // eslint-disable-next-line no-console
+      console.warn('[sink-runtime] refresh_module_tree_stats failed:', e?.message);
+    });
+
+    return {
+      status,
+      page_id,
+      row_count: rows.length,
+      column_count: columns.length,
+      authz_resource_id: authzResourceId,
+      authz_parent_id: authzParentId,
+    };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ── Authz derivation: sink inherits upstream fn ancestor's resource_id ──
