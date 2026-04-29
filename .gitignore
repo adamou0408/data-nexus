@@ -37,6 +37,10 @@ build/
 *.csv
 *.json.local
 
+# DB backups (pg_dump custom format dumps from `make backup`)
+/backups/
+*.dump
+
 # Logs
 logs/
 *.log

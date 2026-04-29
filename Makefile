@@ -11,6 +11,7 @@ COMPOSE_ALL := docker compose -f deploy/docker-compose/docker-compose.yml -f dep
 
 .PHONY: help up down restart status logs \
         db-reset db-psql db-migrate db-seed db-shell pgaudit-swap \
+        backup restore \
         verify clean dev dev-api dev-ui \
         up-ldap down-ldap ldap-up ldap-down ldap-sync \
         metabase-up metabase-down up-all down-all clean-all
@@ -95,6 +96,17 @@ db-roles: ## List all authz roles
 
 db-users: ## List all authz subjects
 	@$(PSQL) -c "SELECT subject_id, subject_type, display_name FROM authz_subject ORDER BY subject_id;"
+
+# ── Backup / Restore ─────────────────────────────────────────
+
+backup: ## Dump nexus_authz + nexus_data to backups/ (retains last 7 each)
+	bash scripts/backup-db.sh
+
+restore: ## Restore a dump (usage: make restore DB=nexus_authz FILE=backups/nexus_authz-YYYYMMDD-HHMMSS.dump)
+	@if [ -z "$(DB)" ] || [ -z "$(FILE)" ]; then \
+		echo "Usage: make restore DB=<nexus_authz|nexus_data> FILE=<path-to-dump>"; exit 1; \
+	fi
+	bash scripts/restore-db.sh $(DB) $(FILE)
 
 # ── Verification ─────────────────────────────────────────────
 
