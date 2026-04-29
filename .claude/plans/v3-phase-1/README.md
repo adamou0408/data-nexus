@@ -44,6 +44,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | [`tier-a-saved-view-plan.md`](./tier-a-saved-view-plan.md) | Tier A primitive #2 — `authz_user_view` (per-user × per-page filters/sort/hidden_cols) + URL `?view=<id>` + ConfigEngine 自動套 default |
 | [`sink-as-authz-resource-plan.md`](./sink-as-authz-resource-plan.md) | 從 sink-as-node-kind §2.2 deferred 拆出 — sink page 升為 first-class `authz_resource(resource_type='ui_page')`,讓 ModulesTab 統一渲染、V070 cascade 通用,reload-safe Tier B 入口 |
 | [`tier-a-feedback-plan.md`](./tier-a-feedback-plan.md) | Tier A primitive #3 — `authz_feedback` (per-user × per-page) + 4 routes + `FeedbackButton` 浮動按鈕。User append-only / Curator 4-status triage;v1 page-level only(column/filter v2);Curator Inbox UI 切 FU commit |
+| [`tier-a-business-term-admin-plan.md`](./tier-a-business-term-admin-plan.md) | Tier A gate-prep — V044 `authz_resource` semantic-layer admin tab(business_term/definition/formula/owner + lifecycle blessed→deprecated)。**這是 C primitive 的 gate-prep tooling,不是 C 本身**;C 仍 gated on `blessed_term ≥ 10`,但 raw-SQL friction 移除了 |
 
 ---
 
@@ -82,6 +83,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | tier-a-saved-view-plan | Adam (this session) | **READY-FOR-REVIEW** (2026-04-29：V080 applied + 6 routes + smoke 10/10 + tsc×2 clean + ConfigEngine `TablePageWithSavedView` wrapper + URL `?view=<id>` 雙向同步;**AC-5 frontend round-trip 未在瀏覽器手動驗證**) | Q3 2026 rolling — A2 |
 | sink-as-authz-resource-plan | Adam (planner) → TBD executor | **DRAFT** (2026-04-29：response to Adam's "complete solution, no short-term workaround" request after asking how to find saved snapshot post-reload;golden seed `dag:material_search_fanout` 已 ship 同日) | rolling — close before Q4 2026 Tier B 自助 AC |
 | tier-a-feedback-plan | Adam (this session) | **DONE** (2026-04-29：V082 applied + 4 routes + smoke 10/10 + tsc×2 clean + FeedbackButton 浮動 UI wire 進 `TablePageWithSavedView`;**AC-7 frontend round-trip 未在瀏覽器手動驗證**;Curator Inbox tab UI 切 FU commit `FEEDBACK-V01-INBOX-FU`) | Q3 2026 rolling — A3 |
+| tier-a-business-term-admin-plan | Adam (this session) | **DONE** (2026-04-29：BIZ-TERM-V01 — 4 routes + BusinessTermsTab admin UI + smoke 12/12 pass + tsc×2 clean。**Gate-prep tooling for §3.4 C, not C itself**;raw-SQL friction 移除,blessed_term gate 仍 = 0;**AC-8 frontend round-trip 未在瀏覽器手動驗證** per `feedback_ui_verification`;dev-server tsx-watch reload 不可靠,smoke 跑在 temp port 13099 instance 上) | Q3 2026 rolling — gate-prep |
 
 **Status legend:** STUB → draft → in-progress → ready-for-review → approved
 

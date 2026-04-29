@@ -805,6 +805,26 @@ export const api = {
     request<{ feedback: FeedbackRow }>(`/feedback/${encodeURIComponent(feedback_id)}/status`, {
       method: 'PATCH', body: JSON.stringify({ status }),
     }),
+
+  // Tier A gate-prep: business-term admin (V044 semantic-layer columns).
+  // All routes admin-only — gated at mount in services/authz-api/src/index.ts.
+  businessTermList: (status?: BusinessTermStatus) => {
+    const q = status ? `?status=${encodeURIComponent(status)}` : '';
+    return request<{ rows: BusinessTermRow[] }>(`/business-term${q}`);
+  },
+  businessTermGet: (resource_id: string) =>
+    request<{ row: BusinessTermRow }>(`/business-term/${encodeURIComponent(resource_id)}`),
+  businessTermPatch: (
+    resource_id: string,
+    fields: Partial<Pick<BusinessTermRow, 'business_term' | 'definition' | 'formula' | 'owner_subject_id'>>
+  ) =>
+    request<{ row: BusinessTermRow }>(`/business-term/${encodeURIComponent(resource_id)}`, {
+      method: 'PATCH', body: JSON.stringify(fields),
+    }),
+  businessTermTransition: (resource_id: string, status: BusinessTermStatus) =>
+    request<{ row: BusinessTermRow }>(`/business-term/${encodeURIComponent(resource_id)}/transition`, {
+      method: 'POST', body: JSON.stringify({ status }),
+    }),
 };
 
 export type SavedViewConfig = {
@@ -837,6 +857,21 @@ export type FeedbackRow = {
   status: FeedbackStatus;
   curator_id: string | null;
   resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BusinessTermStatus = 'draft' | 'under_review' | 'blessed' | 'deprecated';
+
+export type BusinessTermRow = {
+  resource_id: string;
+  business_term: string | null;
+  definition: string | null;
+  formula: string | null;
+  owner_subject_id: string | null;
+  status: BusinessTermStatus | null;
+  blessed_at: string | null;
+  blessed_by: string | null;
   created_at: string;
   updated_at: string;
 };

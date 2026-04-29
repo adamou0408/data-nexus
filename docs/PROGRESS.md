@@ -58,8 +58,9 @@
 - ~~B) `help_text` primitive~~ ✅ done (HELP-TEXT-V01, 2026-04-29)
 - ~~A2) `saved_view` primitive~~ ✅ done (SAVED-VIEW-V01, 2026-04-29 — V080 + 6 routes + ConfigEngine wrap + URL `?view=<id>`;AC-5 browser e2e 未驗證 caveat)
 - ~~A3) `feedback` primitive~~ ✅ done (FEEDBACK-V01, 2026-04-29 — V082 + 4 routes + FeedbackButton 浮動 UI + Curator Inbox tab `FEEDBACK-V01-INBOX-FU`;AC-7 browser e2e 未驗證 caveat)
-- **下一動作:** **A4 subscription gated → 找 named consumer**(可從 Curator Inbox 觀察是否有 page 的 feedback 反覆出現,推導 subscribe 需求)或 **C business_term mask gated → blessed_term 補 ≥10**(roadmap §2.1 排序);#1 default-perm pilot 已獨立 IN-PROGRESS plan
-- C) business_term-driven column mask 自動化 — **gated**(blessed_term ≥ 10 才開,目前 = 0)
+- ~~C-prep) `business_term` admin tooling~~ ✅ done (BIZ-TERM-V01, 2026-04-29 — V044 schema + 4 routes + BusinessTermsTab admin UI + smoke 12/12 pass;**這是 gate-prep tooling,不是 C 本身** — C 的 `blessed_term ≥ 10` gate 仍未到;AC-8 browser e2e 未驗證 caveat)
+- **下一動作:** **A4 subscription gated → 找 named consumer** 或 **填 ≥ 10 個 business_term 解鎖 C primitive**(現在有 admin tab 了,raw SQL 不再是 friction);#1 default-perm pilot 已獨立 IN-PROGRESS plan
+- C) business_term-driven column mask 自動化 — **gated**(blessed_term ≥ 10 才開,目前 = 0,但 admin tab 已 ready)
 - E) page-level help_text — **deferred**(help_text plan §2,trigger 條件見 roadmap §3.6)
 - A4 subscription — **gated**(named consumer ≥ 2-3 才開,Q1 2027 預留)
 

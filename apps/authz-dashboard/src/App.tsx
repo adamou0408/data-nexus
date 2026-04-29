@@ -15,6 +15,7 @@ import { DagTab } from './components/DagTab';
 import { DiscoverTab } from './components/DiscoverTab';
 import { AIProvidersTab } from './components/AIProvidersTab';
 import { FeedbackInboxTab } from './components/FeedbackInboxTab';
+import { BusinessTermsTab } from './components/BusinessTermsTab';
 import { ConfigToolsTab } from './components/ConfigToolsTab';
 import { CommandPalette } from './components/CommandPalette';
 import { X } from 'lucide-react';
@@ -56,6 +57,7 @@ function AppInner() {
       'access-subjects', 'access-roles', 'access-resources', 'access-policies', 'access-actions',
       'ai-providers',
       'feedback-inbox',
+      'business-terms',
       'config-tools',
     ];
     if (adminTabs.includes(tab) && !isAdmin) {
@@ -170,6 +172,7 @@ function AppInner() {
       {tab === 'ai-providers' && <AIProvidersTab />}
       {tab === 'audit' && <ConfigEngine initialPageId="audit_home" />}
       {tab === 'feedback-inbox' && <FeedbackInboxTab />}
+      {tab === 'business-terms' && <BusinessTermsTab />}
 
       <CommandPalette
         open={paletteOpen}

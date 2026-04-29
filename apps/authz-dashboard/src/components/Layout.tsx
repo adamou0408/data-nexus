@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronsLeft, ChevronsRight, LogOut, Loader2, User,
   Menu, X, Code2, Layers, BarChart3,
   Users, ShieldCheck, KeyRound, FolderTree,
-  Settings2, Boxes, Workflow, Search, Zap, Sparkles, Inbox,
+  Settings2, Boxes, Workflow, Search, Zap, Sparkles, Inbox, BookOpen,
 } from 'lucide-react';
 
 export type TabId =
@@ -15,6 +15,7 @@ export type TabId =
   | 'access-resources' | 'access-policies' | 'pool' | 'modules' | 'discover'
   | 'access-subjects' | 'access-roles' | 'access-actions' | 'audit'
   | 'feedback-inbox'
+  | 'business-terms'
   | 'ai-providers'
   | 'config-tools'
   | 'auto-page';   // BU-08 schema-driven UI preview slot (no sidebar entry)
@@ -66,6 +67,7 @@ const navGroups: NavGroup[] = [
       { id: 'access-roles',    label: 'Roles',    icon: <KeyRound size={18} />,    adminOnly: true, countKey: 'roles' },
       { id: 'access-actions',  label: 'Actions',  icon: <Zap size={18} />,         adminOnly: true },
       { id: 'access-policies', label: 'Policies', icon: <ShieldCheck size={18} />, adminOnly: true, countKey: 'policies' },
+      { id: 'business-terms',  label: 'Business Terms', icon: <BookOpen size={18} />, adminOnly: true, shortcut: 'g t' },
       { id: 'ai-providers',    label: 'AI Providers', icon: <Sparkles size={18} />, adminOnly: true, shortcut: 'g a' },
     ],
   },

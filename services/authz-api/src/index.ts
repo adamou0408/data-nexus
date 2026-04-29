@@ -24,6 +24,7 @@ import { uiRouter } from './routes/ui';
 import { workflowRouter } from './routes/workflow';
 import { savedViewRouter } from './routes/saved-view';
 import { feedbackRouter } from './routes/feedback';
+import { businessTermRouter } from './routes/business-term';
 import { requireRole, requireAuth } from './middleware/authz';
 import { optionalJWT, buildJWTConfig } from './middleware/jwt';
 import { verifyCryptoKey } from './lib/crypto';
@@ -119,6 +120,12 @@ app.use('/api/saved-view', requireAuth, savedViewRouter);
 // authenticated user; GET /inbox + PATCH /:id/status are gated by
 // requireRole('ADMIN','AUTHZ_ADMIN') inside the router.
 app.use('/api/feedback', requireAuth, feedbackRouter);
+
+// Tier A gate-prep: business-term admin (V044 semantic-layer columns on
+// authz_resource). Admin-only — every route here is curator workflow,
+// no end-user surface. Closes the schema-without-tooling gap that
+// blocks §3.4 C primitive's blessed_term ≥ 10 gate.
+app.use('/api/business-term', requireRole('ADMIN', 'AUTHZ_ADMIN'), businessTermRouter);
 
 // Config snapshot & bulk import (admin-only)
 app.use('/api/config/snapshot', requireRole('ADMIN', 'AUTHZ_ADMIN'), configSnapshotRouter);
