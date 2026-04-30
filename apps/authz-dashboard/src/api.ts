@@ -468,6 +468,36 @@ export const api = {
       '/dag/save-as-page', { method: 'POST', body: JSON.stringify(payload) }
     ),
 
+  // DAG-SUBDAG-EMBED-V01 — list published_dags the caller can read,
+  // optionally filtered to one data source (subdag requires same-ds parent/child).
+  dagPublishedList: (data_source_id?: string) => {
+    const qs = new URLSearchParams();
+    if (data_source_id) qs.set('data_source_id', data_source_id);
+    const tail = qs.toString() ? `?${qs.toString()}` : '';
+    return request<{
+      published_dags: Array<{
+        rid: string;
+        published_dag_id: string;
+        title: string;
+        data_source_id: string;
+        output_node_id: string;
+        exposed_node_ids: string[] | null;
+      }>;
+    }>(`/dag/published-list${tail}`);
+  },
+
+  // DAG-SUBDAG-EMBED-V01 — metadata the Composer needs to wire a subdag node.
+  dagPublishedSnapshotMeta: (rid: string) =>
+    request<{
+      page_id: string;
+      title: string;
+      published_dag_id: string;
+      data_source_id: string;
+      output_node_id: string;
+      exposed_node_ids: string[] | null;
+      form_schema: Array<{ name: string; type: string; pg_type?: string; required: boolean; default: unknown; help_text?: string; source_node_id: string }>;
+    }>(`/dag/published/${encodeURIComponent(rid)}/snapshot-meta`),
+
   // DAG-PUBLISH-V01 — publish a DAG as a live Tier B page.
   // Server registers `published_dag:<rid>` resource, snapshots the DAG-JSON,
   // derives the form schema from user_input_params, grants `read` on the

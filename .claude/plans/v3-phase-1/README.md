@@ -45,6 +45,9 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | [`sink-as-authz-resource-plan.md`](./sink-as-authz-resource-plan.md) | 從 sink-as-node-kind §2.2 deferred 拆出 — sink page 升為 first-class `authz_resource(resource_type='ui_page')`,讓 ModulesTab 統一渲染、V070 cascade 通用,reload-safe Tier B 入口 |
 | [`tier-a-feedback-plan.md`](./tier-a-feedback-plan.md) | Tier A primitive #3 — `authz_feedback` (per-user × per-page) + 4 routes + `FeedbackButton` 浮動按鈕。User append-only / Curator 4-status triage;v1 page-level only(column/filter v2);Curator Inbox UI 切 FU commit |
 | [`tier-a-business-term-admin-plan.md`](./tier-a-business-term-admin-plan.md) | Tier A gate-prep — V044 `authz_resource` semantic-layer admin tab(business_term/definition/formula/owner + lifecycle blessed→deprecated)。**這是 C primitive 的 gate-prep tooling,不是 C 本身**;C 仍 gated on `blessed_term ≥ 10`,但 raw-SQL friction 移除了 |
+| [`dag-publish-v01-plan.md`](./dag-publish-v01-plan.md) | V086 — admin DAG → published Tier B 頁的 `publish=bless` primitive(single-leaf invariant, dag-exec, ConfigEngine PublishedDagPage) |
+| [`dag-publish-v01-fu-bidir-exposure.md`](./dag-publish-v01-fu-bidir-exposure.md) | DAG-PUBLISH-V01-FU — bidirectional exposure：input @ any layer + output @ any layer per-node admin opt-in(`expose_output` flag, multi-output diamond) |
+| [`dag-subdag-embed-v01-plan.md`](./dag-subdag-embed-v01-plan.md) | DAG-SUBDAG-EMBED-V01 — DAG 互相引用 / shared upstream。Sub-DAG 是 publish-time 概念(inline-expand)，runtime 仍是 flat DAG;dag-exec 零變更，主要在 publish resolver + DagTab UI |
 
 ---
 

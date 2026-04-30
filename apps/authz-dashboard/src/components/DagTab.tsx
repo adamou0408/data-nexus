@@ -74,6 +74,12 @@ type NodeData = {
   sink_kind?: SinkKind;              // sink nodes only — composer-native terminal
   sink_config?: SinkConfig;          // sink nodes only
   sink_last_run?: SinkLastRun;       // last successful sink execute
+  // DAG-SUBDAG-EMBED-V01 — subdag node persisted fields. Resolver consumes
+  // exactly these four; everything else (snapshot meta, fetched form_schema)
+  // stays in component-local state so it can't go stale on the row.
+  subdag_source_output_node_id?: string;
+  subdag_user_inputs?: string[];
+  bound_subdag_params?: Record<string, unknown>;
   last_result?: {
     columns: Array<{ name: string; semantic_type?: string; pgType?: string }>;
     rows: Record<string, unknown>[];
@@ -593,7 +599,103 @@ function SinkNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
   );
 }
 
-const nodeTypes = { fn: FunctionNode, literal: OperatorNode, filter: OperatorNode, cast: OperatorNode, aggregate: OperatorNode, sink: SinkNode };
+// DAG-SUBDAG-EMBED-V01 — subdag node renders as a single "embedded child"
+// frame. Internals are flattened at parent publish, so the canvas only ever
+// shows the bless gate (data.resource_id starts with 'published_dag:').
+const SUBDAG_STYLE = { bg: '#eef2ff', accent: '#4338ca', glyph: '⤵', label: 'sub-DAG' };
+
+function SubdagNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
+  const dragSrc = useContext(DragSrcContext);
+  const isSourceNode = dragSrc?.nodeId === id;
+  const border = selected ? '#2563eb' : '#a5b4fc';
+  const childRid = data.resource_id || '';
+  const childLabel = childRid.startsWith('published_dag:')
+    ? childRid.slice('published_dag:'.length)
+    : '(unconfigured)';
+  const surfaced = data.subdag_user_inputs?.length || 0;
+
+  return (
+    <div
+      data-testid={`subdag-${id}`}
+      style={{
+        background: SUBDAG_STYLE.bg,
+        border: `2px solid ${border}`,
+        borderRadius: 8,
+        minWidth: 240,
+        fontSize: 12,
+        boxShadow: selected ? '0 4px 10px rgba(37,99,235,0.18)' : '0 1px 2px rgba(0,0,0,0.06)',
+      }}
+    >
+      <div
+        style={{
+          padding: '6px 10px',
+          background: 'rgba(255,255,255,0.7)',
+          borderBottom: '1px solid rgba(15,23,42,0.06)',
+          borderTopLeftRadius: 6,
+          borderTopRightRadius: 6,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6,
+        }}
+      >
+        <span style={{ fontWeight: 600, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ fontSize: 14, color: SUBDAG_STYLE.accent }}>{SUBDAG_STYLE.glyph}</span>
+          {data.label || SUBDAG_STYLE.label}
+        </span>
+        <span
+          style={{
+            fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase',
+            padding: '1px 6px', borderRadius: 999,
+            background: SUBDAG_STYLE.accent, color: 'white',
+          }}
+        >
+          subdag
+        </span>
+      </div>
+
+      <div
+        style={{
+          position: 'relative',
+          padding: '8px 14px',
+          color: '#475569',
+          fontSize: 11,
+          fontFamily: 'ui-monospace, monospace',
+          minHeight: ROW_H,
+          display: 'flex', alignItems: 'center',
+        }}
+      >
+        {/* No target handle — subdag inputs come from the published form/bound, not parent upstream */}
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          → {childLabel}
+        </span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="__downstream"
+          style={{
+            background: SUBDAG_STYLE.accent,
+            width: 10, height: 10, border: '2px solid white',
+            boxShadow: dragSrc && !isSourceNode ? '0 0 0 3px rgba(34,197,94,0.45)' : 'none',
+            transition: 'box-shadow 120ms',
+          }}
+        />
+      </div>
+
+      <div
+        style={{
+          padding: '4px 10px',
+          background: childRid ? '#dbeafe' : '#fef3c7',
+          color: childRid ? '#1e3a8a' : '#92400e',
+          fontSize: 10, fontWeight: 500,
+          borderTop: '1px solid rgba(15,23,42,0.06)',
+          borderBottomLeftRadius: 6, borderBottomRightRadius: 6,
+        }}
+      >
+        {childRid ? `${surfaced} input${surfaced === 1 ? '' : 's'} surfaced` : 'pick a published_dag to embed'}
+      </div>
+    </div>
+  );
+}
+
+const nodeTypes = { fn: FunctionNode, literal: OperatorNode, filter: OperatorNode, cast: OperatorNode, aggregate: OperatorNode, sink: SinkNode, subdag: SubdagNode };
 
 // ── Main tab ──
 export function DagTab() {
@@ -864,6 +966,47 @@ export function DagTab() {
     pushHistory();
     setNodes((nds) => [...nds, node]);
     setSelectedId(id);
+  };
+
+  // DAG-SUBDAG-EMBED-V01 — add an unconfigured subdag node. The published_dag
+  // pick happens in the Inspector (via dagPublishedList filtered to dsId).
+  const addSubdagNode = () => {
+    const id = nextNodeId();
+    const node: Node<NodeData> = {
+      id,
+      type: 'subdag',
+      position: { x: 80 + (nodes.length % 4) * 280, y: 80 + Math.floor(nodes.length / 4) * 260 },
+      data: {
+        resource_id: '',
+        label: 'sub-DAG',
+        subtype: 'subdag',
+        // No target handle on the rendered node, but expose a synthetic
+        // downstream handle so existing edge logic (isValidConnection,
+        // colorFor) treats it like other nodes.
+        inputs: [],
+        outputs: [{ name: '__downstream', semantic_type: '__rowset' }],
+        bound_params: {},
+        subdag_source_output_node_id: undefined,
+        subdag_user_inputs: [],
+        bound_subdag_params: {},
+      },
+    };
+    pushHistory();
+    setNodes((nds) => [...nds, node]);
+    setSelectedId(id);
+  };
+
+  // DAG-SUBDAG-EMBED-V01 — patch persisted subdag fields. Caller passes only
+  // resolver-consumed fields; snapshot meta stays in component-local cache.
+  const updateSubdagData = (patch: Partial<Pick<NodeData,
+    'resource_id' | 'label' | 'subdag_source_output_node_id' | 'subdag_user_inputs' | 'bound_subdag_params'
+  >>) => {
+    if (!selected) return;
+    pushHistory();
+    setNodes((nds) => nds.map((n) => {
+      if (n.id !== selected.id) return n;
+      return { ...n, data: { ...n.data, ...patch } };
+    }));
   };
 
   const updateSinkConfig = (patch: Partial<PageSinkConfig>) => {
@@ -1502,6 +1645,27 @@ export function DagTab() {
             </div>
           </div>
 
+          {/* Sub-DAG — DAG-SUBDAG-EMBED-V01.
+              Embeds a published_dag inline at parent publish time. Same
+              data_source_id required (cross-ds blocked at resolver). */}
+          <div className="mb-3">
+            <div className="text-[10px] uppercase tracking-wide text-indigo-700 flex items-center gap-1 mb-1">
+              <Workflow size={12} /> Sub-DAG
+            </div>
+            <div className="space-y-1">
+              <button
+                onClick={addSubdagNode}
+                data-testid="palette-subdag"
+                className="w-full text-left text-xs px-2 py-1 rounded border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-slate-700 flex items-center gap-1.5"
+                title="Embed a published_dag inline. Pick which child published_dag in the Inspector."
+              >
+                <span style={{ color: '#4338ca', fontSize: 14 }}>⤵</span>
+                <span className="font-medium">embed published_dag</span>
+                <span className="text-[10px] text-slate-400 ml-auto">subdag</span>
+              </button>
+            </div>
+          </div>
+
           {/* Sinks — composer-native terminal artifacts.
               See .claude/plans/v3-phase-1/sink-as-node-kind-plan.md §3.5 */}
           <div className="mb-3">
@@ -1694,9 +1858,10 @@ export function DagTab() {
               </div>
 
               {/* Expose output — DAG-PUBLISH-V01-FU §5. Visible for fn + op
-                  nodes (skip sink: sinks are not runtime outputs). Leaf is
-                  forced-on; admin opt-in for intermediate frames. */}
-              {!selected.data.sink_kind && (() => {
+                  nodes (skip sink: sinks are not runtime outputs; skip subdag:
+                  child's leaf is the surfaced output). Leaf is forced-on;
+                  admin opt-in for intermediate frames. */}
+              {!selected.data.sink_kind && selected.type !== 'subdag' && (() => {
                 const isLeaf = !edges.some((e) => e.source === selected.id);
                 const checked = isLeaf || !!selected.data.expose_output;
                 return (
@@ -1821,7 +1986,21 @@ export function DagTab() {
                 );
               })()}
 
-              {!selected.data.op_kind && !selected.data.sink_kind && (
+              {/* Subdag-specific config block — DAG-SUBDAG-EMBED-V01.
+                  Persists only resource_id + subdag_source_output_node_id +
+                  subdag_user_inputs + bound_subdag_params on n.data; the
+                  fetched snapshot meta (form_schema, exposed_node_ids) lives
+                  in component-local cache so it can't go stale on the row. */}
+              {selected.type === 'subdag' && (
+                <SubdagInspector
+                  selectedId={selected.id}
+                  data={selected.data}
+                  dataSourceId={dsId}
+                  onChange={updateSubdagData}
+                />
+              )}
+
+              {!selected.data.op_kind && !selected.data.sink_kind && selected.type !== 'subdag' && (
               <div>
                 <div className="text-xs font-medium text-slate-700 mb-1">Inputs</div>
                 <div className="space-y-2">
@@ -2259,6 +2438,300 @@ function OperatorInspector({
           className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
         />
       </div>
+    </div>
+  );
+}
+
+// ── Sub-DAG inspector (DAG-SUBDAG-EMBED-V01) ──
+// Authoring surface for `type='subdag'` nodes:
+//   1. Pick a child published_dag (filtered to current ds by /published-list).
+//   2. Pick which exposed child output to plug into parent (defaults to leaf).
+//   3. Per child user_input: surface to parent form vs. bind override.
+//
+// Snapshot meta (form_schema, exposed_node_ids) is fetched on demand and
+// cached in component-local state — NOT persisted on n.data — because save
+// is verbatim, and stale meta would silently shadow the live published_dag
+// on the next publish. Persistence is limited to what the resolver consumes:
+// resource_id, subdag_source_output_node_id, subdag_user_inputs,
+// bound_subdag_params.
+//
+// Default surfacing strategy: when curator picks a child published_dag for
+// the first time, pre-tick *all* its user_input_params as surfaced. "All
+// surfaced" is the safer non-destructive default — curator can untick later
+// to demote into bound_subdag_params.
+type SnapshotMeta = {
+  data_source_id: string;
+  output_node_id: string;
+  exposed_node_ids: string[] | null;
+  form_schema: Array<{ name: string; type: string; pg_type?: string; required: boolean; default: unknown; help_text?: string; source_node_id: string }>;
+};
+
+function SubdagInspector({
+  selectedId, data, dataSourceId, onChange,
+}: {
+  selectedId: string;
+  data: NodeData;
+  dataSourceId: string;
+  onChange: (patch: Partial<Pick<NodeData,
+    'resource_id' | 'label' | 'subdag_source_output_node_id' | 'subdag_user_inputs' | 'bound_subdag_params'
+  >>) => void;
+}) {
+  const [available, setAvailable] = useState<Array<{ rid: string; title: string; output_node_id: string; exposed_node_ids: string[] | null }>>([]);
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  // metaCache: rid → SnapshotMeta. Per-Inspector instance, drops on close.
+  const [metaCache, setMetaCache] = useState<Record<string, SnapshotMeta>>({});
+  const [metaLoading, setMetaLoading] = useState(false);
+  const [metaError, setMetaError] = useState<string | null>(null);
+
+  const childRid = data.resource_id || '';
+  const meta: SnapshotMeta | undefined = childRid ? metaCache[childRid] : undefined;
+
+  // Load published_dag list (filtered to parent's data source).
+  useEffect(() => {
+    if (!dataSourceId) {
+      setAvailable([]);
+      return;
+    }
+    let cancelled = false;
+    setListLoading(true);
+    setListError(null);
+    api.dagPublishedList(dataSourceId)
+      .then((r) => {
+        if (cancelled) return;
+        setAvailable(r.published_dags.map((p) => ({
+          rid: p.rid,
+          title: p.title,
+          output_node_id: p.output_node_id,
+          exposed_node_ids: p.exposed_node_ids,
+        })));
+      })
+      .catch((e) => { if (!cancelled) setListError(String(e)); })
+      .finally(() => { if (!cancelled) setListLoading(false); });
+    return () => { cancelled = true; };
+  }, [dataSourceId]);
+
+  // Load snapshot meta for the picked rid.
+  useEffect(() => {
+    if (!childRid) return;
+    if (metaCache[childRid]) return;
+    let cancelled = false;
+    setMetaLoading(true);
+    setMetaError(null);
+    api.dagPublishedSnapshotMeta(childRid)
+      .then((r) => {
+        if (cancelled) return;
+        setMetaCache((prev) => ({
+          ...prev,
+          [childRid]: {
+            data_source_id: r.data_source_id,
+            output_node_id: r.output_node_id,
+            exposed_node_ids: r.exposed_node_ids,
+            form_schema: r.form_schema || [],
+          },
+        }));
+      })
+      .catch((e) => { if (!cancelled) setMetaError(String(e)); })
+      .finally(() => { if (!cancelled) setMetaLoading(false); });
+    return () => { cancelled = true; };
+  }, [childRid, metaCache]);
+
+  const surfacedSet = new Set(data.subdag_user_inputs || []);
+  const boundOverrides = (data.bound_subdag_params || {}) as Record<string, unknown>;
+
+  const pickRid = (rid: string) => {
+    if (!rid) {
+      onChange({ resource_id: '', label: 'sub-DAG', subdag_source_output_node_id: undefined, subdag_user_inputs: [], bound_subdag_params: {} });
+      return;
+    }
+    const picked = available.find((a) => a.rid === rid);
+    const defaultOutput = picked?.output_node_id;
+    // Pre-fetch meta to seed default surfacing — but if we already have meta
+    // cached from a prior pick, use it directly.
+    const cached = metaCache[rid];
+    if (cached) {
+      const allInputs = cached.form_schema.map((f) => f.name);
+      onChange({
+        resource_id: rid,
+        label: picked?.title || 'sub-DAG',
+        subdag_source_output_node_id: defaultOutput,
+        subdag_user_inputs: allInputs,
+        bound_subdag_params: {},
+      });
+    } else {
+      // Fetch then seed.
+      setMetaLoading(true);
+      api.dagPublishedSnapshotMeta(rid)
+        .then((r) => {
+          const seeded: SnapshotMeta = {
+            data_source_id: r.data_source_id,
+            output_node_id: r.output_node_id,
+            exposed_node_ids: r.exposed_node_ids,
+            form_schema: r.form_schema || [],
+          };
+          setMetaCache((prev) => ({ ...prev, [rid]: seeded }));
+          onChange({
+            resource_id: rid,
+            label: picked?.title || 'sub-DAG',
+            subdag_source_output_node_id: defaultOutput,
+            subdag_user_inputs: seeded.form_schema.map((f) => f.name),
+            bound_subdag_params: {},
+          });
+        })
+        .catch((e) => setMetaError(String(e)))
+        .finally(() => setMetaLoading(false));
+    }
+  };
+
+  const toggleSurface = (paramName: string) => {
+    const next = new Set(surfacedSet);
+    if (next.has(paramName)) next.delete(paramName);
+    else {
+      next.add(paramName);
+      // When promoting back to surfaced, drop any bound override so the form
+      // takes over (resolver demotes only when not surfaced).
+      if (Object.prototype.hasOwnProperty.call(boundOverrides, paramName)) {
+        const { [paramName]: _drop, ...rest } = boundOverrides;
+        onChange({ subdag_user_inputs: Array.from(next), bound_subdag_params: rest });
+        return;
+      }
+    }
+    onChange({ subdag_user_inputs: Array.from(next) });
+  };
+
+  const setBoundOverride = (paramName: string, raw: string, isArray: boolean) => {
+    const value: unknown = isArray
+      ? raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
+      : raw;
+    const next = { ...boundOverrides, [paramName]: value };
+    if (raw === '' || (isArray && Array.isArray(value) && value.length === 0)) {
+      delete next[paramName];
+    }
+    onChange({ bound_subdag_params: next });
+  };
+
+  const exposedIds: string[] = meta
+    ? (Array.isArray(meta.exposed_node_ids) && meta.exposed_node_ids.length > 0
+        ? meta.exposed_node_ids
+        : [meta.output_node_id])
+    : [];
+
+  return (
+    <div className="border border-indigo-200 bg-indigo-50 rounded p-2 space-y-3">
+      <div className="text-xs font-medium text-indigo-800 flex items-center gap-1.5">
+        <Workflow size={12} /> Sub-DAG config
+      </div>
+
+      <div>
+        <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Child published_dag</label>
+        {listError && <div className="text-[10px] text-red-600 mb-1">{listError}</div>}
+        {!dataSourceId ? (
+          <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-1.5">
+            Pick a data source first — subdag requires same-ds parent/child.
+          </div>
+        ) : (
+          <select
+            data-testid={`subdag-rid-${selectedId}`}
+            value={childRid}
+            onChange={(e) => pickRid(e.target.value)}
+            disabled={listLoading}
+            className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+          >
+            <option value="">— pick a published_dag —</option>
+            {available.map((p) => (
+              <option key={p.rid} value={p.rid}>{p.title} ({p.rid})</option>
+            ))}
+          </select>
+        )}
+        {listLoading && <div className="text-[10px] text-slate-500 mt-0.5">Loading…</div>}
+        {dataSourceId && !listLoading && available.length === 0 && (
+          <div className="text-[10px] text-slate-500 mt-0.5">No published_dags on this data source yet.</div>
+        )}
+      </div>
+
+      {childRid && metaLoading && (
+        <div className="text-[10px] text-slate-500">Loading child snapshot…</div>
+      )}
+      {childRid && metaError && (
+        <div className="text-[10px] text-red-600 bg-red-50 border border-red-200 rounded p-1.5">
+          {metaError}
+        </div>
+      )}
+
+      {meta && (
+        <>
+          <div>
+            <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Output to plug into parent</label>
+            <select
+              data-testid={`subdag-output-${selectedId}`}
+              value={data.subdag_source_output_node_id || meta.output_node_id}
+              onChange={(e) => onChange({ subdag_source_output_node_id: e.target.value })}
+              className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+            >
+              {exposedIds.map((id) => (
+                <option key={id} value={id}>
+                  {id}{id === meta.output_node_id ? ' (leaf — default)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase text-slate-500 mb-0.5">
+              Child inputs ({meta.form_schema.length})
+            </label>
+            {meta.form_schema.length === 0 ? (
+              <div className="text-[10px] text-slate-500">child has no user_input_params</div>
+            ) : (
+              <div className="space-y-1.5">
+                {meta.form_schema.map((p) => {
+                  const isSurfaced = surfacedSet.has(p.name);
+                  const overrideRaw = boundOverrides[p.name];
+                  const isArray = !!(p.pg_type && p.pg_type.endsWith('[]'));
+                  const display = overrideRaw == null
+                    ? ''
+                    : Array.isArray(overrideRaw) ? overrideRaw.join(', ') : String(overrideRaw);
+                  return (
+                    <div
+                      key={p.name}
+                      className={`border rounded p-1.5 ${isSurfaced ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200 bg-white'}`}
+                    >
+                      <label className="flex items-center gap-1.5 text-[11px] cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={isSurfaced}
+                          onChange={() => toggleSurface(p.name)}
+                          data-testid={`subdag-surface-${selectedId}-${p.name}`}
+                          className="h-3 w-3"
+                        />
+                        <span className="font-mono">{p.name}</span>
+                        <span className="text-[10px] text-slate-500">{p.pg_type || p.type}</span>
+                        <span className="ml-auto text-[10px] text-slate-500">
+                          {isSurfaced ? 'surface to parent form' : 'bind override'}
+                        </span>
+                      </label>
+                      {!isSurfaced && (
+                        <input
+                          data-testid={`subdag-bind-${selectedId}-${p.name}`}
+                          value={display}
+                          onChange={(e) => setBoundOverride(p.name, e.target.value, isArray)}
+                          placeholder={isArray ? 'comma-separated' : 'override value (blank = use child default)'}
+                          className="w-full mt-1 text-[11px] border border-slate-200 rounded px-2 py-1 font-mono"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="text-[10px] text-slate-500 bg-white border border-slate-200 rounded p-1.5">
+            On parent publish, this subdag is replaced inline with the child's flat snapshot.
+            Surfaced inputs become parent form fields; bound overrides go into the child's bound_params.
+          </div>
+        </>
+      )}
     </div>
   );
 }

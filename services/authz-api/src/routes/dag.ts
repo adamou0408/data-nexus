@@ -14,6 +14,7 @@ import { validateDag, DagDoc } from '../lib/dag-validate';
 import { runOperator, deriveOperatorResourceId, UpstreamFrame } from '../lib/dag-operators';
 import { emitPageSnapshot, deriveSinkUpstreamFn, SinkValidationError } from '../lib/sink-runtime';
 import { findSingleLeaf, deriveFormSchema, DagNode, DagEdge } from '../lib/dag-exec';
+import { expandSubdags, SubdagExpansionError, EmbeddedSubdagRecord } from '../lib/dag-subdag-resolver';
 import { requireRole } from '../middleware/authz';
 
 export const dagRouter = Router();
@@ -706,12 +707,44 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
     }
     const attrs = dagRow.rows[0].attributes || {};
     const dagParent = dagRow.rows[0].parent_id as string | null;
-    const nodes: DagNode[] = attrs.nodes || [];
-    const edges: DagEdge[] = attrs.edges || [];
+    const authoredNodes: DagNode[] = attrs.nodes || [];
+    const authoredEdges: DagEdge[] = attrs.edges || [];
     const dataSourceId = attrs.data_source_id as string;
     if (!dataSourceId) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'DAG has no data_source_id — cannot publish' });
+    }
+
+    // 1b. SUBDAG-EMBED-V01: inline-expand any subdag-typed nodes into a flat
+    // (nodes, edges) the rest of publish (validator, single-leaf, dag-exec)
+    // operates on without modification.
+    let nodes: DagNode[];
+    let edges: DagEdge[];
+    let embeddedSubdags: EmbeddedSubdagRecord[];
+    try {
+      const expanded = await expandSubdags({
+        parentNodes: authoredNodes,
+        parentEdges: authoredEdges,
+        parentDataSourceId: dataSourceId,
+        blessedBy: userId,
+        client,
+      });
+      nodes = expanded.nodes;
+      edges = expanded.edges;
+      embeddedSubdags = expanded.embedded_subdags;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      if (err instanceof SubdagExpansionError) {
+        const status = err.reason === 'authz_denied' ? 403
+          : err.reason === 'not_found' ? 404
+          : 400;
+        return res.status(status).json({
+          error: err.message,
+          subdag_node_id: err.subdag_node_id,
+          reason: err.reason,
+        });
+      }
+      throw err;
     }
 
     // 2. Single-leaf invariant + structural validation (refuses cycle).
@@ -764,6 +797,10 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       edges,
       output_node_id: outputNodeId,
       exposed_node_ids: exposedNodeIds,
+      // SUBDAG-EMBED-V01: current-state index for inverse lookup
+      // (`/api/dag/published/:rid/embedders`). Populated only when this
+      // parent embeds at least one child; absent for plain DAGs.
+      ...(embeddedSubdags.length > 0 ? { embedded_subdags: embeddedSubdags } : {}),
     };
 
     // 5. parent_page_id existence check (if provided).
@@ -891,6 +928,7 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       context: {
         dag_id: dagId, page_id, output_node_id: outputNodeId,
         exposed_node_ids: exposedNodeIds,
+        embedded_subdag_rids: embeddedSubdags.map((e) => ({ subdag_node_id: e.subdag_node_id, rid: e.child_rid })),
         form_field_count: formSchema.length, granted_roles: grantRoles,
         page_status: pageStatus,
       },
@@ -903,6 +941,7 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       details: {
         dag_id: dagId, page_id, output_node_id: outputNodeId,
         exposed_node_ids: exposedNodeIds,
+        embedded_subdag_rids: embeddedSubdags.map((e) => ({ subdag_node_id: e.subdag_node_id, rid: e.child_rid })),
         form_field_count: formSchema.length, granted_roles: grantRoles,
       },
       ip: getClientIp(req),
@@ -915,6 +954,7 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       published_dag_rid: publishedDagRid,
       output_node_id: outputNodeId,
       exposed_node_ids: exposedNodeIds,
+      embedded_subdags: embeddedSubdags,
       form_schema: formSchema,
       granted_read_to: grantRoles,
     });
@@ -923,5 +963,136 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
     handleApiError(res, err);
   } finally {
     client.release();
+  }
+});
+
+// ─── DAG-SUBDAG-EMBED-V01: discovery endpoints for the Composer subdag picker ───
+// All three are read-only, gated by per-resource authz_check (read).
+
+// GET /published-list?data_source_id=<id>
+// Lists published_dag rids the caller can read, filtered to one ds (subdag
+// requires same-ds). Used by DagTab Inspector dropdown.
+dagRouter.get('/published-list', async (req, res) => {
+  const userId = getUserId(req);
+  const dsId = req.query.data_source_id as string | undefined;
+  try {
+    const grpRes = await authzPool.query('SELECT authz_resolve_user_groups($1) AS groups', [userId]);
+    const groupsRaw: string[] = grpRes.rows[0]?.groups || [];
+    const groups = groupsRaw.map((g) => (g.startsWith('group:') ? g.slice('group:'.length) : g));
+
+    const params: unknown[] = [];
+    let sql = `SELECT page.resource_id AS rid,
+                      page.published_dag_id,
+                      page.title,
+                      page.dag_snapshot->>'data_source_id' AS data_source_id,
+                      page.dag_snapshot->>'output_node_id' AS output_node_id,
+                      page.dag_snapshot->'exposed_node_ids' AS exposed_node_ids
+                 FROM authz_ui_page page
+                WHERE page.is_active = TRUE
+                  AND page.published_dag_id IS NOT NULL`;
+    if (dsId) {
+      params.push(dsId);
+      sql += ` AND page.dag_snapshot->>'data_source_id' = $${params.length}`;
+    }
+    sql += ` ORDER BY page.title`;
+    const { rows } = await authzPool.query(sql, params);
+
+    // App-level authz filter — typical published_dag count is dozens, so
+    // N round-trips is fine; revisit if the catalog grows.
+    const allowed: typeof rows = [];
+    for (const row of rows) {
+      const chk = await authzPool.query(
+        'SELECT authz_check($1, $2, $3, $4) AS allowed',
+        [userId, groups, 'read', row.rid]
+      );
+      if (chk.rows[0]?.allowed) allowed.push(row);
+    }
+    res.json({ published_dags: allowed });
+  } catch (err) {
+    handleApiError(res, err);
+  }
+});
+
+// GET /published/:rid/snapshot-meta
+// Returns metadata the Composer needs to wire a subdag node: data source,
+// exposed outputs, and form schema (so parent admin can pick which child
+// inputs to surface). Caller must have `read` on the rid.
+dagRouter.get('/published/:rid/snapshot-meta', async (req, res) => {
+  const rid = req.params.rid;
+  const userId = getUserId(req);
+  try {
+    const grpRes = await authzPool.query('SELECT authz_resolve_user_groups($1) AS groups', [userId]);
+    const groupsRaw: string[] = grpRes.rows[0]?.groups || [];
+    const groups = groupsRaw.map((g) => (g.startsWith('group:') ? g.slice('group:'.length) : g));
+
+    const chk = await authzPool.query(
+      'SELECT authz_check($1, $2, $3, $4) AS allowed',
+      [userId, groups, 'read', rid]
+    );
+    if (!chk.rows[0]?.allowed) {
+      return res.status(403).json({ error: `Forbidden: ${userId} lacks read on ${rid}` });
+    }
+
+    const { rows } = await authzPool.query(
+      `SELECT page_id, title, published_dag_id,
+              dag_snapshot->>'data_source_id' AS data_source_id,
+              dag_snapshot->>'output_node_id' AS output_node_id,
+              dag_snapshot->'exposed_node_ids' AS exposed_node_ids,
+              form_schema
+         FROM authz_ui_page
+        WHERE resource_id = $1 AND is_active = TRUE`,
+      [rid]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: `published_dag not found: ${rid}` });
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    handleApiError(res, err);
+  }
+});
+
+// GET /published/:rid/embedders
+// Inverse query: which parent published_dags currently embed this child?
+// Backend SSOT for family-tree v01 — UI (cascade impact, re-publish notify)
+// will read from this endpoint. Caller must have `read` on the child rid.
+dagRouter.get('/published/:rid/embedders', async (req, res) => {
+  const rid = req.params.rid;
+  const userId = getUserId(req);
+  try {
+    const grpRes = await authzPool.query('SELECT authz_resolve_user_groups($1) AS groups', [userId]);
+    const groupsRaw: string[] = grpRes.rows[0]?.groups || [];
+    const groups = groupsRaw.map((g) => (g.startsWith('group:') ? g.slice('group:'.length) : g));
+
+    const chk = await authzPool.query(
+      'SELECT authz_check($1, $2, $3, $4) AS allowed',
+      [userId, groups, 'read', rid]
+    );
+    if (!chk.rows[0]?.allowed) {
+      return res.status(403).json({ error: `Forbidden: ${userId} lacks read on ${rid}` });
+    }
+
+    // JSONB containment: any parent whose embedded_subdags array contains
+    // an element with child_rid matching the queried rid.
+    const filter = JSON.stringify([{ child_rid: rid }]);
+    const { rows } = await authzPool.query(
+      `SELECT page.page_id            AS parent_page_id,
+              page.resource_id        AS parent_published_dag_rid,
+              page.published_dag_id   AS parent_published_dag_id,
+              page.title              AS parent_title,
+              embed.value->>'subdag_node_id' AS embedded_at_node_id,
+              embed.value->>'child_output_node_id' AS child_output_node_id,
+              embed.value->'child_user_inputs_surfaced' AS child_user_inputs_surfaced
+         FROM authz_ui_page page,
+              LATERAL jsonb_array_elements(page.dag_snapshot->'embedded_subdags') AS embed(value)
+        WHERE page.is_active = TRUE
+          AND page.dag_snapshot->'embedded_subdags' @> $1::jsonb
+          AND embed.value->>'child_rid' = $2
+        ORDER BY page.title`,
+      [filter, rid]
+    );
+    res.json({ child_rid: rid, parents: rows });
+  } catch (err) {
+    handleApiError(res, err);
   }
 });
