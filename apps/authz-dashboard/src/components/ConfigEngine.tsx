@@ -87,6 +87,15 @@ type PublishedFormField = {
   source_node_id: string;
 };
 
+// DAG-PUBLISH-V01-FU: per-node output block surfaced on the published page.
+// One per exposed_node_ids entry; shape mirrors dag-exec.DagExecOutput.
+type PublishedDagOutput = {
+  columns: Array<{ name: string; semantic_type?: string; dataTypeID?: number }>;
+  rows: Record<string, unknown>[];
+  row_count: number;
+  truncated: boolean;
+};
+
 type PageMeta = {
   filteredCount?: number;
   totalCount?: number;
@@ -102,6 +111,10 @@ type PageMeta = {
   truncated?: boolean;
   elapsed_ms?: number;
   lineage?: Array<{ node_id: string; detail: string }>;
+  // DAG-PUBLISH-V01-FU — multi-output map (leaf + admin-flagged intermediates).
+  // Absent on V086-era pages (re-published under FU populates it).
+  outputs?: Record<string, PublishedDagOutput>;
+  primary_output_node_id?: string;
 };
 
 type StackEntry = {
@@ -745,6 +758,24 @@ function PublishedDagPage({
     return Object.keys(rows[0]);
   }, [rows]);
 
+  // DAG-PUBLISH-V01-FU: ordered list of (nodeId, frame) tuples — primary
+  // first, intermediates after, sorted for stability. When meta.outputs is
+  // absent (V086 page that wasn't re-published), `orderedOutputs` is empty
+  // and we fall back to the single-table render against `rows`.
+  const orderedOutputs = useMemo(() => {
+    const map = entry.meta?.outputs;
+    if (!map) return [] as Array<[string, PublishedDagOutput]>;
+    const primary = entry.meta?.primary_output_node_id ?? entry.meta?.output_node_id;
+    const ids = Object.keys(map);
+    const others = ids.filter((id) => id !== primary).sort();
+    const ordered = [primary && map[primary] ? primary : null, ...others].filter(
+      (id): id is string => id !== null && Object.prototype.hasOwnProperty.call(map, id),
+    );
+    return ordered.map((id) => [id, map[id]] as [string, PublishedDagOutput]);
+  }, [entry.meta?.outputs, entry.meta?.primary_output_node_id, entry.meta?.output_node_id]);
+
+  const primaryNodeId = entry.meta?.primary_output_node_id ?? entry.meta?.output_node_id;
+
   return (
     <div>
       {/* Form */}
@@ -832,11 +863,83 @@ function PublishedDagPage({
 
       {/* Result */}
       {stage === 'exec' && (
-        rows.length === 0 ? (
+        orderedOutputs.length > 0 ? (
+          // DAG-PUBLISH-V01-FU: multi-output render. Primary first, then
+          // admin-flagged intermediates. Each block has its own header
+          // (node id + primary badge) and meta line (row_count / truncated).
+          <div className="space-y-4">
+            {orderedOutputs.map(([nodeId, block]) => {
+              const isPrimary = nodeId === primaryNodeId;
+              const cols = block.columns?.length
+                ? block.columns.map((c) => c.name)
+                : (block.rows[0] ? Object.keys(block.rows[0]) : []);
+              return (
+                <div key={nodeId}>
+                  <div className="flex items-baseline gap-2 mb-1.5">
+                    <span className="text-xs font-mono text-slate-700">{nodeId}</span>
+                    {isPrimary ? (
+                      <span className="text-[10px] uppercase tracking-wide bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                        primary
+                      </span>
+                    ) : (
+                      <span className="text-[10px] uppercase tracking-wide bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                        intermediate
+                      </span>
+                    )}
+                    <span className="text-xs text-slate-500">
+                      {block.row_count} row{block.row_count === 1 ? '' : 's'}
+                      {block.truncated && <span className="ml-1 text-amber-600">(truncated)</span>}
+                    </span>
+                  </div>
+                  {block.rows.length === 0 ? (
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded text-xs text-slate-500">
+                      No rows returned.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200">
+                            {cols.map((c) => (
+                              <th key={c} className="px-3 py-2 text-left font-medium text-slate-600 font-mono text-xs">
+                                {c}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {block.rows.map((row, i) => (
+                            <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                              {cols.map((c) => {
+                                const v = row[c];
+                                return (
+                                  <td key={c} className="px-3 py-2 text-slate-700">
+                                    {v === null || v === undefined
+                                      ? <span className="text-slate-300">—</span>
+                                      : typeof v === 'object'
+                                        ? <code className="font-mono text-xs">{JSON.stringify(v)}</code>
+                                        : String(v)}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : rows.length === 0 ? (
+          // Back-compat: V086 page (no meta.outputs) with no rows.
           <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-500">
             No rows returned.
           </div>
         ) : (
+          // Back-compat: V086 page (no meta.outputs) — single-table render
+          // against the top-level `data` payload.
           <div className="overflow-x-auto border border-slate-200 rounded-lg">
             <table className="w-full text-sm">
               <thead>

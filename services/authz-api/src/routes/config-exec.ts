@@ -162,6 +162,12 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
             truncated: result.truncated,
             elapsed_ms: result.elapsed_ms,
             lineage: result.lineage,
+            // DAG-PUBLISH-V01-FU: multi-output map. The front-end's
+            // PublishedDagPage renders one section per key; falls back to
+            // single-table mode if `outputs` is absent (shouldn't happen
+            // post-FU, but kept for resilience).
+            outputs: result.outputs,
+            primary_output_node_id: result.primary_output_node_id,
           },
         });
       } catch (err) {

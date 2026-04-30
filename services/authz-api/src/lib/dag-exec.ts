@@ -48,6 +48,7 @@ export interface DagNode {
     outputs?: Array<{ name: string; semantic_type?: string }>;
     bound_params?: Record<string, unknown>;
     user_input_params?: string[];                               // names of bound_params exposed as form inputs
+    expose_output?: boolean;                                    // DAG-PUBLISH-V01-FU: surface this node's frame as an extra output block on the published page (leaf is implicitly always exposed)
     op_kind?: 'literal' | 'filter' | 'cast' | 'aggregate';
     op_config?: Record<string, unknown>;
     arguments?: string;                                         // pg_get_function_arguments output, frozen at save time
@@ -65,17 +66,35 @@ export interface PublishedDagSnapshot {
   data_source_id: string;
   nodes: DagNode[];
   edges: DagEdge[];
-  output_node_id: string;
+  output_node_id: string;                                       // primary leaf — back-compat
+  exposed_node_ids?: string[];                                  // DAG-PUBLISH-V01-FU: leaf + admin-flagged intermediate nodes (dedup, ordered: leaf first). Missing → fall back to [output_node_id] for V086 pages.
+}
+
+// Per-node frame as surfaced to the published page. Same fields as the
+// V086 single-leaf result, just keyed by node id so the front-end can
+// render multi-output sections.
+export interface DagExecOutput {
+  columns: Array<{ name: string; semantic_type?: string; dataTypeID?: number }>;
+  rows: Record<string, unknown>[];
+  row_count: number;
+  truncated: boolean;
 }
 
 export interface DagExecResult {
+  // V086 back-compat: primary leaf's columns/rows duplicated at top level
+  // so existing readers (e.g. config-exec returning `data: result.rows`)
+  // keep working without conditional unwrap.
   columns: Array<{ name: string; semantic_type?: string; dataTypeID?: number }>;
   rows: Record<string, unknown>[];
   row_count: number;
   truncated: boolean;
   elapsed_ms: number;
   lineage: Array<{ node_id: string; detail: string }>;
-  output_node_id: string;
+  output_node_id: string;                                       // primary (leaf) — V086 back-compat
+  // DAG-PUBLISH-V01-FU: full multi-output map. Always populated; for
+  // single-leaf pages it has exactly one key (= output_node_id).
+  outputs: Record<string, DagExecOutput>;
+  primary_output_node_id: string;
 }
 
 export class DagExecError extends Error {
@@ -349,6 +368,35 @@ export async function executeDagAsPublished(opts: {
   }
   const outRows = out.rows || (out.row0 ? [out.row0] : []);
 
+  // Multi-output map (DAG-PUBLISH-V01-FU). Build from exposed_node_ids if
+  // present; otherwise emit just the leaf to mirror V086. Filter to ids
+  // that actually produced a frame — sinks were skipped, ghost ids would
+  // throw — and always force-include the leaf so the primary stays
+  // canonical even if a stale snapshot omitted it.
+  const exposedIds = Array.isArray(dagSnapshot.exposed_node_ids) && dagSnapshot.exposed_node_ids.length > 0
+    ? dagSnapshot.exposed_node_ids
+    : [outId];
+  const seenOutIds = new Set<string>();
+  const orderedExposed: string[] = [];
+  // Leaf first so iteration order is stable; admin-flagged intermediates follow.
+  for (const id of [outId, ...exposedIds]) {
+    if (seenOutIds.has(id)) continue;
+    if (!frames[id]) continue;                                  // ghost or sink — skip
+    seenOutIds.add(id);
+    orderedExposed.push(id);
+  }
+  const outputs: Record<string, DagExecOutput> = {};
+  for (const id of orderedExposed) {
+    const frame = frames[id];
+    const rows = frame.rows || (frame.row0 ? [frame.row0] : []);
+    outputs[id] = {
+      columns: (frame.columns || []) as Array<{ name: string; semantic_type?: string; dataTypeID?: number }>,
+      rows,
+      row_count: rows.length,
+      truncated: rows.length >= MAX_ROWS,
+    };
+  }
+
   return {
     columns: (out.columns || []) as Array<{ name: string; semantic_type?: string; dataTypeID?: number }>,
     rows: outRows,
@@ -357,5 +405,7 @@ export async function executeDagAsPublished(opts: {
     elapsed_ms: Date.now() - t0,
     lineage,
     output_node_id: outId,
+    outputs,
+    primary_output_node_id: outId,
   };
 }

@@ -67,6 +67,7 @@ type NodeData = {
   outputs: IO[];
   bound_params: Record<string, unknown>;
   user_input_params?: string[];     // DAG-PUBLISH-V01: bound_param names exposed as form inputs at publish
+  expose_output?: boolean;          // DAG-PUBLISH-V01-FU: admin flag — surface this node's frame as an extra output block on the published page (leaf is auto-exposed regardless)
   return_shape?: ReturnShape;       // fn nodes only — surfaces multiplicity badge
   op_kind?: OpKind;                 // operator nodes only
   op_config?: OpConfig;             // operator nodes only
@@ -1259,6 +1260,19 @@ export function DagTab() {
     }));
   };
 
+  // DAG-PUBLISH-V01-FU: toggle whether a non-leaf node's frame is surfaced as
+  // an extra output block on the published page. Leaf is always exposed (the
+  // primary), so the UI disables the checkbox there. Persisted on
+  // n.data.expose_output; publish handler unions it with the leaf id into
+  // dag_snapshot.exposed_node_ids.
+  const toggleExposeOutput = (nodeId: string) => {
+    pushHistory();
+    setNodes((nds) => nds.map((n) => {
+      if (n.id !== nodeId) return n;
+      return { ...n, data: { ...n.data, expose_output: !n.data.expose_output } };
+    }));
+  };
+
   const canUndo = historyPastRef.current.length > 0;
   const canRedo = historyFutureRef.current.length > 0;
   const selectionCount = selectedNodes.length + selectedEdges.length + (selected && !selectedNodes.find((n) => n.id === selected.id) ? 1 : 0);
@@ -1344,6 +1358,13 @@ export function DagTab() {
             (acc, n) => acc + ((n.data.user_input_params?.length) || 0),
             0,
           );
+          // DAG-PUBLISH-V01-FU: count admin-flagged extra outputs (leaf is
+          // implicitly always exposed and excluded here so the count
+          // reflects opt-in surface area).
+          const sources = new Set(edges.map((e) => e.source));
+          const extraOutputCount = nodes.filter(
+            (n) => n.data.expose_output && sources.has(n.id) && n.data.sink_kind == null,
+          ).length;
           return (
             <button
               onClick={() => setPublishOpen(true)}
@@ -1351,7 +1372,7 @@ export function DagTab() {
               disabled={exposedCount === 0}
               title={exposedCount === 0
                 ? 'Tick "Expose as form input" on at least one bound param before publishing'
-                : `Publish DAG as a Tier B page — ${exposedCount} form input${exposedCount === 1 ? '' : 's'} exposed`}
+                : `Publish DAG as a Tier B page — ${exposedCount} form input${exposedCount === 1 ? '' : 's'} exposed${extraOutputCount > 0 ? `, ${extraOutputCount} extra output${extraOutputCount === 1 ? '' : 's'}` : ''}`}
               className="btn-primary text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed bg-emerald-600 hover:bg-emerald-700"
             >
               <Upload size={14} /> Publish
@@ -1671,6 +1692,39 @@ export function DagTab() {
                   <Trash2 size={14} />
                 </button>
               </div>
+
+              {/* Expose output — DAG-PUBLISH-V01-FU §5. Visible for fn + op
+                  nodes (skip sink: sinks are not runtime outputs). Leaf is
+                  forced-on; admin opt-in for intermediate frames. */}
+              {!selected.data.sink_kind && (() => {
+                const isLeaf = !edges.some((e) => e.source === selected.id);
+                const checked = isLeaf || !!selected.data.expose_output;
+                return (
+                  <label
+                    className={`flex items-center gap-2 text-xs rounded border px-2 py-1.5 cursor-pointer select-none ${
+                      checked ? 'border-indigo-300 bg-indigo-50/40 text-indigo-800' : 'border-slate-200 text-slate-700'
+                    } ${isLeaf ? 'cursor-not-allowed opacity-90' : ''}`}
+                    title={
+                      isLeaf
+                        ? 'Leaf node is always exposed as the primary output.'
+                        : 'When ticked, this node\'s frame is surfaced on the published Tier B page as an extra output block alongside the leaf.'
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={isLeaf}
+                      onChange={() => !isLeaf && toggleExposeOutput(selected.id)}
+                      data-testid={`expose-output-${selected.id}`}
+                      className="h-3 w-3"
+                    />
+                    <span className="font-medium">
+                      Expose output to Tier B
+                      {isLeaf && <span className="ml-1 text-[10px] uppercase tracking-wide opacity-70">(leaf — auto)</span>}
+                    </span>
+                  </label>
+                );
+              })()}
 
               {/* Operator-specific config block — composer-operator-and-sink §3.1 */}
               {selected.data.op_kind && (

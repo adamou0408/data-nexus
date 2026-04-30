@@ -744,11 +744,26 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
     }
 
     // 4. Build dag_snapshot (frozen).
+    // DAG-PUBLISH-V01-FU: union the leaf with admin-flagged intermediate
+    // nodes (`expose_output: true`) into `exposed_node_ids`. Filter to
+    // present node ids to defend against ghost flags from a stale client
+    // payload, and skip sink nodes (sinks are publish-time artifacts, not
+    // runtime outputs).
+    const presentNodeIds = new Set(nodes.map((n) => n.id));
+    const exposedNodeIds: string[] = [outputNodeId];
+    for (const n of nodes) {
+      if (n.id === outputNodeId) continue;
+      if (n.type === 'sink') continue;
+      if (!n.data?.expose_output) continue;
+      if (!presentNodeIds.has(n.id)) continue;
+      exposedNodeIds.push(n.id);
+    }
     const dagSnapshot = {
       data_source_id: dataSourceId,
       nodes,
       edges,
       output_node_id: outputNodeId,
+      exposed_node_ids: exposedNodeIds,
     };
 
     // 5. parent_page_id existence check (if provided).
@@ -875,6 +890,7 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       decision: 'allow',
       context: {
         dag_id: dagId, page_id, output_node_id: outputNodeId,
+        exposed_node_ids: exposedNodeIds,
         form_field_count: formSchema.length, granted_roles: grantRoles,
         page_status: pageStatus,
       },
@@ -886,6 +902,7 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       resourceId: publishedDagRid,
       details: {
         dag_id: dagId, page_id, output_node_id: outputNodeId,
+        exposed_node_ids: exposedNodeIds,
         form_field_count: formSchema.length, granted_roles: grantRoles,
       },
       ip: getClientIp(req),
@@ -897,6 +914,7 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       published_dag_id: dagId,
       published_dag_rid: publishedDagRid,
       output_node_id: outputNodeId,
+      exposed_node_ids: exposedNodeIds,
       form_schema: formSchema,
       granted_read_to: grantRoles,
     });
