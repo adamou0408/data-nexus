@@ -13,6 +13,7 @@ import { parseFunctionArgs } from '../lib/function-metadata';
 import { validateDag, DagDoc } from '../lib/dag-validate';
 import { runOperator, deriveOperatorResourceId, UpstreamFrame } from '../lib/dag-operators';
 import { emitPageSnapshot, deriveSinkUpstreamFn, SinkValidationError } from '../lib/sink-runtime';
+import { findSingleLeaf, deriveFormSchema, DagNode, DagEdge } from '../lib/dag-exec';
 import { requireRole } from '../middleware/authz';
 
 export const dagRouter = Router();
@@ -25,6 +26,11 @@ const requireDagAuthor = requireRole('DATA_STEWARD');
 // save-as-page writes to authz_ui_page, the Tier A platform metadata table —
 // gate it the same way config/snapshot is gated (AUTHZ_ADMIN per V083).
 const requirePageAuthor = requireRole('AUTHZ_ADMIN');
+// /publish opens a DAG to BI_USER as a live form-driven page. That's both a
+// page-author act (writing to authz_ui_page) AND a bless act (granting
+// BI_USER read on a new published_dag resource). DATA_STEWARD owns the
+// blessing semantics elsewhere (V044 BIZ-TERM); same role here.
+const requireDagPublisher = requireRole('DATA_STEWARD');
 
 const MAX_ROWS = 1000;
 
@@ -628,5 +634,276 @@ dagRouter.post('/execute-sink', requirePageAuthor, async (req, res) => {
       return res.status(err.status).json({ error: err.message, ...(err.hint ? { hint: err.hint } : {}) });
     }
     handleApiError(res, err);
+  }
+});
+
+// ─── POST /:id/publish — DAG-PUBLISH-V01 (live form-driven page) ───
+// Body:
+//   {
+//     page_id:        'tiptop_material_search',   // ^[a-z][a-z0-9_]*$
+//     title:          '物料 360 查詢',
+//     parent_page_id: 'modules_home',             // optional, must exist
+//     description?:   string,
+//     overwrite?:     boolean,                    // default false; required for re-publish
+//     grant_read_to_roles?: string[],             // default ['BI_USER']
+//   }
+//
+// What it does (one tx):
+//   1. Validates: DAG exists, single leaf, no cycle.
+//   2. Freezes dag_snapshot (nodes/edges/data_source_id/output_node_id).
+//   3. Derives form_schema from each fn node's user_input_params + parsed args.
+//   4. Upserts authz_ui_page row with published_dag_id + dag_snapshot + form_schema.
+//   5. Mirrors page resource into authz_resource(resource_type='page')
+//      (parent inherited from dag.parent_id, or module:pg_tiptop_v1).
+//   6. Registers authz_resource(resource_type='published_dag', resource_id='published_dag:'+dag_id).
+//   7. Grants `read` on the published_dag resource to BI_USER (or caller-specified roles).
+//
+// Authz model (Fork A — publish=bless): the published_dag resource is the
+// gate BI_USER passes through; per-fn execute permissions are NOT widened
+// for BI_USER. See plan §4 Fork A.
+dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
+  const dagId = req.params.id;
+  const {
+    page_id, title, parent_page_id, description,
+    overwrite, grant_read_to_roles,
+  } = req.body as {
+    page_id?: string;
+    title?: string;
+    parent_page_id?: string;
+    description?: string;
+    overwrite?: boolean;
+    grant_read_to_roles?: string[];
+  };
+  const userId = getUserId(req);
+
+  if (!dagId.startsWith('dag:')) {
+    return res.status(400).json({ error: 'dag_id must start with "dag:"' });
+  }
+  if (!page_id || !/^[a-z][a-z0-9_]*$/.test(page_id)) {
+    return res.status(400).json({ error: 'page_id must match ^[a-z][a-z0-9_]*$' });
+  }
+  if (!title || title.trim().length === 0) {
+    return res.status(400).json({ error: 'title is required' });
+  }
+
+  const grantRoles = Array.isArray(grant_read_to_roles) && grant_read_to_roles.length > 0
+    ? grant_read_to_roles
+    : ['BI_USER'];
+
+  const client = await authzPool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 1. Load DAG attributes.
+    const dagRow = await client.query(
+      `SELECT attributes, parent_id FROM authz_resource
+        WHERE resource_id = $1 AND resource_type = 'dag' AND is_active = TRUE`,
+      [dagId]
+    );
+    if (dagRow.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: `DAG not found: ${dagId}` });
+    }
+    const attrs = dagRow.rows[0].attributes || {};
+    const dagParent = dagRow.rows[0].parent_id as string | null;
+    const nodes: DagNode[] = attrs.nodes || [];
+    const edges: DagEdge[] = attrs.edges || [];
+    const dataSourceId = attrs.data_source_id as string;
+    if (!dataSourceId) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'DAG has no data_source_id — cannot publish' });
+    }
+
+    // 2. Single-leaf invariant + structural validation (refuses cycle).
+    let outputNodeId: string;
+    try {
+      outputNodeId = findSingleLeaf(nodes, edges);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      const msg = err instanceof Error ? err.message : String(err);
+      return res.status(400).json({ error: `DAG not publishable: ${msg}` });
+    }
+    // Cast: dag-exec.DagEdge omits the optional `id` field that dag-validate's
+    // DagEdge requires for issue-reporting; the persisted attributes always
+    // carry it (the /save handler stores client edges verbatim).
+    const validation = validateDag({ nodes, edges } as unknown as DagDoc);
+    const errs = validation.issues.filter((i) => i.severity === 'error');
+    if (errs.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'DAG validation failed', issues: errs });
+    }
+
+    // 3. Derive form_schema. Refuse publish if no user_input_params anywhere
+    // (a published page with zero inputs would be redundant — that's a snapshot).
+    const formSchema = deriveFormSchema(nodes);
+    if (formSchema.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'DAG has no user_input_params — nothing to render as a form. Mark at least one bound_param as form input in Composer, or use Save as Page (snapshot) instead.',
+      });
+    }
+
+    // 4. Build dag_snapshot (frozen).
+    const dagSnapshot = {
+      data_source_id: dataSourceId,
+      nodes,
+      edges,
+      output_node_id: outputNodeId,
+    };
+
+    // 5. parent_page_id existence check (if provided).
+    if (parent_page_id) {
+      const pCheck = await client.query(`SELECT 1 FROM authz_ui_page WHERE page_id = $1`, [parent_page_id]);
+      if (pCheck.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `parent_page_id not found: ${parent_page_id}` });
+      }
+    }
+
+    // 6. FK-safe ordering: insert authz_resource rows BEFORE the
+    // authz_ui_page row that references them via resource_id +
+    // published_dag_id. The publish-mode mutex constraint
+    // (authz_ui_page_publish_mode_check) lives on the page row and
+    // enforces snapshot/published exclusivity.
+    const publishedDagRid = `published_dag:${dagId}`;
+    const pageRid = `page:${page_id}`;
+    const pageParent = dagParent || 'module:pg_tiptop_v1';
+
+    const exists = await client.query(`SELECT 1 FROM authz_ui_page WHERE page_id = $1`, [page_id]);
+    let pageStatus: 'created' | 'overwritten';
+    if (exists.rowCount && !overwrite) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: 'page_id already exists',
+        hint: 'Pass overwrite:true to replace the existing page (snapshot will be cleared).',
+      });
+    }
+
+    // 6a. Bless gate: published_dag:<rid> resource — must exist before
+    // authz_ui_page.resource_id can FK to it.
+    const blessAttrs = {
+      dag_id: dagId,
+      page_id,
+      output_node_id: outputNodeId,
+      blessed_by: userId,
+      blessed_at: new Date().toISOString(),
+    };
+    await client.query(
+      `INSERT INTO authz_resource
+         (resource_id, resource_type, parent_id, display_name, attributes, is_active)
+       VALUES ($1, 'published_dag', $2, $3, $4::jsonb, TRUE)
+       ON CONFLICT (resource_id) DO UPDATE
+         SET parent_id    = EXCLUDED.parent_id,
+             display_name = EXCLUDED.display_name,
+             attributes   = EXCLUDED.attributes,
+             is_active    = TRUE`,
+      [publishedDagRid, pageParent, `Published: ${title}`, JSON.stringify(blessAttrs)]
+    );
+
+    // 6b. Page mirror in authz_resource (V081 dual-write parity), so
+    // ModulesTab finds the page in cascade.
+    const pageMirrorAttrs = {
+      page_id,
+      origin_kind: 'published_dag',
+      dag_id: dagId,
+      output_node_id: outputNodeId,
+    };
+    await client.query(
+      `INSERT INTO authz_resource
+         (resource_id, resource_type, parent_id, display_name, attributes, is_active)
+       VALUES ($1, 'page', $2, $3, $4::jsonb, TRUE)
+       ON CONFLICT (resource_id) DO UPDATE
+         SET parent_id    = EXCLUDED.parent_id,
+             display_name = EXCLUDED.display_name,
+             attributes   = EXCLUDED.attributes,
+             is_active    = TRUE`,
+      [pageRid, pageParent, title, JSON.stringify(pageMirrorAttrs)]
+    );
+
+    // 6c. Upsert authz_ui_page. resource_id points at the bless gate so
+    // step 2 of /api/config-exec (authz_check 'read' on resource_id)
+    // already gates BI_USER without any new code there.
+    if (exists.rowCount && overwrite) {
+      await client.query(
+        `UPDATE authz_ui_page
+            SET title = $2,
+                parent_page_id = $3,
+                description = $4,
+                snapshot_data = NULL,
+                resource_id = $5,
+                published_dag_id = $6,
+                dag_snapshot = $7::jsonb,
+                form_schema = $8::jsonb,
+                is_active = TRUE
+          WHERE page_id = $1`,
+        [
+          page_id, title, parent_page_id || null, description || null,
+          publishedDagRid, dagId, JSON.stringify(dagSnapshot), JSON.stringify(formSchema),
+        ]
+      );
+      pageStatus = 'overwritten';
+    } else {
+      await client.query(
+        `INSERT INTO authz_ui_page
+           (page_id, title, layout, parent_page_id, description, icon,
+            resource_id, published_dag_id, dag_snapshot, form_schema, is_active)
+         VALUES ($1, $2, 'table', $3, $4, 'workflow', $5, $6, $7::jsonb, $8::jsonb, TRUE)`,
+        [
+          page_id, title, parent_page_id || null, description || null,
+          publishedDagRid, dagId, JSON.stringify(dagSnapshot), JSON.stringify(formSchema),
+        ]
+      );
+      pageStatus = 'created';
+    }
+
+    // 7. Grant `read` on the bless gate to each requested role.
+    // ON CONFLICT keeps re-publish idempotent (unique on role/action/rid).
+    for (const roleId of grantRoles) {
+      await client.query(
+        `INSERT INTO authz_role_permission (role_id, action_id, resource_id, effect, is_active)
+         VALUES ($1, 'read', $2, 'allow', TRUE)
+         ON CONFLICT (role_id, action_id, resource_id) DO UPDATE SET is_active = TRUE`,
+        [roleId, publishedDagRid]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    audit({
+      access_path: 'A', subject_id: userId,
+      action_id: 'dag_publish', resource_id: publishedDagRid,
+      decision: 'allow',
+      context: {
+        dag_id: dagId, page_id, output_node_id: outputNodeId,
+        form_field_count: formSchema.length, granted_roles: grantRoles,
+        page_status: pageStatus,
+      },
+    });
+    void logAdminAction(authzPool, {
+      userId,
+      action: pageStatus === 'overwritten' ? 'DAG_PUBLISH_OVERWRITE' : 'DAG_PUBLISH',
+      resourceType: 'published_dag',
+      resourceId: publishedDagRid,
+      details: {
+        dag_id: dagId, page_id, output_node_id: outputNodeId,
+        form_field_count: formSchema.length, granted_roles: grantRoles,
+      },
+      ip: getClientIp(req),
+    });
+
+    res.status(pageStatus === 'overwritten' ? 200 : 201).json({
+      status: pageStatus,
+      page_id,
+      published_dag_id: dagId,
+      published_dag_rid: publishedDagRid,
+      output_node_id: outputNodeId,
+      form_schema: formSchema,
+      granted_read_to: grantRoles,
+    });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* noop */ }
+    handleApiError(res, err);
+  } finally {
+    client.release();
   }
 });

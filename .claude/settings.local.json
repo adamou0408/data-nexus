@@ -72,7 +72,13 @@
       "PowerShell(Get-CimInstance Win32_Process -Filter 'ProcessId = 21144')",
       "PowerShell(Get-CimInstance *)",
       "PowerShell(Stop-Process *)",
-      "PowerShell(Get-NetTCPConnection *)"
+      "PowerShell(Get-NetTCPConnection *)",
+      "PowerShell(docker cp \"D:\\\\Adam\\\\project\\\\data-nexus\\\\database\\\\seed\\\\_test_publish_smoke.sql\" docker-compose-postgres-1:/tmp/_test_publish_smoke.sql)",
+      "PowerShell(docker exec docker-compose-postgres-1 psql -U nexus_admin -d nexus_authz -f /tmp/_test_publish_smoke.sql 2>&1)",
+      "PowerShell(docker exec docker-compose-postgres-1 psql -U nexus_admin -d nexus_authz -c \"SELECT page_id, title, resource_id, published_dag_id, form_schema, dag_snapshot->'output_node_id' as out_node FROM authz_ui_page WHERE page_id='smoke_test_publish';\" 2>&1)",
+      "PowerShell(docker exec docker-compose-postgres-1 psql -U nexus_admin -d nexus_authz -c \"SELECT role_id, action_id, resource_id, effect FROM authz_role_permission WHERE resource_id='published_dag:dag:_test_publish_smoke';\")",
+      "PowerShell(netstat *)",
+      "PowerShell($proc = Start-Process -FilePath \"cmd.exe\" -ArgumentList \"/c\", \"npm\", \"run\", \"dev\" -WorkingDirectory \"D:\\\\Adam\\\\project\\\\data-nexus\\\\services\\\\authz-api\" -RedirectStandardOutput \"D:\\\\Adam\\\\project\\\\data-nexus\\\\authz-api.log\" -RedirectStandardError \"D:\\\\Adam\\\\project\\\\data-nexus\\\\authz-api.err.log\" -WindowStyle Hidden -PassThru; Write-Output \"PID: $\\($proc.Id\\)\")"
     ]
   }
 }

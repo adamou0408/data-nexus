@@ -18,7 +18,7 @@ import {
   Workflow, Save, Trash2, Play, Plus, Search, CheckCircle2, AlertCircle,
   Loader2, Database, Sparkles, FileText, Undo2, Redo2, X,
   PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen,
-  FileOutput,
+  FileOutput, Upload,
 } from 'lucide-react';
 
 // ── Types ──
@@ -66,6 +66,7 @@ type NodeData = {
   inputs: IO[];
   outputs: IO[];
   bound_params: Record<string, unknown>;
+  user_input_params?: string[];     // DAG-PUBLISH-V01: bound_param names exposed as form inputs at publish
   return_shape?: ReturnShape;       // fn nodes only — surfaces multiplicity badge
   op_kind?: OpKind;                 // operator nodes only
   op_config?: OpConfig;             // operator nodes only
@@ -614,6 +615,7 @@ export function DagTab() {
   const [running, setRunning] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savePageOpenFor, setSavePageOpenFor] = useState<string | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
   const nextIdRef = useRef(1);
 
   // ── Layout Tier 4 (FC-01b): collapsible Palette/Inspector + viewport-tall canvas ──
@@ -1242,6 +1244,21 @@ export function DagTab() {
     }));
   };
 
+  // DAG-PUBLISH-V01: toggle whether a bound_param is exposed to BI_USER as a
+  // form input on the published page. Updates the parallel `user_input_params`
+  // array on n.data; bound_params keeps the admin-side default value, which
+  // the published exec injects only when the form leaves the field blank.
+  const toggleUserInput = (nodeId: string, argName: string) => {
+    pushHistory();
+    setNodes((nds) => nds.map((n) => {
+      if (n.id !== nodeId) return n;
+      const cur = new Set<string>(n.data.user_input_params || []);
+      if (cur.has(argName)) cur.delete(argName);
+      else cur.add(argName);
+      return { ...n, data: { ...n.data, user_input_params: Array.from(cur) } };
+    }));
+  };
+
   const canUndo = historyPastRef.current.length > 0;
   const canRedo = historyFutureRef.current.length > 0;
   const selectionCount = selectedNodes.length + selectedEdges.length + (selected && !selectedNodes.find((n) => n.id === selected.id) ? 1 : 0);
@@ -1322,6 +1339,25 @@ export function DagTab() {
         <button onClick={save} disabled={saving} className="btn-primary text-sm flex items-center gap-1">
           {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save
         </button>
+        {currentDagId && (() => {
+          const exposedCount = nodes.reduce(
+            (acc, n) => acc + ((n.data.user_input_params?.length) || 0),
+            0,
+          );
+          return (
+            <button
+              onClick={() => setPublishOpen(true)}
+              data-testid="dag-publish-open"
+              disabled={exposedCount === 0}
+              title={exposedCount === 0
+                ? 'Tick "Expose as form input" on at least one bound param before publishing'
+                : `Publish DAG as a Tier B page — ${exposedCount} form input${exposedCount === 1 ? '' : 's'} exposed`}
+              className="btn-primary text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed bg-emerald-600 hover:bg-emerald-700"
+            >
+              <Upload size={14} /> Publish
+            </button>
+          );
+        })()}
         {currentDagId && (
           <button onClick={del} className="btn-danger text-sm flex items-center gap-1">
             <Trash2 size={14} /> Delete
@@ -1571,6 +1607,21 @@ export function DagTab() {
           );
         })()}
 
+        {publishOpen && currentDagId && (
+          <PublishDagDialog
+            dagId={currentDagId}
+            displayName={displayName}
+            description={description}
+            nodes={nodes}
+            onClose={() => setPublishOpen(false)}
+            onPublished={(pid) => {
+              setPublishOpen(false);
+              showToast(`Published as page "${pid}". Opening it now…`, 'success');
+              window.dispatchEvent(new CustomEvent('open-auto-page', { detail: { page_id: pid } }));
+            }}
+          />
+        )}
+
         {/* ── Right: Inspector ── */}
         {inspectorCollapsed ? (
           <div className="bg-white border border-slate-200 rounded-lg p-2 flex flex-col items-center gap-2 shrink-0" style={{ width: 44 }}>
@@ -1723,8 +1774,9 @@ export function DagTab() {
                   {selected.data.inputs.map((i) => {
                     const bound = (selected.data.bound_params as any)[i.name];
                     const hasEdge = edges.some((e) => e.target === selected.id && e.targetHandle === i.name);
+                    const isUserInput = (selected.data.user_input_params || []).includes(i.name);
                     return (
-                      <div key={i.name} className="border border-slate-200 rounded p-2">
+                      <div key={i.name} className={`border rounded p-2 ${isUserInput ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200'}`}>
                         <div className="text-xs flex items-center justify-between">
                           <span>
                             <span style={{ color: colorFor(i.semantic_type) }}>●</span> {i.name}
@@ -1732,6 +1784,23 @@ export function DagTab() {
                           </span>
                           <span className="text-[10px] text-slate-500">{i.semantic_type || 'unknown'}</span>
                         </div>
+                        {!hasEdge && (
+                          <label
+                            className="flex items-center gap-1.5 text-[10px] text-slate-700 mt-1 cursor-pointer select-none"
+                            title="When ticked, this param appears as a form input on the published Tier B page. The bound value below becomes the form's default."
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isUserInput}
+                              onChange={() => toggleUserInput(selected.id, i.name)}
+                              data-testid={`user-input-${selected.id}-${i.name}`}
+                              className="h-3 w-3"
+                            />
+                            <span className={isUserInput ? 'text-emerald-700 font-medium' : ''}>
+                              Expose as form input{isUserInput ? ' ✓' : ''}
+                            </span>
+                          </label>
+                        )}
                         {hasEdge ? (
                           <div className="text-[10px] text-emerald-700 mt-1">↑ connected (upstream)</div>
                         ) : (() => {
@@ -2296,6 +2365,195 @@ function SaveAsPageDialog({
             className="btn-primary text-xs flex items-center gap-1"
           >
             {submitting ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save page
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Publish dialog (DAG-PUBLISH-V01) ──
+// Posts the saved DAG (server reads from authz_resource — never trusts the
+// client snapshot) to /api/dag/:rid/publish. The server snapshots the DAG-JSON,
+// derives form_schema from user_input_params, registers the bless gate
+// `published_dag:<rid>`, and grants `read` to BI_USER. End-user form rendering
+// happens in ConfigEngine.
+function PublishDagDialog({
+  dagId,
+  displayName,
+  description: initialDescription,
+  nodes,
+  onClose,
+  onPublished,
+}: {
+  dagId: string;
+  displayName: string;
+  description: string;
+  nodes: Node<NodeData>[];
+  onClose: () => void;
+  onPublished: (pageId: string) => void;
+}) {
+  const userInputs = useMemo(() => {
+    const list: Array<{ nodeId: string; nodeLabel: string; param: string }> = [];
+    for (const n of nodes) {
+      for (const p of n.data.user_input_params || []) {
+        list.push({ nodeId: n.id, nodeLabel: n.data.label, param: p });
+      }
+    }
+    return list;
+  }, [nodes]);
+
+  const defaultPageId = dagId.replace(/^dag:/, '').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  const [pageId, setPageId] = useState(defaultPageId);
+  const [title, setTitle] = useState(displayName);
+  const [parentPageId, setParentPageId] = useState('modules_home');
+  const [description, setDescription] = useState(initialDescription || `Published from ${dagId}`);
+  const [overwrite, setOverwrite] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setError(null);
+    if (!/^[a-z][a-z0-9_]*$/.test(pageId)) {
+      setError('page_id must start with a lowercase letter and contain only lowercase letters, digits, underscores.');
+      return;
+    }
+    if (!title.trim()) {
+      setError('title is required.');
+      return;
+    }
+    if (userInputs.length === 0) {
+      setError('No params marked as form inputs. Tick "Expose as form input" on at least one bound param before publishing.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const r = await api.dagPublish(dagId, {
+        page_id: pageId,
+        title: title.trim(),
+        parent_page_id: parentPageId.trim() || undefined,
+        description: description.trim() || undefined,
+        overwrite,
+      });
+      onPublished(r.page_id);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('already exists')) {
+        setError('Page already exists. Tick "Overwrite existing" to replace it.');
+      } else {
+        setError(msg);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/40" />
+      <div
+        className="relative w-full max-w-md bg-white rounded-lg shadow-xl border border-slate-200 flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+        data-testid="publish-dag-dialog"
+      >
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200">
+          <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+            <Upload size={14} className="text-emerald-600" /> Publish DAG as live Tier B page
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X size={16} /></button>
+        </div>
+
+        <div className="px-4 py-3 space-y-3 text-xs">
+          <div className="bg-emerald-50 border border-emerald-200 rounded p-2 text-slate-700">
+            <div className="font-medium text-emerald-900 mb-1">{userInputs.length} form input{userInputs.length === 1 ? '' : 's'} exposed</div>
+            <ul className="space-y-0.5 text-[10px] text-slate-600 font-mono">
+              {userInputs.map((u, idx) => (
+                <li key={idx}>• {u.param} <span className="text-slate-400">— {u.nodeLabel}</span></li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <label className="block text-slate-700 font-medium mb-1">Page ID</label>
+            <input
+              data-testid="publish-page-id"
+              value={pageId}
+              onChange={(e) => setPageId(e.target.value.toLowerCase())}
+              className="w-full border border-slate-200 rounded px-2 py-1 font-mono"
+            />
+            <div className="text-[10px] text-slate-500 mt-0.5">Lowercase, starts with letter; no spaces.</div>
+          </div>
+
+          <div>
+            <label className="block text-slate-700 font-medium mb-1">Title</label>
+            <input
+              data-testid="publish-page-title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full border border-slate-200 rounded px-2 py-1"
+            />
+          </div>
+
+          <div>
+            <label className="block text-slate-700 font-medium mb-1">Parent page</label>
+            <input
+              data-testid="publish-page-parent"
+              value={parentPageId}
+              onChange={(e) => setParentPageId(e.target.value)}
+              className="w-full border border-slate-200 rounded px-2 py-1 font-mono"
+              placeholder="modules_home"
+            />
+          </div>
+
+          <div>
+            <label className="block text-slate-700 font-medium mb-1">Description</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              className="w-full border border-slate-200 rounded px-2 py-1"
+            />
+          </div>
+
+          <label className="flex items-center gap-2 text-slate-700">
+            <input
+              type="checkbox"
+              checked={overwrite}
+              onChange={(e) => setOverwrite(e.target.checked)}
+              data-testid="publish-overwrite"
+            />
+            Overwrite existing page if page_id matches
+          </label>
+
+          <div className="text-[10px] text-slate-500 bg-slate-50 rounded p-2">
+            Publishing grants <span className="font-mono">BI_USER</span> read access to the published gate
+            <span className="font-mono"> published_dag:{dagId}</span>. End users can then run the DAG
+            from the page form; per-fn execute permissions are not changed.
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded p-2 text-red-700 text-xs flex items-start gap-1.5">
+              <AlertCircle size={12} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-slate-200">
+          <button onClick={onClose} className="btn-secondary text-xs">Cancel</button>
+          <button
+            onClick={submit}
+            disabled={submitting}
+            data-testid="publish-submit"
+            className="btn-primary text-xs flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700"
+          >
+            {submitting ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />} Publish
           </button>
         </div>
       </div>

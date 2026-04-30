@@ -78,16 +78,34 @@ export const api = {
   configExecRoot: () =>
     request<{ config: Record<string, unknown> }>('/config-exec/root', { method: 'POST', body: '{}' }),
 
-  configExecPage: (pageId: string, params?: Record<string, string>) =>
+  // Note: `params` is unknown-typed because published_dag form values may be
+  // arrays (text[]), numbers, booleans — not just drill-down strings. The
+  // server discriminates: drill-down pages coerce to string filters, published
+  // pages route values directly into PG fn bound_params.
+  configExecPage: (pageId: string, params?: Record<string, unknown>) =>
     request<{
       config: Record<string, unknown>;
       data: Record<string, unknown>[];
       meta: {
-        filteredCount: number;
-        totalCount: number;
-        columnMasks: Record<string, string>;
-        resolvedRoles: string[];
-        filterClause: string;
+        // standard data-table page meta
+        filteredCount?: number;
+        totalCount?: number;
+        columnMasks?: Record<string, string>;
+        resolvedRoles?: string[];
+        filterClause?: string;
+        // DAG-PUBLISH-V01 published-dag meta (form_load + exec stages)
+        published_dag?: boolean;
+        stage?: 'form_load' | 'exec';
+        form_schema?: Array<{
+          name: string; type: string; pg_type?: string;
+          required: boolean; default: unknown;
+          help_text?: string; source_node_id: string;
+        }>;
+        output_node_id?: string;
+        row_count?: number;
+        truncated?: boolean;
+        elapsed_ms?: number;
+        lineage?: Array<{ node_id: string; detail: string }>;
       };
     }>('/config-exec', {
       method: 'POST',
@@ -448,6 +466,31 @@ export const api = {
   }) =>
     request<{ status: 'created' | 'overwritten'; page_id: string; row_count: number; column_count: number }>(
       '/dag/save-as-page', { method: 'POST', body: JSON.stringify(payload) }
+    ),
+
+  // DAG-PUBLISH-V01 — publish a DAG as a live Tier B page.
+  // Server registers `published_dag:<rid>` resource, snapshots the DAG-JSON,
+  // derives the form schema from user_input_params, grants `read` on the
+  // bless gate to the requested roles (default BI_USER).
+  dagPublish: (resource_id: string, payload: {
+    page_id: string;
+    title: string;
+    parent_page_id?: string;
+    description?: string;
+    overwrite?: boolean;
+    grant_read_to_roles?: string[];
+  }) =>
+    request<{
+      status: 'created' | 'overwritten';
+      page_id: string;
+      published_dag_id: string;
+      published_dag_rid: string;
+      output_node_id: string;
+      form_schema: Array<{ name: string; type: string; pg_type?: string; required: boolean; default: unknown; help_text?: string; source_node_id: string }>;
+      granted_read_to: string[];
+    }>(
+      `/dag/${encodeURIComponent(resource_id)}/publish`,
+      { method: 'POST', body: JSON.stringify(payload) }
     ),
 
   // sink-as-node-kind plan §3.3 — composer-native sink dispatch.

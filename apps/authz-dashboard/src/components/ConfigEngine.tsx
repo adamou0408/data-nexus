@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, ReactNode, useMemo, ComponentType } from 'react';
+import { useState, useEffect, useCallback, ReactNode, useMemo, ComponentType, FormEvent } from 'react';
 import { useAuthz } from '../AuthzContext';
 import { useRenderTokens, RenderTokens } from '../RenderTokensContext';
 import { api, SavedViewConfig } from '../api';
@@ -69,19 +69,44 @@ type PageConfig = {
    *  (header + body); ConfigEngine skips built-in layout rendering.
    *  Mapped to a React component via HANDLER_REGISTRY. */
   handler_name?: string;
+  // DAG-PUBLISH-V01: published-DAG live page. When `published_dag_id` is set,
+  // the page renders a form derived from `form_schema` instead of a static
+  // grid; submit re-calls /api/config-exec with the form values to live-run
+  // the snapshotted DAG under the caller's authz.
+  published_dag_id?: string;
+  form_schema?: PublishedFormField[];
+};
+
+type PublishedFormField = {
+  name: string;
+  type: string;          // 'text' | 'number' | 'bool' | 'date' | 'datetime' | 'array' | 'json' | 'unknown'
+  pg_type?: string;
+  required: boolean;
+  default: unknown;
+  help_text?: string;
+  source_node_id: string;
 };
 
 type PageMeta = {
-  filteredCount: number;
-  totalCount: number;
-  columnMasks: Record<string, string>;
-  resolvedRoles: string[];
-  filterClause: string;
+  filteredCount?: number;
+  totalCount?: number;
+  columnMasks?: Record<string, string>;
+  resolvedRoles?: string[];
+  filterClause?: string;
+  // DAG-PUBLISH-V01 — present on published_dag pages
+  published_dag?: boolean;
+  stage?: 'form_load' | 'exec';
+  form_schema?: PublishedFormField[];
+  output_node_id?: string;
+  row_count?: number;
+  truncated?: boolean;
+  elapsed_ms?: number;
+  lineage?: Array<{ node_id: string; detail: string }>;
 };
 
 type StackEntry = {
   pageId: string;
-  params: Record<string, string>;
+  params: Record<string, unknown>;          // widened for published_dag form values (text[], number, bool…)
   config: PageConfig;
   data: Record<string, unknown>[];
   meta?: PageMeta;
@@ -620,6 +645,254 @@ function TablePageWithSavedView(props: {
 }
 
 // ============================================================
+// PublishedDagPage — DAG-PUBLISH-V01 live page renderer.
+// Renders form_schema as inputs, submits via configExecPage which
+// re-runs the snapshotted DAG live under the caller's authz, then
+// renders the result rows below the form when meta.stage === 'exec'.
+// ============================================================
+
+function fieldInitialValue(field: PublishedFormField): unknown {
+  // Convert API-side default (typed JSON) into a UI-side string for text-y
+  // inputs. For arrays we join with ", " so the user can edit comma-sep.
+  if (field.default !== null && field.default !== undefined) {
+    if (field.type === 'array' && Array.isArray(field.default)) {
+      return (field.default as unknown[]).map(String).join(', ');
+    }
+    if (field.type === 'bool') return Boolean(field.default);
+    if (field.type === 'json') return JSON.stringify(field.default, null, 2);
+    return String(field.default);
+  }
+  // No default → empty for text/number/array, false for bool
+  if (field.type === 'bool') return false;
+  return '';
+}
+
+function coerceFormValue(field: PublishedFormField, raw: unknown): unknown {
+  // Translate UI-side string → API-side typed value matching pg_type.
+  if (raw === '' || raw === null || raw === undefined) {
+    return field.required ? raw : null;
+  }
+  switch (field.type) {
+    case 'array': {
+      const s = String(raw).trim();
+      if (!s) return [];
+      return s.split(',').map(t => t.trim()).filter(Boolean);
+    }
+    case 'number': {
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : raw;
+    }
+    case 'bool':
+      return Boolean(raw);
+    case 'json': {
+      const s = String(raw).trim();
+      if (!s) return null;
+      try { return JSON.parse(s); } catch { return s; }
+    }
+    default:
+      return raw;
+  }
+}
+
+function PublishedDagPage({
+  entry,
+  onSubmit,
+}: {
+  entry: StackEntry;
+  onSubmit: (formValues: Record<string, unknown>) => void | Promise<void>;
+}) {
+  // Form schema lives on either config (form_load stage) or meta (after exec)
+  const schema: PublishedFormField[] = useMemo(
+    () => entry.config.form_schema || entry.meta?.form_schema || [],
+    [entry.config.form_schema, entry.meta?.form_schema],
+  );
+
+  const [values, setValues] = useState<Record<string, unknown>>(() => {
+    const init: Record<string, unknown> = {};
+    for (const f of schema) init[f.name] = fieldInitialValue(f);
+    // Preserve previously submitted params on re-render
+    for (const [k, v] of Object.entries(entry.params || {})) {
+      if (Array.isArray(v)) init[k] = (v as unknown[]).map(String).join(', ');
+      else if (v !== null && v !== undefined) init[k] = typeof v === 'object' ? JSON.stringify(v, null, 2) : v;
+    }
+    return init;
+  });
+
+  const handleChange = (name: string, raw: unknown) => {
+    setValues(prev => ({ ...prev, [name]: raw }));
+  };
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    const coerced: Record<string, unknown> = {};
+    for (const f of schema) {
+      coerced[f.name] = coerceFormValue(f, values[f.name]);
+    }
+    void onSubmit(coerced);
+  };
+
+  const stage = entry.meta?.stage;
+  const rows = entry.data || [];
+  const lineage = entry.meta?.lineage || [];
+  const elapsedMs = entry.meta?.elapsed_ms;
+  const truncated = entry.meta?.truncated;
+  const rowCount = entry.meta?.row_count;
+
+  // Build column list for result table dynamically from the first row's keys.
+  // Published exec doesn't return a column_def array (we don't have masks yet).
+  const resultColumns: string[] = useMemo(() => {
+    if (rows.length === 0) return [];
+    return Object.keys(rows[0]);
+  }, [rows]);
+
+  return (
+    <div>
+      {/* Form */}
+      <form
+        onSubmit={handleSubmit}
+        className="mb-6 p-4 bg-white border border-slate-200 rounded-lg"
+      >
+        <div className="text-sm font-medium text-slate-700 mb-3 flex items-center gap-2">
+          <span>Parameters</span>
+          {entry.meta?.output_node_id && (
+            <span className="text-xs font-mono text-slate-400">
+              → {entry.meta.output_node_id}
+            </span>
+          )}
+        </div>
+
+        {schema.length === 0 ? (
+          <div className="text-xs text-slate-500 italic mb-3">
+            No exposed parameters — DAG will run with snapshot-bound inputs.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            {schema.map((field) => (
+              <div key={field.name} className="flex flex-col">
+                <label className="text-xs font-medium text-slate-600 mb-1 flex items-center gap-1">
+                  <span className="font-mono">{field.name}</span>
+                  {field.required && <span className="text-red-500">*</span>}
+                  {field.pg_type && (
+                    <span className="text-slate-400 font-normal">({field.pg_type})</span>
+                  )}
+                  <HelpIcon text={field.help_text} />
+                </label>
+                {field.type === 'bool' ? (
+                  <label className="inline-flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(values[field.name])}
+                      onChange={(e) => handleChange(field.name, e.target.checked)}
+                      className="w-4 h-4"
+                    />
+                    <span className="text-slate-600 text-xs">{String(Boolean(values[field.name]))}</span>
+                  </label>
+                ) : field.type === 'json' ? (
+                  <textarea
+                    value={String(values[field.name] ?? '')}
+                    onChange={(e) => handleChange(field.name, e.target.value)}
+                    placeholder={field.required ? 'required' : 'optional'}
+                    rows={4}
+                    className="border border-slate-300 rounded px-2 py-1 text-sm font-mono"
+                  />
+                ) : (
+                  <input
+                    type={field.type === 'number' ? 'number' : 'text'}
+                    value={String(values[field.name] ?? '')}
+                    onChange={(e) => handleChange(field.name, e.target.value)}
+                    placeholder={
+                      field.type === 'array'
+                        ? 'comma,separated,values'
+                        : field.required ? 'required' : 'optional'
+                    }
+                    className="border border-slate-300 rounded px-2 py-1 text-sm"
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <button
+            type="submit"
+            className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded font-medium"
+          >
+            Run DAG
+          </button>
+          {stage === 'exec' && (
+            <span className="text-xs text-slate-500">
+              {typeof rowCount === 'number' && <>Returned <strong>{rowCount}</strong> row(s)</>}
+              {truncated && <span className="ml-2 text-amber-600">(truncated)</span>}
+              {typeof elapsedMs === 'number' && <span className="ml-2">in {elapsedMs} ms</span>}
+            </span>
+          )}
+        </div>
+      </form>
+
+      {/* Result */}
+      {stage === 'exec' && (
+        rows.length === 0 ? (
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-500">
+            No rows returned.
+          </div>
+        ) : (
+          <div className="overflow-x-auto border border-slate-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  {resultColumns.map((c) => (
+                    <th key={c} className="px-3 py-2 text-left font-medium text-slate-600 font-mono text-xs">
+                      {c}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, i) => (
+                  <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                    {resultColumns.map((c) => {
+                      const v = row[c];
+                      return (
+                        <td key={c} className="px-3 py-2 text-slate-700">
+                          {v === null || v === undefined
+                            ? <span className="text-slate-300">—</span>
+                            : typeof v === 'object'
+                              ? <code className="font-mono text-xs">{JSON.stringify(v)}</code>
+                              : String(v)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+
+      {/* Lineage (debug aid for curators) */}
+      {stage === 'exec' && lineage.length > 0 && (
+        <details className="mt-3 text-xs text-slate-500">
+          <summary className="cursor-pointer hover:text-slate-700">Execution lineage ({lineage.length} step{lineage.length === 1 ? '' : 's'})</summary>
+          <div className="mt-2 p-2 bg-slate-50 border border-slate-200 rounded font-mono space-y-1">
+            {lineage.map((step, i) => (
+              <div key={i}>
+                <span className="text-slate-400">{i + 1}.</span>{' '}
+                <span className="text-slate-700">{step.node_id}</span>{' '}
+                <span className="text-slate-500">— {step.detail}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      <FeedbackButton pageId={entry.pageId} />
+    </div>
+  );
+}
+
+// ============================================================
 // ConfigDrilldownEngine — main component
 // ============================================================
 
@@ -665,7 +938,7 @@ export function ConfigEngine({ initialPageId }: { initialPageId?: string } = {})
   useEffect(() => { loadRoot(); }, [loadRoot]);
 
   // Navigate to a page
-  const navigateTo = useCallback(async (pageId: string, params: Record<string, string> = {}) => {
+  const navigateTo = useCallback(async (pageId: string, params: Record<string, unknown> = {}) => {
     setLoading(true);
     setError(null);
     try {
@@ -787,7 +1060,37 @@ export function ConfigEngine({ initialPageId }: { initialPageId?: string } = {})
           );
         }
         return <Handler config={current.config} />;
-      })() : (
+      })() : current.config.published_dag_id ? (
+        // DAG-PUBLISH-V01: live published-DAG page. Form on top, results
+        // (when present) below. Submit re-calls configExecPage with form
+        // values, replacing the current stack entry so back-button still
+        // returns to the parent module.
+        <PublishedDagPage
+          key={current.pageId}
+          entry={current}
+          onSubmit={async (formValues) => {
+            setLoading(true);
+            setError(null);
+            try {
+              const result = await api.configExecPage(current.pageId, formValues);
+              setStack(prev => [
+                ...prev.slice(0, -1),
+                {
+                  pageId: current.pageId,
+                  params: formValues,
+                  config: result.config as unknown as PageConfig,
+                  data: result.data || [],
+                  meta: result.meta as unknown as PageMeta,
+                },
+              ]);
+            } catch (err) {
+              setError(String(err));
+            } finally {
+              setLoading(false);
+            }
+          }}
+        />
+      ) : (
         <>
           {/* Built-in layout router (no handler) */}
           {current.config.layout === 'card_grid' && current.config.components && (
@@ -814,15 +1117,16 @@ export function ConfigEngine({ initialPageId }: { initialPageId?: string } = {})
         </>
       )}
 
-      {/* Drill-down params display (when navigated with params) */}
-      {Object.keys(current.params).length > 0 && (
+      {/* Drill-down params display (when navigated with params, only on
+          non-published pages — published pages already render the form). */}
+      {!current.config.published_dag_id && Object.keys(current.params).length > 0 && (
         <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded-lg">
           <div className="text-xs font-medium text-slate-500 mb-1">Drill-down Parameters</div>
           <div className="flex flex-wrap gap-2">
             {Object.entries(current.params).map(([k, v]) => (
               <span key={k} className="text-xs bg-white border border-slate-200 rounded px-2 py-1">
                 <span className="text-slate-500">{k}:</span>{' '}
-                <span className="font-medium text-slate-700">{v}</span>
+                <span className="font-medium text-slate-700">{Array.isArray(v) ? v.join(', ') : String(v ?? '')}</span>
               </span>
             ))}
           </div>

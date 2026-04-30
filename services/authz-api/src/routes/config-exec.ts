@@ -3,6 +3,7 @@ import { pool, getDataSourcePool, resolveDataSource, getLocalDataPool } from '..
 import { buildMaskedSelect, ColumnDef } from '../lib/masked-query';
 import { handleApiError } from '../lib/request-helpers';
 import { audit } from '../audit';
+import { executeDagAsPublished, DagExecError, PublishedDagSnapshot } from '../lib/dag-exec';
 
 export const configExecRouter = Router();
 
@@ -89,6 +90,97 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
           error: 'Forbidden',
           detail: `${user.user_id} lacks read access to ${config.resource_id}`,
         });
+      }
+    }
+
+    // Step 3a-pre: Published-DAG live pages (DAG-PUBLISH-V01).
+    // Mutually exclusive with snapshot_data via authz_ui_page_publish_mode_check.
+    // First call (no params, or empty params) returns the form_schema so the
+    // client can render the form before the user submits. Subsequent calls
+    // with a non-empty `params` object execute the snapshotted DAG live, with
+    // BI_USER's identity scoping the per-row mask layer (phase 2).
+    //
+    // Authz: step 2 above already gated `read` on config.resource_id, which
+    // for published pages points at `published_dag:<dag_id>`. No additional
+    // check here — the bless gate is the boundary.
+    if (config.published_dag_id && config.dag_snapshot) {
+      const snapshot = config.dag_snapshot as PublishedDagSnapshot;
+      const formInputs = (params && typeof params === 'object') ? params : {};
+      const hasInputs = Object.keys(formInputs).length > 0;
+
+      if (!hasInputs) {
+        // First-load: hand the form schema back, rows empty.
+        audit({
+          access_path: 'A',
+          subject_id: user.user_id,
+          action_id: 'read',
+          resource_id: config.resource_id || `published_dag:${config.published_dag_id}`,
+          decision: 'allow',
+          context: { page_id, mode: 'published_dag', stage: 'form_load' },
+        });
+        return res.json({
+          config: { ...config, columns: [] },
+          data: [],
+          meta: {
+            published_dag: true,
+            stage: 'form_load',
+            form_schema: config.form_schema || [],
+          },
+        });
+      }
+
+      try {
+        const result = await executeDagAsPublished({
+          dagSnapshot: snapshot,
+          userId: user.user_id,
+          groups: user.groups,
+          formInputs,
+          publishedDagRid: config.resource_id || `published_dag:${config.published_dag_id}`,
+        });
+        audit({
+          access_path: 'A',
+          subject_id: user.user_id,
+          action_id: 'read',
+          resource_id: config.resource_id || `published_dag:${config.published_dag_id}`,
+          decision: 'allow',
+          context: {
+            page_id, mode: 'published_dag', stage: 'exec',
+            row_count: result.row_count,
+            elapsed_ms: result.elapsed_ms,
+            output_node_id: result.output_node_id,
+          },
+        });
+        return res.json({
+          config: { ...config, columns: result.columns },
+          data: result.rows,
+          meta: {
+            published_dag: true,
+            stage: 'exec',
+            form_schema: config.form_schema || [],
+            output_node_id: result.output_node_id,
+            row_count: result.row_count,
+            truncated: result.truncated,
+            elapsed_ms: result.elapsed_ms,
+            lineage: result.lineage,
+          },
+        });
+      } catch (err) {
+        if (err instanceof DagExecError) {
+          audit({
+            access_path: 'A',
+            subject_id: user.user_id,
+            action_id: 'read',
+            resource_id: config.resource_id || `published_dag:${config.published_dag_id}`,
+            decision: 'deny',
+            context: { page_id, mode: 'published_dag', stage: 'exec_error', node_id: err.node_id, detail: err.message },
+          });
+          return res.status(400).json({
+            error: 'Published DAG execution failed',
+            node_id: err.node_id,
+            detail: err.message,
+          });
+        }
+        return handleApiError(res, err);
       }
     }
 
