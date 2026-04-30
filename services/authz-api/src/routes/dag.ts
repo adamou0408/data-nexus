@@ -12,7 +12,7 @@ import { getUserId, getClientIp, handleApiError } from '../lib/request-helpers';
 import { parseFunctionArgs } from '../lib/function-metadata';
 import { validateDag, DagDoc } from '../lib/dag-validate';
 import { runOperator, deriveOperatorResourceId, UpstreamFrame } from '../lib/dag-operators';
-import { emitPageSnapshot, deriveSinkUpstreamFn, SinkValidationError } from '../lib/sink-runtime';
+import { emitPageSnapshot, deriveSinkUpstreamFn, SinkValidationError, SINK_KINDS, isSinkKind, type SinkKind } from '../lib/sink-runtime';
 import { findSingleLeaf, deriveFormSchema, DagNode, DagEdge } from '../lib/dag-exec';
 import { expandSubdags, SubdagExpansionError, EmbeddedSubdagRecord } from '../lib/dag-subdag-resolver';
 import { requireRole } from '../middleware/authz';
@@ -522,7 +522,7 @@ dagRouter.post('/execute-sink', requirePageAuthor, async (req, res) => {
   } = req.body as {
     dag_id: string;
     sink_node_id: string;
-    sink_kind: 'page';
+    sink_kind: SinkKind;
     sink_config: {
       page_id: string;
       title: string;
@@ -540,8 +540,10 @@ dagRouter.post('/execute-sink', requirePageAuthor, async (req, res) => {
   if (!dag_id || !sink_node_id || !sink_kind || !sink_config) {
     return res.status(400).json({ error: 'dag_id, sink_node_id, sink_kind, sink_config required' });
   }
-  if (sink_kind !== 'page') {
-    return res.status(400).json({ error: `unsupported sink_kind '${sink_kind}' (MVP supports only 'page')` });
+  if (!isSinkKind(sink_kind)) {
+    return res.status(400).json({
+      error: `unsupported sink_kind '${sink_kind}' (supported: ${SINK_KINDS.join(', ')})`,
+    });
   }
 
   try {

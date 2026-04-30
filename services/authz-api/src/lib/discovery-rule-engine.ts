@@ -46,8 +46,21 @@ type ResourceRow = {
   attributes: Record<string, unknown>;
 };
 
-const RESOURCE_TYPES_TABLE_LIKE = ['table', 'view', 'db_table'];
-const RESOURCE_TYPES_COLUMN_LIKE = ['column'];
+// SSOT for the resource_type taxonomy this engine cares about.
+// "table-like" / "column-like" are *engine-local* groupings of values
+// from authz_resource.resource_type CHECK (V002/V042). Adding a new
+// type that should be discoverable means appending it here AND it will
+// flow into the SQL IN-list below automatically — single source.
+const RESOURCE_TYPES_TABLE_LIKE = ['table', 'view', 'db_table'] as const;
+const RESOURCE_TYPES_COLUMN_LIKE = ['column'] as const;
+const ALL_DISCOVERY_RESOURCE_TYPES = [
+  ...RESOURCE_TYPES_TABLE_LIKE,
+  ...RESOURCE_TYPES_COLUMN_LIKE,
+] as const;
+// Compile-time literals only — no SQL injection surface.
+const RESOURCE_TYPES_SQL_IN_LIST = ALL_DISCOVERY_RESOURCE_TYPES
+  .map((t) => `'${t}'`)
+  .join(',');
 
 // One generated policy per (resource, rule). Stable name = idempotency key.
 function policyNameFor(resourceId: string, rule: DiscoveryRule): string {
@@ -76,13 +89,13 @@ function tableSegment(resourceId: string): string {
 }
 
 function nameForMatch(target: DiscoveryRule['match_target'], r: ResourceRow): string | null {
-  if (target === 'column_name' && RESOURCE_TYPES_COLUMN_LIKE.includes(r.resource_type)) {
+  if (target === 'column_name' && (RESOURCE_TYPES_COLUMN_LIKE as readonly string[]).includes(r.resource_type)) {
     // Prefer explicit attribute, then last segment of resource_id, then display_name as last resort.
     return (r.attributes.column_name as string | undefined)
         ?? lastSegment(r.resource_id)
         ?? r.display_name;
   }
-  if (target === 'table_name' && RESOURCE_TYPES_TABLE_LIKE.includes(r.resource_type)) {
+  if (target === 'table_name' && (RESOURCE_TYPES_TABLE_LIKE as readonly string[]).includes(r.resource_type)) {
     return (r.attributes.table_name as string | undefined)
         ?? tableSegment(r.resource_id)
         ?? r.display_name;
@@ -187,7 +200,7 @@ export async function runDiscoveryRules(opts: {
     // Load candidate resources.
     const params: unknown[] = [];
     let where = `is_active = TRUE
-                 AND resource_type IN ('column','table','view','db_table')`;
+                 AND resource_type IN (${RESOURCE_TYPES_SQL_IN_LIST})`;
     if (resourceIds && resourceIds.length > 0) {
       params.push(resourceIds);
       where += ` AND resource_id = ANY($${params.length}::text[])`;

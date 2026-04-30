@@ -7,6 +7,8 @@
 // us React Flow's {nodes, edges} dictionary verbatim.
 // ============================================================
 
+import type { SinkKind } from './sink-runtime';
+
 export interface DagNode {
   id: string;
   type?: string;                 // 'fn' (default) | 'literal' | 'filter' | 'cast' | 'aggregate' | 'sink'
@@ -20,7 +22,7 @@ export interface DagNode {
     outputs?: Array<{ name: string; semantic_type?: string; pgType?: string }>;
     bound_params?: Record<string, unknown>; // user-supplied constants
     op_kind?: 'literal' | 'filter' | 'cast' | 'aggregate';
-    sink_kind?: 'page';
+    sink_kind?: SinkKind;
     sink_config?: Record<string, unknown>;
     op_config?: Record<string, unknown>;
   };

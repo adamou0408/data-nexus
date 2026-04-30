@@ -26,6 +26,20 @@
 // ============================================================
 import { Pool, PoolClient } from 'pg';
 
+// SSOT for sink_kind values consumed by routes/dag.ts (/save-as-page,
+// /execute-sink) and lib/dag-validate.ts. Adding a new kind requires:
+//   1. Append the literal here
+//   2. Add the matching handler module (mirroring emitPageSnapshot below)
+//   3. Wire the dispatch in routes/dag.ts
+// MVP ships with 'page' only; 'api' / 'scheduled_job' / 'alert' are
+// the planned next entries (see file header).
+export const SINK_KINDS = ['page'] as const;
+export type SinkKind = typeof SINK_KINDS[number];
+
+export function isSinkKind(v: unknown): v is SinkKind {
+  return typeof v === 'string' && (SINK_KINDS as readonly string[]).includes(v);
+}
+
 export const PAGE_ID_RE = /^[a-z][a-z0-9_]*$/;
 
 const RENDER_BY_SEMANTIC: Record<string, string> = {

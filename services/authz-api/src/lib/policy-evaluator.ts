@@ -20,15 +20,44 @@ import type {
   MaskFunction,
 } from './rewriter/types';
 
-const CLEARANCE_LEVELS: Record<string, number> = {
+// SSOT: authz_data_classification table (V027). The map below is a
+// V027-seed fallback used only if the table is empty (test fixtures
+// without V027 applied). Production warms `clearanceLevels` from DB
+// on first evaluate(); a missing table raises and propagates.
+const FALLBACK_CLEARANCE_LEVELS: Record<string, number> = {
   PUBLIC: 1,
   INTERNAL: 2,
   CONFIDENTIAL: 3,
   RESTRICTED: 4,
 };
 
+let clearanceLevels: Record<string, number> = FALLBACK_CLEARANCE_LEVELS;
+let clearanceLevelsLoaded = false;
+
+async function ensureClearanceLevels(pool: Pool): Promise<void> {
+  if (clearanceLevelsLoaded) return;
+  const r = await pool.query<{ name: string; sensitivity_level: number }>(
+    'SELECT name, sensitivity_level FROM authz_data_classification',
+  );
+  if (r.rowCount && r.rowCount > 0) {
+    const m: Record<string, number> = {};
+    for (const row of r.rows) m[row.name.toUpperCase()] = row.sensitivity_level;
+    clearanceLevels = m;
+  } else {
+    // eslint-disable-next-line no-console
+    console.warn('[policy-evaluator] authz_data_classification empty — using V027 seed fallback');
+  }
+  clearanceLevelsLoaded = true;
+}
+
+// Test helper: drop cache so the next evaluate() re-queries.
+export function _resetClearanceLevelsCache(): void {
+  clearanceLevels = FALLBACK_CLEARANCE_LEVELS;
+  clearanceLevelsLoaded = false;
+}
+
 function sensitivityLevel(user: UserContext): number {
-  return CLEARANCE_LEVELS[(user.security_clearance || 'PUBLIC').toUpperCase()] || 1;
+  return clearanceLevels[(user.security_clearance || 'PUBLIC').toUpperCase()] || 1;
 }
 
 // ── Assignment matching (ported from EdgePolicy evaluator.py) ──
@@ -41,7 +70,7 @@ function checkAssignment(user: UserContext, assignment: PolicyAssignment): boole
     case 'department':
       return (user.department || '').toLowerCase() === val.toLowerCase();
     case 'security_level': {
-      const required = CLEARANCE_LEVELS[val.toUpperCase()] || 0;
+      const required = clearanceLevels[val.toUpperCase()] || 0;
       return sensitivityLevel(user) < required;
     }
     case 'user':
@@ -163,6 +192,7 @@ export class PolicyEvaluator {
     user: UserContext,
     table: string,
   ): Promise<PolicyEvalResult> {
+    await ensureClearanceLevels(authzPool);
     const policies = await loadPoliciesForTable(authzPool, table);
     const result: PolicyEvalResult = {
       action: 'ALLOW',
