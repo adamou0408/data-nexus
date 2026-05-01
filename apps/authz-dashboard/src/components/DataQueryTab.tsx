@@ -477,6 +477,14 @@ LANGUAGE sql STABLE AS $$
   WHERE /* your filter */ = p_key
 $$;`;
 
+type LintIssue = {
+  severity: 'warn' | 'info';
+  code: 'FQL-01' | 'FQL-02' | 'FQL-03' | 'FQL-04';
+  message: string;
+  hint: string;
+  context?: string;
+};
+
 function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resourceId: string) => void }) {
   const toast = useToast();
   const [tables, setTables] = useState<TableMeta[]>([]);
@@ -487,6 +495,9 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
   const [deploying, setDeploying] = useState(false);
   const [validateResult, setValidateResult] = useState<any>(null);
   const [authorError, setAuthorError] = useState<string>('');
+  // FN-QUALITY-LINT-V01: advisory issues (non-blocking). Debounced re-lint
+  // on every SQL change keeps the pills in sync without thrashing the API.
+  const [lintIssues, setLintIssues] = useState<LintIssue[]>([]);
 
   useEffect(() => {
     if (!dsId) return;
@@ -497,6 +508,19 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
       .catch(err => toast.error(err.message || 'Failed to load tables'))
       .finally(() => setLoadingTables(false));
   }, [dsId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounced lint pass — runs whenever SQL changes. The endpoint is pure-text
+  // (no DB), so 600ms is plenty cheap and gives near-live pill updates without
+  // racing the editor. Empty SQL clears issues.
+  useEffect(() => {
+    if (!sql.trim()) { setLintIssues([]); return; }
+    const handle = setTimeout(() => {
+      api.dataQueryLint(sql)
+        .then((r) => setLintIssues(r.issues as LintIssue[]))
+        .catch(() => setLintIssues([]));   // bad header → just hide pills
+    }, 600);
+    return () => clearTimeout(handle);
+  }, [sql]);
 
   const handlePickTable = (t: TableMeta) => {
     setSelectedTable(t);
@@ -606,6 +630,33 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
             placeholder={selectedTable ? undefined : 'Pick a table on the left, or paste your CREATE FUNCTION SQL here.'}
             className="w-full p-3 font-mono text-xs text-slate-800 bg-white focus:outline-none resize-y"
           />
+          {lintIssues.length > 0 && (
+            <div className="px-3 py-2 border-t border-slate-200 bg-amber-50/50">
+              <div className="text-[10px] font-medium text-amber-800 uppercase tracking-wide mb-1.5 flex items-center gap-1">
+                <AlertTriangle size={11} /> Quality advisor ({lintIssues.length})
+                <span className="ml-auto text-[9px] text-amber-700/70 normal-case font-normal">non-blocking — Deploy stays enabled</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {lintIssues.map((iss, i) => {
+                  const isWarn = iss.severity === 'warn';
+                  return (
+                    <span
+                      key={`${iss.code}-${i}`}
+                      title={`${iss.code} — ${iss.hint}`}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] cursor-help border ${
+                        isWarn
+                          ? 'bg-amber-100 text-amber-900 border-amber-300'
+                          : 'bg-slate-100 text-slate-700 border-slate-300'
+                      }`}
+                    >
+                      <span className="font-mono font-semibold">{iss.code}</span>
+                      <span>{iss.message}</span>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div className="px-3 py-2 border-t border-slate-200 bg-slate-50 flex items-center gap-2">
             <button
               onClick={handleValidate}

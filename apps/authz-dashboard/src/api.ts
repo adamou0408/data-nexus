@@ -391,6 +391,26 @@ export const api = {
       body: JSON.stringify({ data_source_id, sql: stripLeadingSqlComments(sql) }),
     }),
 
+  /** FN-QUALITY-LINT-V01: pure-text advisory on house conventions
+   *  (volatility, SELECT *, p_ prefix, naming). Non-blocking. */
+  dataQueryLint: (sql: string) =>
+    request<{
+      status: string;
+      schema: string;
+      function_name: string;
+      volatility: string;
+      issues: Array<{
+        severity: 'warn' | 'info';
+        code: 'FQL-01' | 'FQL-02' | 'FQL-03' | 'FQL-04';
+        message: string;
+        hint: string;
+        context?: string;
+      }>;
+    }>('/data-query/functions/lint', {
+      method: 'POST',
+      body: JSON.stringify({ sql: stripLeadingSqlComments(sql) }),
+    }),
+
   dataQueryDeploy: (data_source_id: string, sql: string) =>
     request<{
       status: string;

@@ -10,6 +10,7 @@ import {
   extractFunctionMetadata,
   classifyType,
 } from '../lib/function-metadata';
+import { lintFunction } from '../lib/fn-quality-lint';
 
 export const dataQueryRouter = Router();
 
@@ -317,6 +318,65 @@ function parseCreateFunctionHeader(sql: string): { schema: string; function_name
   if (!m) return null;
   return { schema: m[1] || 'public', function_name: m[2] };
 }
+
+// ─── Lint: pure-text quality advisory for SQL fn DDL ───
+// Stateless — no DB round trip, no data_source_id required. Curators get
+// instant feedback while typing. Volatility is inferred from the DDL keyword
+// (STABLE / IMMUTABLE / VOLATILE) if explicit; defaults to VOLATILE (PG's
+// own default), which is what the planner sees too if the keyword is absent.
+//
+// FQL-01 (volatility) therefore fires accurately on the same signal PG uses.
+// FQL-02..04 are pure-text rules (SELECT *, p_ prefix, name pattern).
+dataQueryRouter.post('/functions/lint', (req, res) => {
+  const { sql } = req.body as { sql?: string };
+  if (!sql || typeof sql !== 'string') {
+    return res.status(400).json({ error: 'sql (string) required' });
+  }
+  const header = parseCreateFunctionHeader(sql);
+  if (!header) {
+    return res.status(400).json({
+      error: 'Invalid SQL',
+      detail: 'Must start with CREATE [OR REPLACE] FUNCTION schema.function_name(...)',
+    });
+  }
+
+  // Best-effort arg name extraction — same parser the deploy path uses.
+  // We only need names for FQL-03; types/defaults are irrelevant here.
+  const headerEnd = sql.indexOf('(', sql.toUpperCase().indexOf('FUNCTION'));
+  let argText = '';
+  if (headerEnd !== -1) {
+    let depth = 0;
+    for (let i = headerEnd; i < sql.length; i++) {
+      const ch = sql[i];
+      if (ch === '(') depth++;
+      else if (ch === ')') {
+        depth--;
+        if (depth === 0) { argText = sql.slice(headerEnd + 1, i); break; }
+      }
+    }
+  }
+  const arg_names = parseFunctionArgs(argText).map((a) => a.name);
+
+  // Infer volatility from explicit keyword in the DDL. PG's default is VOLATILE
+  // when the keyword is omitted, and that's the lint signal that matters.
+  const volMatch = /\b(IMMUTABLE|STABLE|VOLATILE)\b/i.exec(sql.replace(/--[^\n]*/g, ''));
+  const volatility =
+    (volMatch?.[1].toUpperCase() as 'IMMUTABLE' | 'STABLE' | 'VOLATILE' | undefined) || 'VOLATILE';
+
+  const issues = lintFunction({
+    sql,
+    function_name: header.function_name,
+    arg_names,
+    volatility,
+  });
+  res.json({
+    status: 'ok',
+    schema: header.schema,
+    function_name: header.function_name,
+    volatility,
+    issues,
+  });
+});
 
 dataQueryRouter.post('/functions/validate', async (req, res) => {
   const { data_source_id, sql } = req.body as { data_source_id: string; sql: string };
