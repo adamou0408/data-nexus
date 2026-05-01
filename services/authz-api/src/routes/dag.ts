@@ -11,6 +11,7 @@ import { logAdminAction } from '../lib/admin-audit';
 import { getUserId, getClientIp, handleApiError } from '../lib/request-helpers';
 import { parseFunctionArgs } from '../lib/function-metadata';
 import { validateDag, DagDoc } from '../lib/dag-validate';
+import { applyAutoCasts, AutoCastInsert } from '../lib/dag-auto-cast';
 import { runOperator, deriveOperatorResourceId, UpstreamFrame } from '../lib/dag-operators';
 import { emitPageSnapshot, deriveSinkUpstreamFn, SinkValidationError, SINK_KINDS, isSinkKind, type SinkKind } from '../lib/sink-runtime';
 import { findSingleLeaf, deriveFormSchema, DagNode, DagEdge } from '../lib/dag-exec';
@@ -96,13 +97,17 @@ dagRouter.get('/:id', async (req, res) => {
 
 // ─── Save (create or update) ───
 dagRouter.post('/save', requireDagAuthor, async (req, res) => {
-  const { resource_id, display_name, data_source_id, nodes, edges, description } = req.body as {
+  const { resource_id, display_name, data_source_id, nodes, edges, description, auto_cast } = req.body as {
     resource_id?: string;
     display_name: string;
     data_source_id: string;
     nodes: any[];
     edges: any[];
     description?: string;
+    /** DAG-AUTOCAST-V01: when true, server inserts visible cast nodes for
+     *  whitelist-safe DV-01 mismatches before validation. Default false
+     *  (back-compat). Response carries auto_inserted_casts[] when triggered. */
+    auto_cast?: boolean;
   };
   const userId = getUserId(req);
 
@@ -110,15 +115,29 @@ dagRouter.post('/save', requireDagAuthor, async (req, res) => {
     return res.status(400).json({ error: 'display_name, data_source_id, nodes[], edges[] required' });
   }
 
+  // DAG-AUTOCAST-V01: opt-in auto-fix pass before validation.
+  // Mismatches outside the safe whitelist (text→number, narrowing, etc.)
+  // remain — validation below still rejects them with the original hint.
+  let workingNodes = nodes;
+  let workingEdges = edges;
+  let autoInsertedCasts: AutoCastInsert[] = [];
+  if (auto_cast) {
+    const fixed = applyAutoCasts({ nodes, edges });
+    workingNodes = fixed.doc.nodes;
+    workingEdges = fixed.doc.edges;
+    autoInsertedCasts = fixed.inserted;
+  }
+
   // FC-VALIDATE-01: refuse to persist structurally invalid DAGs (cycle,
   // type_mismatch, missing_input, unknown_handle). Frontend already calls
   // /validate, but server is SSOT — never trust the client.
-  const validation = validateDag({ nodes, edges });
+  const validation = validateDag({ nodes: workingNodes, edges: workingEdges });
   const errors = validation.issues.filter((i) => i.severity === 'error');
   if (errors.length > 0) {
     return res.status(400).json({
       error: 'DAG validation failed',
       issues: errors,
+      auto_inserted_casts: autoInsertedCasts,
     });
   }
 
@@ -126,8 +145,8 @@ dagRouter.post('/save', requireDagAuthor, async (req, res) => {
   const attrs = {
     data_source_id,
     description: description || null,
-    nodes,
-    edges,
+    nodes: workingNodes,
+    edges: workingEdges,
     version: 1,
     authored_by: userId,
     updated_at: new Date().toISOString(),
@@ -148,10 +167,21 @@ dagRouter.post('/save', requireDagAuthor, async (req, res) => {
       action: 'DAG_SAVE',
       resourceType: 'dag',
       resourceId: rid,
-      details: { data_source_id, node_count: nodes.length, edge_count: edges.length },
+      details: {
+        data_source_id,
+        node_count: workingNodes.length,
+        edge_count: workingEdges.length,
+        auto_cast_count: autoInsertedCasts.length,
+      },
       ip: getClientIp(req),
     });
-    res.json({ status: 'ok', resource_id: rid, display_name, ...attrs });
+    res.json({
+      status: 'ok',
+      resource_id: rid,
+      display_name,
+      ...attrs,
+      auto_inserted_casts: autoInsertedCasts,
+    });
   } catch (err) {
     handleApiError(res, err);
   }

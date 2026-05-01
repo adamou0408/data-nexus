@@ -424,8 +424,22 @@ export const api = {
   dagSave: (payload: {
     resource_id?: string; display_name: string; data_source_id: string;
     description?: string; nodes: any[]; edges: any[];
+    /** DAG-AUTOCAST-V01: ask the server to insert visible cast nodes for
+     *  whitelist-safe DV-01 mismatches. Curator sees the inserts in the
+     *  response and on the canvas. */
+    auto_cast?: boolean;
   }) =>
-    request<{ status: string; resource_id: string; display_name: string; nodes: any[]; edges: any[] }>(
+    request<{
+      status: string; resource_id: string; display_name: string;
+      nodes: any[]; edges: any[];
+      auto_inserted_casts?: Array<{
+        edge_id: string;
+        source_node: string; source_handle: string;
+        target_node: string; target_handle: string;
+        from_pgtype: string; to_pgtype: string;
+        inserted_node_id: string;
+      }>;
+    }>(
       '/dag/save', { method: 'POST', body: JSON.stringify(payload) }
     ),
 

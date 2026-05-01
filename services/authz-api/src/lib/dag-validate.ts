@@ -58,7 +58,8 @@ export interface ValidationIssue {
 
 // pgType "kind" family — mirrors apps/authz-dashboard/src/utils/handleCompat.ts.
 // Kept inline so dag-validate has zero cross-package imports.
-function kindFamily(pg?: string): 'text' | 'number' | 'bool' | 'date' | 'array' | 'json' | 'any' {
+// Exported because dag-auto-cast (R1, 2026-05) needs the same SSOT classifier.
+export function kindFamily(pg?: string): 'text' | 'number' | 'bool' | 'date' | 'array' | 'json' | 'any' {
   if (!pg) return 'any';
   const p = pg.toLowerCase().trim();
   if (p.includes('[]') || p.startsWith('_')) return 'array';

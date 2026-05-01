@@ -1147,10 +1147,59 @@ export function DagTab() {
         description,
         nodes: nodes.map((n) => ({ id: n.id, type: n.type, position: n.position, data: n.data })),
         edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle, style: e.style })),
+        // DAG-AUTOCAST-V01: ask server to auto-insert visible cast nodes for
+        // whitelist-safe DV-01 mismatches. Curator sees inserts in toast +
+        // gets the new cast nodes placed midway between source and target.
+        auto_cast: true,
       };
       const r = await api.dagSave(payload);
       setCurrentDagId(r.resource_id);
-      showToast(`Saved as ${r.resource_id}`, 'success');
+
+      const acs = r.auto_inserted_casts || [];
+      if (acs.length > 0) {
+        // Place inserted cast nodes between (source, target) on the canvas.
+        // Track source position per inserted id as a fallback so orphan-source
+        // casts don't pile at canvas origin (0,0) — they sit just below the
+        // source instead, where the curator will see them next to the original.
+        const positions = new Map<string, { x: number; y: number }>();
+        for (const ic of acs) {
+          const s = nodes.find((n) => n.id === ic.source_node);
+          const t = nodes.find((n) => n.id === ic.target_node);
+          if (s && t) {
+            positions.set(ic.inserted_node_id, {
+              x: (s.position.x + t.position.x) / 2,
+              y: (s.position.y + t.position.y) / 2,
+            });
+          } else if (s) {
+            positions.set(ic.inserted_node_id, { x: s.position.x + 220, y: s.position.y + 80 });
+          }
+        }
+        // Reconcile canvas with server-mutated doc: keep existing nodes' positions,
+        // give inserted casts the computed position (midpoint or source-offset).
+        const nextNodes: Node<NodeData>[] = (r.nodes as any[]).map((n) => {
+          const existing = nodes.find((cn) => cn.id === n.id);
+          if (existing) return { ...existing, data: n.data || existing.data };
+          return {
+            id: n.id,
+            type: n.type || 'fn',
+            position: positions.get(n.id) || { x: 100, y: 100 },
+            data: (n.data || {}) as NodeData,
+          };
+        });
+        const nextEdges: Edge[] = (r.edges as any[]).map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          sourceHandle: e.sourceHandle ?? null,
+          targetHandle: e.targetHandle ?? null,
+        }));
+        setNodes(nextNodes);
+        setEdges(nextEdges);
+        const summary = acs.map((ic) => `${ic.from_pgtype}→${ic.to_pgtype}`).join(', ');
+        showToast(`Saved as ${r.resource_id}; auto-inserted ${acs.length} cast node(s): ${summary}`, 'success');
+      } else {
+        showToast(`Saved as ${r.resource_id}`, 'success');
+      }
       api.dagList(dsId).then(setDags).catch(() => {});
     } catch (e) {
       showToast(String(e), 'error');
