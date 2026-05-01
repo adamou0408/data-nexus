@@ -117,6 +117,7 @@ Full rules: **`docs/constitution.md`** (must-read for any agent touching datasou
 | DBA hiring / skillmap | `.claude/agents/dba-guardian-hiring.md` | When DBA hiring criteria change |
 | Cross-Source Discovery Tab plan (active) | `docs/plan-cross-source-discovery-tab.md` | When Discover Tab scope changes |
 | ARCH-01 (business DB separation) plan | `docs/plan-business-db-separation.md` (狀態：實作完成,待 dev 部署 — see PROGRESS.md ARCH-01) | After ARCH-01 deployed in dev |
+| Subdag versioning design (R3, exploratory) | `docs/design-subdag-versioning.md` | When first drift incident lands or B trigger fires |
 | Available commands | `make help` | When adding Makefile targets |
 | Claude Code permissions | `.claude/settings.local.json` | When needing new allow patterns |
 | ~~`docs/requirements_spec.md`~~ | **ARCHIVED 2026-04-22** — moved to `.claude/plans/_ARCHIVED/requirements_spec-v1-deprecated-20260422.md`. Active SSOT: `docs/plan-v3-phase-1.md` | — |
