@@ -319,6 +319,89 @@ function parseCreateFunctionHeader(sql: string): { schema: string; function_name
   return { schema: m[1] || 'public', function_name: m[2] };
 }
 
+// ─── Lint-all: per-fn quality summary for the deployed catalog ───
+// Single batch query against the data source's pg_proc → pg_get_functiondef
+// for every registered fn, then runs the same lint rules used by /lint.
+//
+// One round-trip per data source is enough (N rows back, not N queries),
+// so even a few hundred fns stays well under a second. Results are returned
+// as a map keyed by resource_id so the frontend can index without a second
+// pass.
+//
+// Inactive fns and fns whose pg_proc row was dropped (orphaned authz_resource
+// entry) are simply omitted from the response — the frontend treats "no entry"
+// as "no badge", which matches "we don't know yet" rather than "clean".
+dataQueryRouter.get('/functions/lint-all', async (req, res) => {
+  const dsId = req.query.data_source_id as string;
+  if (!dsId) return res.status(400).json({ error: 'data_source_id is required' });
+
+  try {
+    const reg = await authzPool.query(
+      `SELECT resource_id, attributes
+         FROM authz_resource
+        WHERE resource_type = 'function' AND is_active = TRUE
+          AND attributes->>'data_source_id' = $1`,
+      [dsId]
+    );
+    if (reg.rows.length === 0) return res.json({ functions: {} });
+
+    type Reg = { resource_id: string; schema: string; function_name: string; volatility: 'IMMUTABLE'|'STABLE'|'VOLATILE'; arg_names: string[] };
+    const registry: Reg[] = reg.rows.map((r) => {
+      const rid = r.resource_id as string;
+      const fq = rid.startsWith('function:') ? rid.slice('function:'.length) : rid;
+      const dot = fq.indexOf('.');
+      const schema = dot > 0 ? fq.slice(0, dot) : 'public';
+      const function_name = dot > 0 ? fq.slice(dot + 1) : fq;
+      const attrs = r.attributes || {};
+      const volatility = (attrs.volatility || 'VOLATILE') as 'IMMUTABLE'|'STABLE'|'VOLATILE';
+      const parsed = attrs.parsed_args || parseFunctionArgs(attrs.arguments || '');
+      const arg_names = (parsed as Array<{name: string}>).map((a) => a.name);
+      return { resource_id: rid, schema, function_name, volatility, arg_names };
+    });
+
+    // Pull source text for every (schema, name) pair in one query. Using two
+    // parallel arrays + unnest avoids the N-parameter awkwardness of an
+    // IN ((s1,f1),(s2,f2),...) tuple list.
+    const dsPool = await getDataSourcePool(dsId);
+    const schemas = registry.map((r) => r.schema);
+    const names = registry.map((r) => r.function_name);
+    const defs = await dsPool.query(
+      `SELECT n.nspname AS schema, p.proname AS function_name,
+              pg_get_functiondef(p.oid) AS def
+         FROM pg_proc p
+         JOIN pg_namespace n ON n.oid = p.pronamespace
+         JOIN unnest($1::text[], $2::text[]) AS w(s, f)
+           ON w.s = n.nspname AND w.f = p.proname`,
+      [schemas, names]
+    );
+
+    const defByKey = new Map<string, string>();
+    for (const row of defs.rows) {
+      defByKey.set(`${row.schema}.${row.function_name}`, row.def);
+    }
+
+    const out: Record<string, { warn_count: number; info_count: number; codes: string[] }> = {};
+    for (const r of registry) {
+      const def = defByKey.get(`${r.schema}.${r.function_name}`);
+      if (!def) continue;   // orphaned registry entry — skip silently
+      const issues = lintFunction({
+        sql: def,
+        function_name: r.function_name,
+        arg_names: r.arg_names,
+        volatility: r.volatility,
+      });
+      out[r.resource_id] = {
+        warn_count: issues.filter((i) => i.severity === 'warn').length,
+        info_count: issues.filter((i) => i.severity === 'info').length,
+        codes: issues.map((i) => i.code),
+      };
+    }
+    res.json({ functions: out });
+  } catch (err) {
+    handleApiError(res, err);
+  }
+});
+
 // ─── Lint: pure-text quality advisory for SQL fn DDL ───
 // Stateless — no DB round trip, no data_source_id required. Curators get
 // instant feedback while typing. Volatility is inferred from the DDL keyword

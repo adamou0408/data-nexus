@@ -138,6 +138,10 @@ export function DataQueryTab() {
   const [loadingFns, setLoadingFns] = useState(false);
   const [subtypeFilter, setSubtypeFilter] = useState<Subtype | 'all'>('all');
   const [mode, setMode] = useState<'run' | 'author'>('run');
+  // FN-QUALITY-LINT-V02: per-fn quality summary, indexed by resource_id.
+  // Empty map ≡ not loaded yet ≡ no badge (better than mis-labelling fns
+  // as clean before lint-all returns).
+  const [fnLint, setFnLint] = useState<Record<string, { warn_count: number; info_count: number; codes: string[] }>>({});
 
   useEffect(() => {
     api.datasourcesLite().then(ds => {
@@ -175,7 +179,13 @@ export function DataQueryTab() {
     if (!dsId) return;
     setSelectedFn(null);
     setResult(null);
+    setFnLint({});                                                 // clear stale badges across DS switch
     reloadFunctions();
+    // Quality badges run independently of fn list — failure to fetch lint
+    // results never blocks the runner UI; we just hide the badges.
+    api.dataQueryLintAll(dsId)
+      .then((r) => setFnLint(r.functions))
+      .catch(() => setFnLint({}));
   }, [dsId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSelectFn = (fn: FunctionMeta) => {
@@ -306,19 +316,42 @@ export function DataQueryTab() {
                 <div className="px-3 py-1.5 text-[10px] font-mono uppercase text-slate-400 bg-slate-50 border-b border-slate-100">
                   {schema}
                 </div>
-                {fns.map(fn => (
-                  <button
-                    key={fn.resource_id}
-                    onClick={() => handleSelectFn(fn)}
-                    className={`block w-full text-left px-3 py-2 text-xs border-b border-slate-100 hover:bg-blue-50 ${selectedFn?.resource_id === fn.resource_id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''}`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-slate-800 truncate">{fn.function_name}</span>
-                      <SubtypeBadge subtype={fn.subtype} />
-                    </div>
-                    <div className="text-[10px] text-slate-500 truncate mt-0.5">{fn.arguments || 'no args'}</div>
-                  </button>
-                ))}
+                {fns.map(fn => {
+                  const lint = fnLint[fn.resource_id];
+                  const dotColor =
+                    !lint ? null
+                    : lint.warn_count > 0 ? '#f59e0b'           // amber — runtime-impacting
+                    : lint.info_count > 0 ? '#94a3b8'           // slate — soft convention only
+                    : '#10b981';                                // emerald — clean
+                  const dotTitle = lint
+                    ? lint.codes.length > 0
+                      ? `Quality: ${lint.codes.join(', ')}`
+                      : 'Quality: clean'
+                    : '';
+                  return (
+                    <button
+                      key={fn.resource_id}
+                      onClick={() => handleSelectFn(fn)}
+                      className={`block w-full text-left px-3 py-2 text-xs border-b border-slate-100 hover:bg-blue-50 ${selectedFn?.resource_id === fn.resource_id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          {dotColor && (
+                            <span
+                              title={dotTitle}
+                              aria-label={dotTitle}
+                              style={{ background: dotColor }}
+                              className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+                            />
+                          )}
+                          <span className="font-mono text-slate-800 truncate">{fn.function_name}</span>
+                        </span>
+                        <SubtypeBadge subtype={fn.subtype} />
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate mt-0.5">{fn.arguments || 'no args'}</div>
+                    </button>
+                  );
+                })}
               </div>
             ))}
           </div>
@@ -476,6 +509,81 @@ LANGUAGE sql STABLE AS $$
   FROM ${schema}.${table}
   WHERE /* your filter */ = p_key
 $$;`;
+
+// FN-QUALITY-LINT-V02 / F3: skeletons that pre-satisfy every quality rule
+// (STABLE, LANGUAGE sql, p_<snake> args, explicit columns, conventional name).
+// Each maps to a layer in the bottom-up SQL fn architecture: search → summary
+// → aspect → keyword-driven driver. Curators replace <ENTITY> / <ASPECT> /
+// table refs with real values; the surrounding shape is correct by default.
+const FN_TEMPLATES = [
+  {
+    key: 'search',
+    label: 'Search · fn_search_<entity>',
+    description: 'Layer-1 keyword → entity lookup. Returns the canonical key (e.g. material_no).',
+    sql: (schema: string) => `CREATE OR REPLACE FUNCTION ${schema}.fn_search_<entity>(p_keyword text)
+RETURNS TABLE(<entity>_no text)
+LANGUAGE sql STABLE AS $$
+  SELECT <entity>_no
+  FROM ${schema}.<entity>_master
+  WHERE name ILIKE '%' || p_keyword || '%'
+     OR description ILIKE '%' || p_keyword || '%'
+$$;`,
+  },
+  {
+    key: 'summary',
+    label: 'Summary · fn_<entity>_summary',
+    description: 'Layer-1 per-entity 360 view. One row per call, fed by an upstream key.',
+    sql: (schema: string) => `CREATE OR REPLACE FUNCTION ${schema}.fn_<entity>_summary(p_<entity>_no text)
+RETURNS TABLE(
+  <entity>_no text,
+  inbound_total numeric,
+  outbound_total numeric,
+  customer_count int
+)
+LANGUAGE sql STABLE AS $$
+  SELECT
+    p_<entity>_no AS <entity>_no,
+    (SELECT COALESCE(SUM(qty), 0) FROM ${schema}.inbound  WHERE <entity>_no = p_<entity>_no),
+    (SELECT COALESCE(SUM(qty), 0) FROM ${schema}.outbound WHERE <entity>_no = p_<entity>_no),
+    (SELECT COUNT(DISTINCT customer_id) FROM ${schema}.outbound WHERE <entity>_no = p_<entity>_no)
+$$;`,
+  },
+  {
+    key: 'aspect',
+    label: 'Aspect · fn_<entity>_<aspect>',
+    description: 'Layer-1 narrow slice (one concern). Composes well with other aspects in the DAG.',
+    sql: (schema: string) => `CREATE OR REPLACE FUNCTION ${schema}.fn_<entity>_<aspect>(p_<entity>_no text)
+RETURNS TABLE(
+  <entity>_no text,
+  doc_no text,
+  doc_date date,
+  qty numeric
+)
+LANGUAGE sql STABLE AS $$
+  SELECT <entity>_no, doc_no, doc_date, qty
+  FROM ${schema}.<aspect>_table
+  WHERE <entity>_no = p_<entity>_no
+  ORDER BY doc_date DESC
+$$;`,
+  },
+  {
+    key: 'keyword_driver',
+    label: 'Driver · fn_keyword_<entity>_<aspect>',
+    description: 'Layer-2 fan-out. Plugs the search result into a per-entity fn via CROSS JOIN LATERAL.',
+    sql: (schema: string) => `CREATE OR REPLACE FUNCTION ${schema}.fn_keyword_<entity>_<aspect>(p_keyword text)
+RETURNS TABLE(
+  <entity>_no text,
+  doc_no text,
+  doc_date date,
+  qty numeric
+)
+LANGUAGE sql STABLE AS $$
+  SELECT s.<entity>_no, s.doc_no, s.doc_date, s.qty
+  FROM ${schema}.fn_search_<entity>(p_keyword) m
+  CROSS JOIN LATERAL ${schema}.fn_<entity>_<aspect>(m.<entity>_no) s
+$$;`,
+  },
+] as const;
 
 type LintIssue = {
   severity: 'warn' | 'info';
@@ -641,6 +749,28 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
           <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 flex items-center gap-2">
             <Code2 size={14} className="text-slate-500" />
             <span className="text-xs font-medium text-slate-600">SQL — CREATE [OR REPLACE] FUNCTION</span>
+            <select
+              value=""
+              onChange={(e) => {
+                const tpl = FN_TEMPLATES.find((t) => t.key === e.target.value);
+                if (!tpl) return;
+                if (sql.trim() && !window.confirm('Overwrite the current SQL with this template?')) {
+                  e.target.value = '';
+                  return;
+                }
+                setSql(tpl.sql(selectedTable?.table_schema || 'public'));
+                setValidateResult(null);
+                setAuthorError('');
+                e.target.value = '';
+              }}
+              className="ml-auto text-[11px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 hover:bg-slate-50"
+              title="Insert a skeleton that already passes the quality rules"
+            >
+              <option value="">+ New from template…</option>
+              {FN_TEMPLATES.map((t) => (
+                <option key={t.key} value={t.key} title={t.description}>{t.label}</option>
+              ))}
+            </select>
           </div>
           <textarea
             value={sql}

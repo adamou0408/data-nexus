@@ -391,6 +391,14 @@ export const api = {
       body: JSON.stringify({ data_source_id, sql: stripLeadingSqlComments(sql) }),
     }),
 
+  /** FN-QUALITY-LINT-V02: per-fn quality summary for the deployed catalog.
+   *  Returns { [resource_id]: {warn_count, info_count, codes} }. Used to
+   *  decorate the fn list with at-a-glance badges. */
+  dataQueryLintAll: (data_source_id: string) =>
+    request<{
+      functions: Record<string, { warn_count: number; info_count: number; codes: string[] }>;
+    }>(`/data-query/functions/lint-all?data_source_id=${encodeURIComponent(data_source_id)}`),
+
   /** FN-QUALITY-LINT-V01: pure-text advisory on house conventions
    *  (volatility, SELECT *, p_ prefix, naming). Non-blocking. */
   dataQueryLint: (sql: string) =>
