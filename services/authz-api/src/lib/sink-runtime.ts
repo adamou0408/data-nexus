@@ -217,14 +217,36 @@ export async function emitPageSnapshot(
     // ── Mirror into authz_resource(resource_type='page') ──
     // Upsert so overwrite path also keeps mirror row in sync (parent_id
     // may move if the DAG was reparented since last save).
+    //
+    // TIER-B-PAGE-RENAME-V01-FU: respect manual_override flags. When a
+    // curator has renamed or moved this page via PATCH /modules/pages/:id,
+    // the corresponding attributes.manual_override.{display_name|parent_id}
+    // flag is set. The sink must NOT silently revert those edits on the
+    // next overwrite — otherwise every DAG re-save undoes the curator's
+    // catalog work. We preserve the existing field when the flag is true,
+    // and carry the manual_override sub-object forward into the new
+    // attributes blob so the protection persists across upserts.
     await client.query(
       `INSERT INTO authz_resource
          (resource_id, resource_type, parent_id, display_name, attributes, is_active)
        VALUES ($1, 'page', $2, $3, $4::jsonb, TRUE)
        ON CONFLICT (resource_id) DO UPDATE
-         SET parent_id    = EXCLUDED.parent_id,
-             display_name = EXCLUDED.display_name,
-             attributes   = EXCLUDED.attributes,
+         SET parent_id    = CASE
+                              WHEN COALESCE((authz_resource.attributes->'manual_override'->>'parent_id')::boolean, FALSE)
+                                THEN authz_resource.parent_id
+                              ELSE EXCLUDED.parent_id
+                            END,
+             display_name = CASE
+                              WHEN COALESCE((authz_resource.attributes->'manual_override'->>'display_name')::boolean, FALSE)
+                                THEN authz_resource.display_name
+                              ELSE EXCLUDED.display_name
+                            END,
+             attributes   = CASE
+                              WHEN authz_resource.attributes ? 'manual_override'
+                                THEN EXCLUDED.attributes ||
+                                     jsonb_build_object('manual_override', authz_resource.attributes->'manual_override')
+                              ELSE EXCLUDED.attributes
+                            END,
              is_active    = TRUE`,
       [authzResourceId, authzParentId, title, JSON.stringify(authzAttributes)]
     );

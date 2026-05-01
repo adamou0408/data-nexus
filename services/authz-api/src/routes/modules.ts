@@ -398,11 +398,23 @@ modulesRouter.patch('/pages/:page_id', requireRole('DATA_STEWARD'), async (req, 
       }
     }
 
-    // Build dynamic UPDATE for authz_resource.
+    // Build dynamic UPDATE for authz_resource. We also stamp
+    // attributes.manual_override.{display_name|parent_id}=true on the changed
+    // fields so the sink upsert (sink-runtime.emitPageSnapshot) won't revert
+    // them on the next DAG re-save. jsonb_set(..., create_missing=TRUE)
+    // creates the manual_override sub-object on first edit.
     const sets: string[] = [];
     const params: unknown[] = [];
     if (willRename) { params.push((display_name as string).trim()); sets.push(`display_name = $${params.length}`); }
     if (willMove)   { params.push(parent_id); sets.push(`parent_id = $${params.length}`); }
+
+    // Stamp manual_override flags. Build a chain of jsonb_set calls — only
+    // for the fields the curator actually changed in this request.
+    let attrsExpr = `COALESCE(attributes, '{}'::jsonb)`;
+    if (willRename) attrsExpr = `jsonb_set(${attrsExpr}, '{manual_override,display_name}', 'true'::jsonb, TRUE)`;
+    if (willMove)   attrsExpr = `jsonb_set(${attrsExpr}, '{manual_override,parent_id}', 'true'::jsonb, TRUE)`;
+    sets.push(`attributes = ${attrsExpr}`);
+
     params.push(resourceId);
     await client.query(
       `UPDATE authz_resource SET ${sets.join(', ')} WHERE resource_id = $${params.length}`,
