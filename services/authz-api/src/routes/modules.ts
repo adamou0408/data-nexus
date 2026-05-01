@@ -335,3 +335,109 @@ modulesRouter.delete('/:id', requireRole('DATA_STEWARD'), async (req, res) => {
     });
   } catch (err) { handleApiError(res, err); }
 });
+
+// PATCH /api/modules/pages/:page_id — rename / move a Tier B page (TIER-B-PAGE-RENAME-V01)
+//
+// What's mutable:
+//   - display_name  → renames the page (mirrored to authz_ui_page.title for SSOT)
+//   - parent_id     → moves the page to a different module in the catalog tree
+//                     (authz_resource.parent_id only; we do NOT touch
+//                     authz_ui_page.parent_page_id, which is the legacy
+//                     renderer's drilldown wiring and not a curator concern)
+//
+// What's immutable on purpose:
+//   - page_id — external refs (URLs, drilldowns, custom pages, deep links from
+//     other apps) all key off page_id. Changing it would silently break those.
+//     If a curator needs a "rename" that updates the URL too, the right answer
+//     is delete + recreate, not in-place ID mutation.
+//
+// Both fields are optional; an empty body is rejected to avoid silent no-ops.
+modulesRouter.patch('/pages/:page_id', requireRole('DATA_STEWARD'), async (req, res) => {
+  const pageId = req.params.page_id;
+  const userId = getUserId(req);
+  const { display_name, parent_id } = (req.body || {}) as { display_name?: unknown; parent_id?: unknown };
+
+  const willRename = typeof display_name === 'string' && display_name.trim().length > 0;
+  const willMove = parent_id !== undefined; // null = move to root explicitly
+
+  if (!willRename && !willMove) {
+    return res.status(400).json({ error: 'No change', detail: 'Provide display_name and/or parent_id.' });
+  }
+  if (willMove && parent_id !== null && (typeof parent_id !== 'string' || !parent_id.startsWith('module:'))) {
+    return res.status(400).json({ error: 'Invalid parent_id', detail: 'parent_id must be a module: resource or null.' });
+  }
+
+  const resourceId = `page:${pageId}`;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Verify the page exists. We lock the row so the dual-write below cannot
+    // race with a concurrent sink upsert that re-emits the same page.
+    const existing = await client.query(
+      `SELECT resource_id, display_name, parent_id
+         FROM authz_resource
+        WHERE resource_id = $1 AND resource_type = 'page' AND is_active = TRUE
+        FOR UPDATE`,
+      [resourceId]
+    );
+    if (existing.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Page not found' });
+    }
+
+    // If moving, verify the target parent is an active module.
+    if (willMove && parent_id !== null) {
+      const parentCheck = await client.query(
+        `SELECT 1 FROM authz_resource WHERE resource_id = $1 AND resource_type = 'module' AND is_active = TRUE`,
+        [parent_id]
+      );
+      if (parentCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Target module not found or inactive' });
+      }
+    }
+
+    // Build dynamic UPDATE for authz_resource.
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (willRename) { params.push((display_name as string).trim()); sets.push(`display_name = $${params.length}`); }
+    if (willMove)   { params.push(parent_id); sets.push(`parent_id = $${params.length}`); }
+    params.push(resourceId);
+    await client.query(
+      `UPDATE authz_resource SET ${sets.join(', ')} WHERE resource_id = $${params.length}`,
+      params
+    );
+
+    // Mirror title to authz_ui_page (dual-write SSOT — V081 sink convention).
+    // Best-effort: if the row doesn't exist (legacy page that never got a sink
+    // snapshot), the resource update alone is the source of truth for the catalog.
+    if (willRename) {
+      await client.query(
+        `UPDATE authz_ui_page SET title = $1 WHERE page_id = $2`,
+        [(display_name as string).trim(), pageId]
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    return handleApiError(res, err);
+  } finally {
+    client.release();
+  }
+
+  await logAdminAction(pool, {
+    userId,
+    action: 'UPDATE_PAGE',
+    resourceType: 'page',
+    resourceId,
+    details: {
+      ...(willRename ? { display_name: (display_name as string).trim() } : {}),
+      ...(willMove ? { parent_id } : {}),
+    },
+  });
+
+  await refreshModuleStats();
+  res.json({ updated: resourceId, page_id: pageId });
+});

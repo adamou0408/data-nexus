@@ -8,6 +8,7 @@ import { DangerConfirmModal, ConfirmState } from '../shared/DangerConfirmModal';
 import { Loader2, Trash2, Pencil, FolderPlus, ChevronRight, Code2, FileText } from 'lucide-react';
 import { EmptyState } from '../shared/atoms/EmptyState';
 import { ModuleFormModal } from './ModuleFormModal';
+import { PageEditModal, PageEditTarget } from './PageEditModal';
 
 /** Build breadcrumb path from root → current module */
 function buildBreadcrumb(moduleId: string, nodes: ModuleTreeNode[]): { id: string; name: string }[] {
@@ -40,6 +41,7 @@ export function ModuleDetail({
   const [subTab, setSubTab] = useState<string>('tables');
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [showEdit, setShowEdit] = useState(false);
+  const [editPage, setEditPage] = useState<PageEditTarget | null>(null);
 
   const breadcrumb = useMemo(() => buildBreadcrumb(moduleId, nodes), [moduleId, nodes]);
 
@@ -244,6 +246,7 @@ export function ModuleDetail({
                     <th className="pb-2 font-medium">Page</th>
                     <th className="pb-2 font-medium">Page ID</th>
                     <th className="pb-2 font-medium">Source DAG</th>
+                    {canWrite && <th className="pb-2 font-medium w-10"></th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -262,6 +265,24 @@ export function ModuleDetail({
                       </td>
                       <td className="py-2 pr-3 font-mono text-slate-600">{p.page_id}</td>
                       <td className="py-2 pr-3 font-mono text-slate-600">{p.dag_id || '—'}</td>
+                      {canWrite && (
+                        <td className="py-2 pr-3 text-right">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditPage({
+                                page_id: p.page_id,
+                                display_name: p.display_name,
+                                current_parent_id: moduleId,
+                              });
+                            }}
+                            className="text-slate-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50"
+                            title="Rename or move this page"
+                          >
+                            <Pencil size={12} />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -286,6 +307,15 @@ export function ModuleDetail({
           editModule={mod}
           onClose={() => setShowEdit(false)}
           onCreated={() => { setShowEdit(false); load(); onMutate(); }}
+        />
+      )}
+
+      {editPage && (
+        <PageEditModal
+          page={editPage}
+          modules={nodes}
+          onClose={() => setEditPage(null)}
+          onSaved={() => { setEditPage(null); load(); onMutate(); }}
         />
       )}
     </div>
