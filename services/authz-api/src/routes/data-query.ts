@@ -380,7 +380,11 @@ dataQueryRouter.get('/functions/lint-all', async (req, res) => {
       defByKey.set(`${row.schema}.${row.function_name}`, row.def);
     }
 
-    const out: Record<string, { warn_count: number; info_count: number; codes: string[] }> = {};
+    // FN-QUALITY-LINT-V02-FU: payload now includes full issues[] alongside
+    // the count/code summary. List-row dots only need counts; the fn detail
+    // panel renders the full issue body (message + hint). Returning both in
+    // one trip avoids a second round-trip when the user expands a function.
+    const out: Record<string, { warn_count: number; info_count: number; codes: string[]; issues: ReturnType<typeof lintFunction> }> = {};
     for (const r of registry) {
       const def = defByKey.get(`${r.schema}.${r.function_name}`);
       if (!def) continue;   // orphaned registry entry — skip silently
@@ -394,6 +398,7 @@ dataQueryRouter.get('/functions/lint-all', async (req, res) => {
         warn_count: issues.filter((i) => i.severity === 'warn').length,
         info_count: issues.filter((i) => i.severity === 'info').length,
         codes: issues.map((i) => i.code),
+        issues,
       };
     }
     res.json({ functions: out });

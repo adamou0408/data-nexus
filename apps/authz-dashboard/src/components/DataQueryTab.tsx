@@ -141,7 +141,7 @@ export function DataQueryTab() {
   // FN-QUALITY-LINT-V02: per-fn quality summary, indexed by resource_id.
   // Empty map ≡ not loaded yet ≡ no badge (better than mis-labelling fns
   // as clean before lint-all returns).
-  const [fnLint, setFnLint] = useState<Record<string, { warn_count: number; info_count: number; codes: string[] }>>({});
+  const [fnLint, setFnLint] = useState<Record<string, { warn_count: number; info_count: number; codes: string[]; issues: LintIssue[] }>>({});
 
   useEffect(() => {
     api.datasourcesLite().then(ds => {
@@ -414,6 +414,38 @@ export function DataQueryTab() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* FN-QUALITY-LINT-V02-FU: Quality section. Sourced from the same
+                    /functions/lint-all payload that drives the list dots — no
+                    extra round-trip when the user expands a fn. Empty issues[]
+                    renders nothing (clean fns don't need celebratory UI). */}
+                {fnLint[selectedFn.resource_id] && fnLint[selectedFn.resource_id].issues.length > 0 && (
+                  <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                    <div className="text-[11px] font-medium text-slate-600 flex items-center gap-1.5">
+                      <AlertTriangle size={11} className="text-amber-600" /> Quality advisor ({fnLint[selectedFn.resource_id].issues.length})
+                      <span className="ml-auto text-[9px] text-slate-400 font-normal">non-blocking</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {fnLint[selectedFn.resource_id].issues.map((iss, i) => {
+                        const isWarn = iss.severity === 'warn';
+                        return (
+                          <span
+                            key={`${iss.code}-${i}`}
+                            title={`${iss.code} — ${iss.hint}`}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] cursor-help border ${
+                              isWarn
+                                ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                : 'bg-slate-100 text-slate-700 border-slate-300'
+                            }`}
+                          >
+                            <span className="font-mono font-semibold">{iss.code}</span>
+                            <span>{iss.message}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
 

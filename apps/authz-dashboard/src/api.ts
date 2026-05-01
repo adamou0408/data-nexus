@@ -392,11 +392,22 @@ export const api = {
     }),
 
   /** FN-QUALITY-LINT-V02: per-fn quality summary for the deployed catalog.
-   *  Returns { [resource_id]: {warn_count, info_count, codes} }. Used to
-   *  decorate the fn list with at-a-glance badges. */
+   *  Returns { [resource_id]: {warn_count, info_count, codes, issues} }. List
+   *  rows render dots from the counts; fn detail panel renders full issues[]. */
   dataQueryLintAll: (data_source_id: string) =>
     request<{
-      functions: Record<string, { warn_count: number; info_count: number; codes: string[] }>;
+      functions: Record<string, {
+        warn_count: number;
+        info_count: number;
+        codes: string[];
+        issues: Array<{
+          severity: 'warn' | 'info';
+          code: 'FQL-01' | 'FQL-02' | 'FQL-03' | 'FQL-04';
+          message: string;
+          hint: string;
+          context?: string;
+        }>;
+      }>;
     }>(`/data-query/functions/lint-all?data_source_id=${encodeURIComponent(data_source_id)}`),
 
   /** FN-QUALITY-LINT-V01: pure-text advisory on house conventions
@@ -786,6 +797,14 @@ export const api = {
       `/modules/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ cascade }) }),
   moduleDescriptors: () =>
     request<UIDescriptor[]>('/modules/descriptors'),
+
+  /** TIER-B-PAGE-RENAME-V01: rename and/or move a Tier B page in the catalog tree.
+   *  page_id is immutable (external refs depend on it); pass {} → 400. */
+  pageUpdate: (page_id: string, patch: { display_name?: string; parent_id?: string | null }) =>
+    request<{ updated: string; page_id: string }>(
+      `/modules/pages/${encodeURIComponent(page_id)}`,
+      { method: 'PATCH', body: JSON.stringify(patch) }
+    ),
 
   // Generic UI descriptors — any page_id registered in authz_ui_descriptor
   uiDescriptors: (pageId: string) =>
