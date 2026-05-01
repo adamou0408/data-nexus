@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../api';
 
 type DataSourceLite = { source_id: string; display_name: string; db_type: string };
@@ -6,6 +6,7 @@ import { useToast } from './Toast';
 import { EmptyState } from './shared/atoms/EmptyState';
 import { PageHeader } from './shared/atoms/PageHeader';
 import { AuthorPanelAIAssist } from './AuthorPanelAIAssist';
+import { QualityRulesHelp } from './QualityRulesHelp';
 import { Code2, Play, Loader2, Database, AlertCircle, Clock, Hash, AlertTriangle, FileText, Calculator, Zap, Pencil, CheckCircle2, UploadCloud, Table2 } from 'lucide-react';
 
 type ParsedArg = { name: string; pgType: string; hasDefault: boolean; kind?: string };
@@ -432,6 +433,7 @@ export function DataQueryTab() {
                   <div className="space-y-1.5 pt-2 border-t border-slate-100">
                     <div className="text-[11px] font-medium text-slate-600 flex items-center gap-1.5">
                       <AlertTriangle size={11} className="text-amber-600" /> Quality advisor ({fnLint[selectedFn.resource_id].issues.length})
+                      <QualityRulesHelp />
                       <span className="ml-auto text-[9px] text-slate-400 font-normal">non-blocking</span>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
@@ -453,6 +455,16 @@ export function DataQueryTab() {
                         );
                       })}
                     </div>
+                  </div>
+                )}
+                {/* FN-QUALITY-LINT-V01-FU5: clean-state reassurance, mirroring
+                    the editor's emerald banner. Only shown when /functions/lint-all
+                    returned a record for this fn (i.e. lint *did* run) — absence
+                    of the entry means the endpoint hasn't been called yet, which
+                    is a different state we shouldn't paper over. */}
+                {fnLint[selectedFn.resource_id] && fnLint[selectedFn.resource_id].issues.length === 0 && (
+                  <div className="pt-2 border-t border-slate-100 text-[11px] text-emerald-700 flex items-center gap-1.5">
+                    <CheckCircle2 size={11} /> Quality advisor — no issues
                   </div>
                 )}
 
@@ -644,7 +656,16 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
   const [authorError, setAuthorError] = useState<string>('');
   // FN-QUALITY-LINT-V01: advisory issues (non-blocking). Debounced re-lint
   // on every SQL change keeps the pills in sync without thrashing the API.
+  // lintOk distinguishes "clean SQL" (true, []) from "endpoint rejected the
+  // header" (false, []) — they look identical in lintIssues alone, and the
+  // emerald success banner must NOT lie about the second case.
   const [lintIssues, setLintIssues] = useState<LintIssue[]>([]);
+  const [lintOk, setLintOk] = useState<boolean | null>(null);
+  // FN-QUALITY-LINT-V01-FU5: textarea ref drives the post-template-insert
+  // auto-select of the first <entity>/<aspect> placeholder. Without this,
+  // first-time users frequently deploy templates verbatim because the
+  // angle-brackets don't read as "edit me" — they read as legitimate syntax.
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (!dsId) return;
@@ -660,11 +681,11 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
   // (no DB), so 600ms is plenty cheap and gives near-live pill updates without
   // racing the editor. Empty SQL clears issues.
   useEffect(() => {
-    if (!sql.trim()) { setLintIssues([]); return; }
+    if (!sql.trim()) { setLintIssues([]); setLintOk(null); return; }
     const handle = setTimeout(() => {
       api.dataQueryLint(sql)
-        .then((r) => setLintIssues(r.issues as LintIssue[]))
-        .catch(() => setLintIssues([]));   // bad header → just hide pills
+        .then((r) => { setLintIssues(r.issues as LintIssue[]); setLintOk(true); })
+        .catch(() => { setLintIssues([]); setLintOk(false); });   // bad header → no pills, no green banner either
     }, 600);
     return () => clearTimeout(handle);
   }, [sql]);
@@ -688,6 +709,7 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
       const lr = await api.dataQueryLint(sql);
       const next = lr.issues as LintIssue[];
       setLintIssues(next);
+      setLintOk(true);
       const warns = next.filter((i) => i.severity === 'warn');
       if (warns.length > 0) {
         const list = warns.map((i) => `  • ${i.code} — ${i.message}`).join('\n');
@@ -797,10 +819,23 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
                   e.target.value = '';
                   return;
                 }
-                setSql(tpl.sql(selectedTable?.table_schema || 'public'));
+                const newSql = tpl.sql(selectedTable?.table_schema || 'public');
+                setSql(newSql);
                 setValidateResult(null);
                 setAuthorError('');
                 e.target.value = '';
+                // FN-QUALITY-LINT-V01-FU5: jump caret onto the first <entity>
+                // placeholder and select it. setTimeout 0 lets React commit
+                // the textarea value first; setSelectionRange before that
+                // commit silently no-ops.
+                setTimeout(() => {
+                  const ta = textareaRef.current;
+                  if (!ta) return;
+                  const m = newSql.match(/<[a-z][a-z_]*>/i);
+                  if (!m || m.index === undefined) return;
+                  ta.focus();
+                  ta.setSelectionRange(m.index, m.index + m[0].length);
+                }, 0);
               }}
               className="ml-auto text-[11px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 hover:bg-slate-50"
               title="Insert a skeleton that already passes the quality rules"
@@ -811,7 +846,19 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
               ))}
             </select>
           </div>
+          {/* FN-QUALITY-LINT-V01-FU5: hint banner — only shown while the SQL
+              still contains an <entity>/<aspect> placeholder. Disappears once
+              the curator does the substitution, so it doesn't add visual
+              noise to hand-written SQL. */}
+          {/<[a-z][a-z_]*>/i.test(sql) && (
+            <div className="px-3 py-1.5 border-b border-slate-200 bg-amber-50/40 text-[10px] text-amber-800 flex items-center gap-1.5">
+              <AlertTriangle size={11} />
+              Replace <code className="font-mono px-1 rounded bg-amber-100">&lt;entity&gt;</code> /
+              <code className="font-mono px-1 rounded bg-amber-100">&lt;aspect&gt;</code> placeholders with real names before deploying.
+            </div>
+          )}
           <textarea
+            ref={textareaRef}
             value={sql}
             onChange={e => { setSql(e.target.value); setValidateResult(null); }}
             rows={14}
@@ -823,6 +870,7 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
             <div className="px-3 py-2 border-t border-slate-200 bg-amber-50/50">
               <div className="text-[10px] font-medium text-amber-800 uppercase tracking-wide mb-1.5 flex items-center gap-1">
                 <AlertTriangle size={11} /> Quality advisor ({lintIssues.length})
+                <QualityRulesHelp />
                 <span className="ml-auto text-[9px] text-amber-700/70 normal-case font-normal">non-blocking — Deploy stays enabled</span>
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -844,6 +892,16 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
                   );
                 })}
               </div>
+            </div>
+          )}
+          {/* FN-QUALITY-LINT-V01-FU3: when SQL is present and the lint pass
+              has run (any visible function header would have produced an
+              issues array — empty means clean), reassure the curator that
+              the linter actually ran. Without this, "no pills" is
+              indistinguishable from "lint not running" for first-timers. */}
+          {lintOk === true && lintIssues.length === 0 && sql.trim().length > 0 && (
+            <div className="px-3 py-1.5 border-t border-emerald-200 bg-emerald-50/40 text-[10px] text-emerald-700 flex items-center gap-1.5">
+              <CheckCircle2 size={11} /> Quality advisor — no issues
             </div>
           )}
           <div className="px-3 py-2 border-t border-slate-200 bg-slate-50 flex items-center gap-2">

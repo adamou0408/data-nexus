@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 import { Sparkles, Loader2, Wand2, BookOpen, ChevronDown, ChevronRight, X, ThumbsUp, ThumbsDown, AlertTriangle } from 'lucide-react';
 import { api } from '../api';
 import { useToast } from './Toast';
+import { QualityRulesHelp } from './QualityRulesHelp';
 
 type LastCall = {
   feature: 'draft' | 'refine' | 'explain';
@@ -96,10 +97,17 @@ export function AuthorPanelAIAssist({
   // Ask AI to fix the flagged issues — pre-populate the Refine input with the
   // codes + headlines so the curator just clicks Refine. We use codes (not full
   // hint text) because the prompt-side house rules already understand FQL-*.
+  //
+  // FN-QUALITY-LINT-V01-FU5: if the curator already typed something in the
+  // Refine box, append rather than overwrite — losing in-progress free-text
+  // instructions to a one-click button is the kind of small loss-of-trust
+  // that makes people stop using the affordance. Newline separator keeps the
+  // two intents visually distinct in the textarea.
   const handleAskFixLint = () => {
     if (aiLintIssues.length === 0) return;
     const lines = aiLintIssues.map((i) => `${i.code}: ${i.message}`).join('; ');
-    setRefineInstruction(`Fix these quality issues: ${lines}`);
+    const fixLine = `Fix these quality issues: ${lines}`;
+    setRefineInstruction((prev) => (prev.trim() ? `${prev.trimEnd()}\n${fixLine}` : fixLine));
   };
 
   const handleEvalMark = async (verdict: 'good' | 'bad') => {
@@ -299,6 +307,7 @@ export function AuthorPanelAIAssist({
                 <span className="text-[10px] font-medium text-amber-800 uppercase tracking-wide">
                   Quality advisor ({aiLintIssues.length})
                 </span>
+                <QualityRulesHelp />
                 <span className="ml-auto text-[9px] text-amber-700/70">
                   AI output already in editor — non-blocking
                 </span>
