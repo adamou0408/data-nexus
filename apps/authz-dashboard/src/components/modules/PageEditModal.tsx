@@ -52,7 +52,19 @@ export function PageEditModal({
       if (displayName.trim() !== page.display_name.trim()) patch.display_name = displayName.trim();
       if (parentId !== page.current_parent_id) patch.parent_id = parentId || null;
       await api.pageUpdate(page.page_id, patch);
-      toast.success('Page updated');
+
+      // TIER-B-PAGE-RENAME-V01-FU: name the destination in the toast so the
+      // curator can confirm the move landed where intended. The current
+      // ModuleDetail view doesn't follow the page to its new parent — without
+      // this hint, "Page updated" + page-vanishing-from-list looks broken.
+      const movedTo =
+        patch.parent_id !== undefined
+          ? (parentId
+              ? modules.find((m) => m.resource_id === parentId)?.display_name ?? parentId
+              : 'root')
+          : null;
+      const msg = movedTo ? `Page updated — moved to ${movedTo}` : 'Page updated';
+      toast.success(msg);
       onSaved();
     } catch (err: any) {
       toast.error(err.message || 'Save failed');
