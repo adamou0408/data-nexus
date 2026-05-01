@@ -288,6 +288,13 @@ export function DataQueryTab() {
           onDeployed={(resourceId) => {
             setMode('run');
             reloadFunctions(resourceId);
+            // FN-QUALITY-LINT-V02-FU2: refresh quality badges after deploy so
+            // the just-shipped fn shows up with the right dot + Quality
+            // section without a DS round-trip. Failure stays silent — if
+            // lint-all hiccups, the fn list still works.
+            api.dataQueryLintAll(dsId)
+              .then((r) => setFnLint(r.functions))
+              .catch(() => {});
           }}
         />
       ) : (
