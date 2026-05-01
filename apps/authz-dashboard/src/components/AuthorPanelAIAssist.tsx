@@ -11,7 +11,7 @@
 //          + response is written to authz_eval_case for future eval-set use.
 
 import { useEffect, useState } from 'react';
-import { Sparkles, Loader2, Wand2, BookOpen, ChevronDown, ChevronRight, X, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { Sparkles, Loader2, Wand2, BookOpen, ChevronDown, ChevronRight, X, ThumbsUp, ThumbsDown, AlertTriangle } from 'lucide-react';
 import { api } from '../api';
 import { useToast } from './Toast';
 
@@ -20,6 +20,18 @@ type LastCall = {
   usage_id: number;
   prompt_text: string;     // full prompt the UI sent (kept in browser memory only)
   response_text: string;   // full response the UI rendered
+};
+
+// FN-QUALITY-LINT-V01-AI: keep this in sync with the LintIssue type in
+// DataQueryTab — same shape returned by /functions/lint. Duplicated rather
+// than extracted because the lint contract is small and stable; a shared
+// types module would cost more in import wiring than the 6 lines saved.
+type LintIssue = {
+  severity: 'warn' | 'info';
+  code: 'FQL-01' | 'FQL-02' | 'FQL-03' | 'FQL-04';
+  message: string;
+  hint: string;
+  context?: string;
 };
 
 const COLLAPSE_KEY = 'authorPanel.aiAssist.collapsed';
@@ -49,6 +61,13 @@ export function AuthorPanelAIAssist({
   const [lastCall, setLastCall] = useState<LastCall | null>(null);
   const [evalMarked, setEvalMarked] = useState<null | 'good' | 'bad'>(null);
   const [evalBusy, setEvalBusy] = useState(false);
+  // FN-QUALITY-LINT-V01-AI: lint summary of the most recent AI-produced SQL.
+  // We deliberately do NOT gate the apply (the SQL is already in the editor
+  // by the time these pills render) — the editor's debounced lint will mirror
+  // these same issues. The value of showing them HERE is immediacy + the
+  // "Ask AI to fix" shortcut that converts the lint result into the next
+  // refine instruction without copy-paste.
+  const [aiLintIssues, setAiLintIssues] = useState<LintIssue[]>([]);
 
   const onError = (err: any) => {
     const msg = String(err?.message || err);
@@ -62,6 +81,26 @@ export function AuthorPanelAIAssist({
   };
 
   const resetLastCall = () => { setLastCall(null); setEvalMarked(null); };
+
+  // Lint AI-produced SQL post-hoc. Failure is silent: a malformed CREATE
+  // FUNCTION header will be flagged by Validate anyway, so we don't double-shout.
+  const lintAiOutput = async (nextSql: string) => {
+    try {
+      const r = await api.dataQueryLint(nextSql);
+      setAiLintIssues(r.issues as LintIssue[]);
+    } catch {
+      setAiLintIssues([]);
+    }
+  };
+
+  // Ask AI to fix the flagged issues — pre-populate the Refine input with the
+  // codes + headlines so the curator just clicks Refine. We use codes (not full
+  // hint text) because the prompt-side house rules already understand FQL-*.
+  const handleAskFixLint = () => {
+    if (aiLintIssues.length === 0) return;
+    const lines = aiLintIssues.map((i) => `${i.code}: ${i.message}`).join('; ');
+    setRefineInstruction(`Fix these quality issues: ${lines}`);
+  };
 
   const handleEvalMark = async (verdict: 'good' | 'bad') => {
     if (!lastCall || evalBusy) return;
@@ -88,6 +127,7 @@ export function AuthorPanelAIAssist({
     setBusy('draft');
     setExplainMd(null);
     resetLastCall();
+    setAiLintIssues([]);
     const userPromptText = prompt.trim();
     try {
       const r = await api.aiAssistDraft(dsId, userPromptText);
@@ -96,6 +136,7 @@ export function AuthorPanelAIAssist({
       if (r.usage_id != null) {
         setLastCall({ feature: 'draft', usage_id: r.usage_id, prompt_text: userPromptText, response_text: r.sql });
       }
+      void lintAiOutput(r.sql);
       toast.success(`Draft generated (${r.model_id}, ${r.usage.latency_ms}ms)`);
     } catch (err) {
       onError(err);
@@ -111,6 +152,7 @@ export function AuthorPanelAIAssist({
     setBusy('refine');
     setExplainMd(null);
     resetLastCall();
+    setAiLintIssues([]);
     const instr = refineInstruction.trim();
     const beforeSql = sql;
     try {
@@ -121,6 +163,7 @@ export function AuthorPanelAIAssist({
         const composed = `INSTRUCTION: ${instr}\n\nBEFORE SQL:\n${beforeSql}`;
         setLastCall({ feature: 'refine', usage_id: r.usage_id, prompt_text: composed, response_text: r.sql });
       }
+      void lintAiOutput(r.sql);
       toast.success(`Refined (${r.model_id}, ${r.usage.latency_ms}ms)`);
       setRefineInstruction('');
     } catch (err) {
@@ -243,6 +286,51 @@ export function AuthorPanelAIAssist({
               <pre className="text-[11px] text-slate-800 whitespace-pre-wrap leading-relaxed font-sans pr-5">
                 {explainMd}
               </pre>
+            </div>
+          )}
+
+          {aiLintIssues.length > 0 && (
+            <div
+              className="border border-amber-200 bg-amber-50/70 rounded px-2.5 py-1.5"
+              data-testid="ai-assist-lint-pills"
+            >
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <AlertTriangle size={11} className="text-amber-700" />
+                <span className="text-[10px] font-medium text-amber-800 uppercase tracking-wide">
+                  Quality advisor ({aiLintIssues.length})
+                </span>
+                <span className="ml-auto text-[9px] text-amber-700/70">
+                  AI output already in editor — non-blocking
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mb-1.5">
+                {aiLintIssues.map((iss, i) => {
+                  const isWarn = iss.severity === 'warn';
+                  return (
+                    <span
+                      key={`${iss.code}-${i}`}
+                      title={`${iss.code} — ${iss.hint}`}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] cursor-help border ${
+                        isWarn
+                          ? 'bg-amber-100 text-amber-900 border-amber-300'
+                          : 'bg-slate-100 text-slate-700 border-slate-300'
+                      }`}
+                    >
+                      <span className="font-mono font-semibold">{iss.code}</span>
+                      <span>{iss.message}</span>
+                    </span>
+                  );
+                })}
+              </div>
+              <button
+                onClick={handleAskFixLint}
+                disabled={busy !== null}
+                className="text-[10px] px-2 py-0.5 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 disabled:opacity-50 flex items-center gap-1"
+                data-testid="ai-assist-lint-fix"
+                title="Pre-fill the Refine box with these issues so AI can address them"
+              >
+                <Wand2 size={10} /> Ask AI to fix
+              </button>
             </div>
           )}
 
