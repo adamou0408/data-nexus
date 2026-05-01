@@ -533,6 +533,26 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
 
   const handleValidate = async () => {
     if (!sql.trim()) return;
+    // FN-QUALITY-LINT-V01-FU: warn-gate at Validate. We re-lint synchronously
+    // here (rather than reading lintIssues state) so a curator who clicks
+    // Validate before the 600ms debounce settles still sees fresh advice.
+    // info-level issues stay non-blocking — only warns prompt the dialog.
+    try {
+      const lr = await api.dataQueryLint(sql);
+      const next = lr.issues as LintIssue[];
+      setLintIssues(next);
+      const warns = next.filter((i) => i.severity === 'warn');
+      if (warns.length > 0) {
+        const list = warns.map((i) => `  • ${i.code} — ${i.message}`).join('\n');
+        const proceed = window.confirm(
+          `Quality advisor flagged ${warns.length} warning(s):\n\n${list}\n\nValidate anyway?`
+        );
+        if (!proceed) return;
+      }
+    } catch {
+      /* lint endpoint rejects on bad CREATE FUNCTION header — let the validate
+         path return the canonical error so the curator sees only one message. */
+    }
     setValidating(true);
     setAuthorError('');
     setValidateResult(null);
