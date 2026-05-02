@@ -14,6 +14,7 @@ import { DataQueryTab } from './components/DataQueryTab';
 import { DagTab } from './components/DagTab';
 import { DiscoverTab } from './components/DiscoverTab';
 import { AIProvidersTab } from './components/AIProvidersTab';
+import { ActivityTab } from './components/ActivityTab';
 import { FeedbackInboxTab } from './components/FeedbackInboxTab';
 import { BusinessTermsTab } from './components/BusinessTermsTab';
 import { ConfigToolsTab } from './components/ConfigToolsTab';
@@ -166,6 +167,7 @@ function AppInner() {
       {accessSection && <AccessSectionPage key={accessSection} section={accessSection} />}
       {tab === 'ai-providers' && <AIProvidersTab />}
       {tab === 'audit' && <ConfigEngine initialPageId="audit_home" />}
+      {tab === 'activity' && <ActivityTab />}
       {tab === 'feedback-inbox' && <FeedbackInboxTab />}
       {tab === 'business-terms' && <BusinessTermsTab />}
 

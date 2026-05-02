@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronsLeft, ChevronsRight, LogOut, Loader2, User,
   Menu, X, Code2, Layers, BarChart3,
   Users, ShieldCheck, KeyRound, FolderTree,
-  Settings2, Boxes, Workflow, Search, Zap, Sparkles, Inbox, BookOpen,
+  Settings2, Boxes, Workflow, Search, Zap, Sparkles, Inbox, BookOpen, Activity,
 } from 'lucide-react';
 
 export type TabId =
@@ -14,6 +14,7 @@ export type TabId =
   | 'tables' | 'raw-tables' | 'metabase' | 'data-query' | 'flow-composer'
   | 'access-resources' | 'access-policies' | 'pool' | 'modules' | 'discover'
   | 'access-subjects' | 'access-roles' | 'access-actions' | 'audit'
+  | 'activity'
   | 'feedback-inbox'
   | 'business-terms'
   | 'ai-providers'
@@ -88,6 +89,7 @@ const navGroups: NavGroup[] = [
   {
     label: 'Observe',
     items: [
+      { id: 'activity',       label: 'Activity',       icon: <Activity size={18} />, requires: 'admin' },
       { id: 'audit',          label: 'Audit Log',      icon: <FileText size={18} />, requires: 'admin',   alertKey: 'audit' },
       { id: 'feedback-inbox', label: 'Feedback Inbox', icon: <Inbox size={18} />,    requires: 'steward', shortcut: 'g i' },
     ],

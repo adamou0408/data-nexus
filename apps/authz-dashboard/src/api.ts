@@ -969,6 +969,20 @@ export const api = {
     request<{ row: BusinessTermRow }>(`/business-term/${encodeURIComponent(resource_id)}/transition`, {
       method: 'POST', body: JSON.stringify({ status }),
     }),
+
+  // ACTIVITY-V01: stats over V030 continuous aggregates.
+  activityHourlySummary: (hours = 24) =>
+    request<{ hours: number; rows: Array<{ bucket: string; access_path: 'A'|'B'|'C'; decision: string; event_count: string; avg_duration_ms: number | null }> }>(
+      `/activity/hourly-summary?hours=${hours}`),
+  activityTopSubjects: (days = 7, limit = 10) =>
+    request<{ days: number; rows: Array<{ subject_id: string; allow_count: string | null; deny_count: string | null; total_count: string }> }>(
+      `/activity/top-subjects?days=${days}&limit=${limit}`),
+  activityTopDeniedResources: (hours = 24, limit = 10) =>
+    request<{ hours: number; rows: Array<{ resource_id: string; access_path: 'A'|'B'|'C'; deny_count: string; distinct_subjects: string }> }>(
+      `/activity/top-denied-resources?hours=${hours}&limit=${limit}`),
+  activityTotals: (hours = 24) =>
+    request<{ hours: number; allow_count: string; deny_count: string; total_count: string }>(
+      `/activity/totals?hours=${hours}`),
 };
 
 export type SavedViewConfig = {

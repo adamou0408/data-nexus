@@ -7,6 +7,7 @@ import { filterRouter } from './routes/filter';
 import { matrixRouter } from './routes/matrix';
 import { rlsRouter } from './routes/rls-simulate';
 import { browseReadRouter } from './routes/browse-read';
+import { activityRouter } from './routes/activity';
 import { browseAdminRouter } from './routes/browse-admin';
 import { poolRouter } from './routes/pool';
 import { datasourceRouter, listDataSourcesLite } from './routes/datasource';
@@ -80,6 +81,9 @@ app.use('/api/matrix', matrixRouter);
 app.use('/api/rls', rlsRouter);
 app.use('/api/browse', browseReadRouter);
 app.use('/api/browse', requireRole('AUTHZ_ADMIN'), browseAdminRouter);
+// ACTIVITY-V01: read-only stats over V030 continuous aggregates. Per-route
+// gate (AUTHZ_ADMIN/DATA_STEWARD) lives inside the router.
+app.use('/api/activity', requireAuth, activityRouter);
 
 // Config-Driven UI (requires auth — fine-grained checks done internally)
 app.use('/api/config-exec', requireAuth, configExecRouter);
