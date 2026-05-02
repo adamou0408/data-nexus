@@ -27,6 +27,7 @@ import { workflowRouter } from './routes/workflow';
 import { savedViewRouter } from './routes/saved-view';
 import { feedbackRouter } from './routes/feedback';
 import { businessTermRouter } from './routes/business-term';
+import { rolePackRouter } from './routes/role-pack';
 import { requireRole, requireAuth } from './middleware/authz';
 import { optionalJWT, buildJWTConfig } from './middleware/jwt';
 import { verifyCryptoKey } from './lib/crypto';
@@ -137,6 +138,11 @@ app.use('/api/feedback', requireAuth, feedbackRouter);
 // Closes the schema-without-tooling gap that blocks §3.4 C primitive's
 // blessed_term ≥ 10 gate.
 app.use('/api/business-term', requireRole('DATA_STEWARD'), businessTermRouter);
+
+// PERM-SLIM-V01-PATH2: role pack template (V089). Read = AUTHZ_ADMIN/DATA_STEWARD,
+// write = AUTHZ_ADMIN — per-route gates live inside the router so ops can read
+// without holding the writer role.
+app.use('/api/role-pack', requireAuth, rolePackRouter);
 
 // Config snapshot & bulk import — AUTHZ_ADMIN per V083 (Govern stage).
 app.use('/api/config/snapshot', requireRole('AUTHZ_ADMIN'), configSnapshotRouter);
