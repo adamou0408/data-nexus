@@ -5,8 +5,9 @@ import { RolesSection } from './RolesSection';
 import { ResourcesSection } from './ResourcesSection';
 import { PoliciesSection } from './PoliciesSection';
 import { ActionsSection } from './ActionsSection';
+import { PacksSection } from './PacksSection';
 
-export type AccessSection = 'subjects' | 'roles' | 'resources' | 'policies' | 'actions';
+export type AccessSection = 'subjects' | 'roles' | 'resources' | 'policies' | 'actions' | 'packs';
 
 const META: Record<AccessSection, { title: string; desc: string }> = {
   subjects:  { title: 'Subjects',  desc: 'Users, groups, and service accounts that can be authorized.' },
@@ -14,6 +15,7 @@ const META: Record<AccessSection, { title: string; desc: string }> = {
   resources: { title: 'Resources', desc: 'Tables, pages, and APIs that permissions are granted against.' },
   policies:  { title: 'Policies',  desc: 'Conditional authorization rules (ABAC / row-level).' },
   actions:   { title: 'Actions',   desc: 'Verbs a subject can perform on a resource (read, write, etc).' },
+  packs:     { title: 'Permission Packs', desc: 'Reusable bundles of (resource, action) tuples — apply once, reuse across roles.' },
 };
 
 export function AccessSectionPage({ section }: { section: AccessSection }) {
@@ -21,7 +23,13 @@ export function AccessSectionPage({ section }: { section: AccessSection }) {
   const [initialLoading, setInitialLoading] = useState(true);
 
   const reload = useCallback(() => {
-    const fetchers = { subjects: api.subjects, roles: api.roles, resources: api.resources, policies: api.policies, actions: api.actions };
+    const fetchers: Record<AccessSection, () => Promise<Record<string, unknown>[]>> = {
+      subjects: api.subjects, roles: api.roles, resources: api.resources,
+      policies: api.policies, actions: api.actions,
+      // Role-pack list endpoint is wrapped — unwrap here so the section
+      // contract (data: row[]) stays uniform.
+      packs: () => api.rolePackList().then(r => r.packs as unknown as Record<string, unknown>[]),
+    };
     fetchers[section]()
       .then(setData)
       .catch(() => {})
@@ -53,6 +61,7 @@ export function AccessSectionPage({ section }: { section: AccessSection }) {
             {section === 'resources' && <ResourcesSection data={data} onReload={reload} />}
             {section === 'policies' && <PoliciesSection data={data} onReload={reload} />}
             {section === 'actions' && <ActionsSection data={data} onReload={reload} />}
+            {section === 'packs' && <PacksSection data={data} onReload={reload} />}
           </>
         )}
       </div>

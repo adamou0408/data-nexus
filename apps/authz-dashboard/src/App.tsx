@@ -28,6 +28,7 @@ const accessTabMap: Record<string, AccessSection> = {
   'access-resources': 'resources',
   'access-policies': 'policies',
   'access-actions': 'actions',
+  'access-packs': 'packs',
 };
 
 // Legacy → consolidated tab mapping (UX-04)

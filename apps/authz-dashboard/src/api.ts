@@ -1021,6 +1021,52 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ note: note ?? null }),
     }),
+
+  // PERM-SLIM-V01-PATH2: role pack template (V089 + /api/role-pack).
+  // Read = AUTHZ_ADMIN/DATA_STEWARD, write = AUTHZ_ADMIN. Per-route gates
+  // live inside the router; the dashboard hides write controls based on
+  // useAuthz().isAuthzAdmin.
+  rolePackList: () =>
+    request<{ packs: RolePackSummary[] }>(`/role-pack`),
+  rolePackGet: (pack_id: string) =>
+    request<{ pack: RolePack; members: RolePackMember[]; assignments: RolePackAssignment[] }>(
+      `/role-pack/${encodeURIComponent(pack_id)}`),
+  rolePackCreate: (data: { pack_id: string; display_name: string; description?: string }) =>
+    request<{ pack: RolePack }>(`/role-pack`, { method: 'POST', body: JSON.stringify(data) }),
+  rolePackPatch: (pack_id: string, data: { display_name?: string; description?: string }) =>
+    request<{ pack: RolePack }>(`/role-pack/${encodeURIComponent(pack_id)}`, {
+      method: 'PATCH', body: JSON.stringify(data),
+    }),
+  rolePackDelete: (pack_id: string) =>
+    request<{ status: 'deleted'; pack_id: string }>(
+      `/role-pack/${encodeURIComponent(pack_id)}`, { method: 'DELETE' }),
+  rolePackAddMember: (pack_id: string, data: { resource_id: string; action_id: string; effect?: 'allow' | 'deny' }) =>
+    request<{ member: RolePackMember; resync: RolePackExpansion[] }>(
+      `/role-pack/${encodeURIComponent(pack_id)}/members`, {
+        method: 'POST', body: JSON.stringify(data),
+      }),
+  rolePackRemoveMember: (pack_id: string, resource_id: string, action_id: string) =>
+    request<{ status: 'removed'; resync: RolePackExpansion[] }>(
+      `/role-pack/${encodeURIComponent(pack_id)}/members/${encodeURIComponent(resource_id)}/${encodeURIComponent(action_id)}`,
+      { method: 'DELETE' }),
+  rolePackPreview: (pack_id: string, role_id: string) =>
+    request<{
+      pack_id: string; role_id: string;
+      to_insert: RolePackMember[];
+      to_delete: RolePackMember[];
+      conflicts_with_manual: RolePackMember[];
+    }>(`/role-pack/${encodeURIComponent(pack_id)}/preview/${encodeURIComponent(role_id)}`),
+  rolePackApply: (pack_id: string, role_id: string) =>
+    request<RolePackExpansion>(
+      `/role-pack/${encodeURIComponent(pack_id)}/assignments/${encodeURIComponent(role_id)}`,
+      { method: 'POST' }),
+  rolePackUnapply: (pack_id: string, role_id: string) =>
+    request<{ pack_id: string; role_id: string; deleted: number }>(
+      `/role-pack/${encodeURIComponent(pack_id)}/assignments/${encodeURIComponent(role_id)}`,
+      { method: 'DELETE' }),
+  rolePackResync: (pack_id: string) =>
+    request<{ pack_id: string; results: RolePackExpansion[] }>(
+      `/role-pack/${encodeURIComponent(pack_id)}/resync`, { method: 'POST' }),
 };
 
 export type SavedViewConfig = {
@@ -1456,4 +1502,42 @@ export type ModuleDetails = {
   access: { role_id: string; role_name: string; actions: { action_id: string; effect: string }[] }[];
   profiles: { profile_id: string; pg_role: string; connection_mode: string; data_source_id: string | null }[];
   user_permissions: { actions: string[]; is_admin: boolean };
+};
+
+// PERM-SLIM-V01-PATH2 — role pack types
+export type RolePack = {
+  pack_id: string;
+  display_name: string;
+  description: string | null;
+  is_system: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RolePackSummary = RolePack & {
+  member_count: number;
+  assignment_count: number;
+};
+
+export type RolePackMember = {
+  resource_id: string;
+  action_id: string;
+  effect: 'allow' | 'deny';
+  added_by?: string;
+  added_at?: string;
+};
+
+export type RolePackAssignment = {
+  role_id: string;
+  applied_by: string;
+  applied_at: string;
+};
+
+export type RolePackExpansion = {
+  pack_id: string;
+  role_id: string;
+  inserted: number;
+  deleted: number;
+  skipped_due_to_manual: number;
 };

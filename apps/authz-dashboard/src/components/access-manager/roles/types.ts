@@ -10,6 +10,11 @@ export type PermRow = {
   resource_id: string;         // may include wildcard suffix '*'
   effect: Effect;
   resource_name?: string;
+  // PERM-SLIM-V01-PATH2: when non-null, this row was expanded from a
+  // pack and is managed by re-sync. Manual edits to a pack-tagged row
+  // get clobbered on next member change → UI warns + offers a deep
+  // link to the pack editor.
+  pack_source?: string | null;
 };
 
 // Staged operations, keyed by a stable composite key.

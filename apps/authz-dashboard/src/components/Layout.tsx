@@ -7,13 +7,14 @@ import {
   Menu, X, Code2, Layers, BarChart3,
   Users, ShieldCheck, KeyRound, FolderTree,
   Settings2, Boxes, Workflow, Search, Zap, Sparkles, Inbox, BookOpen, Activity,
+  Package,
 } from 'lucide-react';
 
 export type TabId =
   | 'overview' | 'permissions'
   | 'tables' | 'raw-tables' | 'metabase' | 'data-query' | 'flow-composer'
   | 'access-resources' | 'access-policies' | 'pool' | 'modules' | 'discover'
-  | 'access-subjects' | 'access-roles' | 'access-actions' | 'audit'
+  | 'access-subjects' | 'access-roles' | 'access-actions' | 'access-packs' | 'audit'
   | 'activity'
   | 'feedback-inbox'
   | 'business-terms'
@@ -70,6 +71,7 @@ const navGroups: NavGroup[] = [
     items: [
       { id: 'access-subjects', label: 'Subjects', icon: <Users size={18} />,       requires: 'authzAdmin', countKey: 'subjects' },
       { id: 'access-roles',    label: 'Roles',    icon: <KeyRound size={18} />,    requires: 'authzAdmin', countKey: 'roles' },
+      { id: 'access-packs',    label: 'Permission Packs', icon: <Package size={18} />, requires: 'authzAdmin' },
       { id: 'access-actions',  label: 'Actions',  icon: <Zap size={18} />,         requires: 'authzAdmin' },
       { id: 'access-policies', label: 'Policies', icon: <ShieldCheck size={18} />, requires: 'authzAdmin', countKey: 'policies' },
       { id: 'business-terms',  label: 'Business Terms', icon: <BookOpen size={18} />, shortcut: 'g t' },

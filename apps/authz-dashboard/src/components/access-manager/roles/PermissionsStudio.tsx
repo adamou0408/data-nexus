@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, Fragment } from 'react';
-import { api } from '../../../api';
+import { api, RolePackSummary } from '../../../api';
 import { useToast } from '../../Toast';
 import { Combobox } from '../../shared/Combobox';
 import {
@@ -9,7 +9,7 @@ import {
   Info, HelpCircle, Zap, ShieldAlert, ShieldCheck,
   Eye, PencilLine, Trash2, CheckCircle2, Download, Pause, Play, Plug,
   Folder, Database, Table2, Columns3, LayoutDashboard, Globe, FileCode2,
-  Undo2,
+  Undo2, Package,
 } from 'lucide-react';
 import {
   PermRow, PendingOp, Effect, ActionMeta, ResourceMeta,
@@ -68,6 +68,8 @@ export function PermissionsStudio({ roleId, onReload }: { roleId: string; onRelo
         resource_id: String(p.resource_id),
         effect: (p.effect === 'deny' ? 'deny' : 'allow') as Effect,
         resource_name: p.resource_name ? String(p.resource_name) : undefined,
+        // PERM-SLIM-V01-PATH2: backend already returns pack_source via rp.*
+        pack_source: p.pack_source ? String(p.pack_source) : null,
       })));
     }).catch(() => {});
   }, [roleId]);
@@ -221,6 +223,7 @@ export function PermissionsStudio({ roleId, onReload }: { roleId: string; onRelo
             resources={resources}
             onStageCreate={stageCreate}
             onStageDelete={stageDelete}
+            onReloadPerms={loadPerms}
           />
         )}
         {view === 'matrix' && (
@@ -296,7 +299,7 @@ function ViewTab({ active, onClick, icon, label }: { active: boolean; onClick: (
 // VIEW: LIST — grouped grants + author panel (action picker + resource tree + prefix grant)
 // ──────────────────────────────────────────────────────────────────────────────
 function ListView({
-  roleId: _roleId, perms, effective, pending, actions, resources, onStageCreate, onStageDelete,
+  roleId: _roleId, perms, effective, pending, actions, resources, onStageCreate, onStageDelete, onReloadPerms,
 }: {
   roleId: string;
   perms: PermRow[];
@@ -306,6 +309,7 @@ function ListView({
   resources: ResourceMeta[];
   onStageCreate: (action_id: string, resource_id: string, effect: Effect) => void;
   onStageDelete: (perm: PermRow) => void;
+  onReloadPerms: () => void;
 }) {
   const [actionId, setActionId] = useState('');
   const [effect, setEffect] = useState<Effect>('allow');
@@ -645,6 +649,9 @@ function ListView({
         </div>
       </div>
 
+      {/* ── PERM-SLIM-V01-PATH2: Applied packs panel ─────────────────────── */}
+      <AppliedPacksPanel roleId={_roleId} onChange={onReloadPerms} />
+
       {/* ── Existing grants ──────────────────────────────────────────────── */}
       {effective.length === 0 ? (
         <div className="text-center py-10 text-slate-400">
@@ -687,13 +694,36 @@ function ListView({
                         {isWildcard && <span className="ml-1.5 badge badge-slate text-[9px]">prefix</span>}
                       </span>
                       {row.resource_name && <span className="text-slate-400 text-[10px] truncate max-w-[160px]">{row.resource_name}</span>}
+                      {row.pack_source && (
+                        <button
+                          onClick={() => window.dispatchEvent(new CustomEvent('navigate-tab', { detail: { tab: 'access-packs', focus: row.pack_source } }))}
+                          className="badge badge-blue text-[9px] inline-flex items-center gap-0.5 hover:underline"
+                          title={`Managed by pack "${row.pack_source}". Click to open the pack editor — direct edits here will be reverted on next pack resync.`}
+                        >
+                          <Package size={9} /> {row.pack_source}
+                        </button>
+                      )}
                       {conflict && <span className="badge badge-red text-[9px]" title="allow + deny 同時存在"><AlertTriangle size={9} /> conflict</span>}
                       {status === 'new' && <span className="badge badge-green text-[9px]">+ new</span>}
                       {status === 'deleted' && <span className="badge badge-red text-[9px]">− delete</span>}
                       <button
-                        onClick={() => onStageDelete(row)}
+                        onClick={() => {
+                          if (row.pack_source && status !== 'deleted') {
+                            // Stage-deleting a pack-tagged row would just be reverted by the
+                            // next resyncPackMembers call. Force the admin to go through the
+                            // pack editor (remove the member there) so the change is durable.
+                            const ok = window.confirm(
+                              `This row is managed by pack "${row.pack_source}".\n\n` +
+                              `Removing it here will NOT delete the row from authz_role_permission ` +
+                              `until the assignment is unapplied — and any subsequent pack resync ` +
+                              `will recreate it.\n\nProceed anyway? (Recommended: open the pack editor instead.)`
+                            );
+                            if (!ok) return;
+                          }
+                          onStageDelete(row);
+                        }}
                         className="text-slate-300 hover:text-red-600 opacity-0 group-hover:opacity-100 transition"
-                        title={status === 'deleted' ? 'Undo delete' : (status === 'new' ? 'Remove from draft' : 'Stage delete')}
+                        title={status === 'deleted' ? 'Undo delete' : (status === 'new' ? 'Remove from draft' : (row.pack_source ? 'Pack-managed — edit via pack' : 'Stage delete'))}
                       >
                         {status === 'deleted' ? <Undo2 size={11} /> : <X size={11} />}
                       </button>
@@ -1292,4 +1322,206 @@ function buildSql(roleId: string, pending: Map<string, PendingOp>): string {
   if (!creates.length && !deletes.length) lines.push(`-- (no pending changes)`);
   lines.push(`COMMIT;`);
   return lines.join('\n');
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PERM-SLIM-V01-PATH2 — Applied Packs panel for the per-role permission editor.
+//
+// Shows packs currently applied to this role + an "Apply pack" dialog with
+// a preview of the diff before mutating role_permission. Unapply is one
+// click + confirm (it deletes pack-tagged rows; manual rows are untouched).
+// ──────────────────────────────────────────────────────────────────────────────
+function AppliedPacksPanel({ roleId, onChange }: { roleId: string; onChange: () => void }) {
+  const toast = useToast();
+  const [packs, setPacks] = useState<RolePackSummary[]>([]);
+  const [applied, setApplied] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [showPicker, setShowPicker] = useState(false);
+  const [pickPackId, setPickPackId] = useState('');
+  const [pickPreview, setPickPreview] = useState<{
+    to_insert: { resource_id: string; action_id: string; effect: 'allow' | 'deny' }[];
+    to_delete: { resource_id: string; action_id: string; effect: 'allow' | 'deny' }[];
+    conflicts_with_manual: { resource_id: string; action_id: string; effect: 'allow' | 'deny' }[];
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api.rolePackList();
+      setPacks(r.packs);
+      // For each pack, check assignment by fetching detail. To keep this fast
+      // we instead probe by reading the pack list + assignment_count > 0 is
+      // not enough (other roles use it too). Approach: fetch detail for any
+      // pack with assignment_count > 0, and filter to our role.
+      const candidates = r.packs.filter(p => p.assignment_count > 0);
+      const inAppliedSet = new Set<string>();
+      await Promise.all(candidates.map(async p => {
+        try {
+          const d = await api.rolePackGet(p.pack_id);
+          if (d.assignments.some(a => a.role_id === roleId)) inAppliedSet.add(p.pack_id);
+        } catch { /* ignore */ }
+      }));
+      setApplied(inAppliedSet);
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, [roleId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!pickPackId) { setPickPreview(null); return; }
+    api.rolePackPreview(pickPackId, roleId)
+      .then(p => setPickPreview({
+        to_insert: p.to_insert,
+        to_delete: p.to_delete,
+        conflicts_with_manual: p.conflicts_with_manual,
+      }))
+      .catch(() => setPickPreview(null));
+  }, [pickPackId, roleId]);
+
+  const apply = async () => {
+    if (!pickPackId) return;
+    setBusy(true);
+    try {
+      const r = await api.rolePackApply(pickPackId, roleId);
+      toast.success(`Pack "${pickPackId}" applied · +${r.inserted} −${r.deleted} skipped ${r.skipped_due_to_manual}`);
+      setShowPicker(false);
+      setPickPackId('');
+      setPickPreview(null);
+      await load();
+      onChange();
+    } catch (e) { toast.error(String(e)); }
+    setBusy(false);
+  };
+
+  const unapply = async (packId: string) => {
+    const ok = window.confirm(`Unapply pack "${packId}" from role "${roleId}"?\n\nPack-tagged authz_role_permission rows will be deleted. Manual grants are untouched.`);
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const r = await api.rolePackUnapply(packId, roleId);
+      toast.success(`Unapplied · ${r.deleted} pack-tagged row(s) removed`);
+      await load();
+      onChange();
+    } catch (e) { toast.error(String(e)); }
+    setBusy(false);
+  };
+
+  const appliedPacks = packs.filter(p => applied.has(p.pack_id));
+  const availablePacks = packs.filter(p => !applied.has(p.pack_id));
+
+  return (
+    <div className="border border-slate-200 rounded-lg bg-white">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-slate-50">
+        <Package size={12} className="text-slate-500" />
+        <span className="text-[11px] font-semibold uppercase text-slate-600">Applied Packs</span>
+        <span className="text-[10px] text-slate-400">({appliedPacks.length})</span>
+        <button
+          onClick={() => { setShowPicker(s => !s); setPickPackId(''); setPickPreview(null); }}
+          className="ml-auto btn-secondary btn-sm">
+          {showPicker ? <><X size={11} /> Cancel</> : <><Plus size={11} /> Apply pack</>}
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="px-3 py-3 text-[11px] text-slate-400">Loading packs...</div>
+      ) : (
+        <>
+          {appliedPacks.length === 0 ? (
+            <div className="px-3 py-3 text-[11px] text-slate-400">
+              No packs applied. {availablePacks.length > 0 ? 'Click "Apply pack" to grant a reusable bundle of (resource, action) tuples.' : 'Create a pack first in the Permission Packs tab.'}
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {appliedPacks.map(p => (
+                <div key={p.pack_id} className="flex items-center gap-2 px-3 py-1.5">
+                  <Package size={11} className="text-slate-400" />
+                  <button
+                    onClick={() => window.dispatchEvent(new CustomEvent('navigate-tab', { detail: { tab: 'access-packs', focus: p.pack_id } }))}
+                    className="font-mono text-xs text-slate-900 hover:underline">{p.pack_id}</button>
+                  <span className="text-[11px] text-slate-500 truncate">{p.display_name}</span>
+                  <span className="text-[10px] text-slate-400 ml-auto">{p.member_count} member(s)</span>
+                  <button onClick={() => unapply(p.pack_id)} disabled={busy}
+                    className="text-slate-300 hover:text-red-600 transition" title="Unapply pack from this role">
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {showPicker && (
+            <div className="px-3 py-3 border-t border-slate-200 bg-slate-50/50 space-y-3">
+              <div>
+                <label className="block text-[10px] font-semibold text-slate-500 mb-1">Pick a pack to apply</label>
+                <select
+                  value={pickPackId}
+                  onChange={e => setPickPackId(e.target.value)}
+                  className="input text-xs py-1">
+                  <option value="">— select —</option>
+                  {availablePacks.map(p => (
+                    <option key={p.pack_id} value={p.pack_id}>
+                      {p.pack_id} · {p.display_name} ({p.member_count} member{p.member_count === 1 ? '' : 's'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {pickPreview && (
+                <div className="space-y-2 text-[11px]">
+                  <div className="font-semibold text-slate-700">Will apply this diff:</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <PreviewMini label="Insert"   tone="emerald" rows={pickPreview.to_insert} />
+                    <PreviewMini label="Delete"   tone="red"     rows={pickPreview.to_delete} />
+                    <PreviewMini label="Conflict" tone="amber"   rows={pickPreview.conflicts_with_manual} />
+                  </div>
+                  {pickPreview.conflicts_with_manual.length > 0 && (
+                    <div className="text-[11px] text-amber-700 flex items-start gap-1">
+                      <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                      Some tuples are blocked by manual rows or another pack — they will be skipped.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button onClick={apply} disabled={!pickPackId || busy} className="btn-primary btn-sm disabled:opacity-50">
+                  <Check size={11} /> {busy ? 'Applying...' : 'Confirm apply'}
+                </button>
+                <span className="text-[10px] text-slate-400 self-center">Re-applying is idempotent.</span>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function PreviewMini({ label, tone, rows }: {
+  label: string;
+  tone: 'emerald' | 'red' | 'amber';
+  rows: { resource_id: string; action_id: string; effect: string }[];
+}) {
+  const cls = tone === 'emerald'
+    ? 'border-emerald-200 bg-emerald-50/40 text-emerald-800'
+    : tone === 'red'
+    ? 'border-red-200 bg-red-50/40 text-red-800'
+    : 'border-amber-200 bg-amber-50/40 text-amber-800';
+  return (
+    <div className={`border rounded ${cls}`}>
+      <div className="px-2 py-1 text-[10px] font-semibold border-b border-current/20">
+        {label} ({rows.length})
+      </div>
+      <div className="px-2 py-1 max-h-24 overflow-y-auto">
+        {rows.length === 0 ? (
+          <div className="text-[10px] opacity-60">—</div>
+        ) : rows.slice(0, 8).map((r, i) => (
+          <div key={i} className="font-mono text-[10px] truncate">{r.action_id} · {r.resource_id}</div>
+        ))}
+        {rows.length > 8 && <div className="text-[10px] opacity-60">+ {rows.length - 8} more</div>}
+      </div>
+    </div>
+  );
 }
