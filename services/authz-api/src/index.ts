@@ -8,6 +8,7 @@ import { matrixRouter } from './routes/matrix';
 import { rlsRouter } from './routes/rls-simulate';
 import { browseReadRouter } from './routes/browse-read';
 import { activityRouter } from './routes/activity';
+import { anomalyRouter } from './routes/anomaly';
 import { browseAdminRouter } from './routes/browse-admin';
 import { poolRouter } from './routes/pool';
 import { datasourceRouter, listDataSourcesLite } from './routes/datasource';
@@ -31,6 +32,7 @@ import { optionalJWT, buildJWTConfig } from './middleware/jwt';
 import { verifyCryptoKey } from './lib/crypto';
 import { startResourceEventListener } from './lib/resource-events';
 import { startPolicyEventListener } from './lib/policy-events';
+import { runAllDetectors } from './lib/anomaly-detectors';
 
 // SEC-06e: refuse to boot in production with missing critical secrets, so a
 // misconfigured pod fails fast at startup instead of running with predictable
@@ -84,6 +86,8 @@ app.use('/api/browse', requireRole('AUTHZ_ADMIN'), browseAdminRouter);
 // ACTIVITY-V01: read-only stats over V030 continuous aggregates. Per-route
 // gate (AUTHZ_ADMIN/DATA_STEWARD) lives inside the router.
 app.use('/api/activity', requireAuth, activityRouter);
+// ANOMALY-V01: list/ack rule-based anomaly events. Same gate as activity.
+app.use('/api/anomaly', requireAuth, anomalyRouter);
 
 // Config-Driven UI (requires auth — fine-grained checks done internally)
 app.use('/api/config-exec', requireAuth, configExecRouter);
@@ -144,5 +148,22 @@ app.listen(PORT, () => {
   verifyCryptoKey();
   startResourceEventListener();
   startPolicyEventListener();
+  // ANOMALY-V01: rule-based detector worker on a 5-minute cadence. Idempotent
+  // via UNIQUE dedup_key + ON CONFLICT DO NOTHING, so duplicate ticks (multi
+  // pod, restart, missed/double schedule) are safe.
+  const ANOMALY_INTERVAL_MS = parseInt(process.env.ANOMALY_INTERVAL_MS || '300000');
+  const tick = async () => {
+    try {
+      const results = await runAllDetectors(pool);
+      const inserted = results.reduce((acc, r) => acc + r.inserted, 0);
+      if (inserted > 0) {
+        console.log('[anomaly] inserted=%d details=%j', inserted, results);
+      }
+    } catch (err) {
+      console.error('[anomaly] tick failed:', err);
+    }
+  };
+  setTimeout(tick, 10_000);                    // first run shortly after boot
+  setInterval(tick, ANOMALY_INTERVAL_MS);      // every 5 min thereafter
   console.log(`authz-api listening on http://localhost:${PORT}`);
 });

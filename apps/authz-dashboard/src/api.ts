@@ -983,6 +983,44 @@ export const api = {
   activityTotals: (hours = 24) =>
     request<{ hours: number; allow_count: string; deny_count: string; total_count: string }>(
       `/activity/totals?hours=${hours}`),
+
+  // ANOMALY-V01: rule-based anomaly events.
+  anomalyEvents: (params: { status?: 'open' | 'all'; rule?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.status) q.set('status', params.status);
+    if (params.rule)   q.set('rule', params.rule);
+    if (params.limit)  q.set('limit', String(params.limit));
+    return request<{
+      status: 'open' | 'all';
+      rule: string | null;
+      rows: Array<{
+        event_id: string;
+        detected_at: string;
+        rule_id: string;
+        severity: 'P1' | 'P2' | 'P3';
+        subject_id: string | null;
+        details: Record<string, unknown>;
+        acked_at: string | null;
+        acked_by: string | null;
+        ack_note: string | null;
+      }>;
+    }>(`/anomaly/events${q.toString() ? `?${q}` : ''}`);
+  },
+  anomalySummary: () =>
+    request<{
+      total_open: number;
+      by_rule: Array<{ rule_id: string; severity: 'P1' | 'P2' | 'P3'; open_count: string }>;
+    }>(`/anomaly/summary`),
+  anomalyAck: (event_id: string, note?: string) =>
+    request<{
+      event: {
+        event_id: string; rule_id: string; severity: 'P1' | 'P2' | 'P3';
+        subject_id: string | null; acked_at: string; acked_by: string; ack_note: string | null;
+      };
+    }>(`/anomaly/events/${encodeURIComponent(event_id)}/ack`, {
+      method: 'PATCH',
+      body: JSON.stringify({ note: note ?? null }),
+    }),
 };
 
 export type SavedViewConfig = {

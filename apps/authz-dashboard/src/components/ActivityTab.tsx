@@ -15,12 +15,12 @@
 // keeps the bundle small. If we later need real time-series (line charts,
 // stacking), revisit.
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { api } from '../api';
 import { useToast } from './Toast';
 import { PageHeader } from './shared/atoms/PageHeader';
 import { EmptyState } from './shared/atoms/EmptyState';
-import { Activity, AlertTriangle, ShieldCheck, Loader2 } from 'lucide-react';
+import { Activity, AlertTriangle, ShieldCheck, Loader2, Siren, CheckCircle2 } from 'lucide-react';
 
 // pg bigint comes through as a string; we parseInt at the cell-render boundary.
 type HourlyRow = { bucket: string; access_path: 'A'|'B'|'C'; decision: string; event_count: string; avg_duration_ms: number | null };
@@ -104,6 +104,9 @@ export function ActivityTab() {
           hint="Either the window is too narrow or no authz decisions have been logged yet. Continuous aggregates refresh every 30 minutes."
         />
       )}
+
+      {/* ─── Anomaly alerts (above totals so curators see incidents first) ─── */}
+      <AnomalyPanel />
 
       {!loading && total > 0 && (
         <>
@@ -304,4 +307,143 @@ function fmtBucket(iso: string): string {
   const dd = String(d.getDate()).padStart(2, '0');
   const hh = String(d.getHours()).padStart(2, '0');
   return `${mm}-${dd} ${hh}:00`;
+}
+
+// ─── Anomaly panel ──────────────────────────────────────────────
+// Shows open events grouped by severity with a one-click ack flow. Hidden
+// entirely when total_open=0 so the tab stays clean during quiet periods.
+//
+// Self-contained (own fetch + state) because the tick rate is different from
+// the activity refresh rate and the panel needs to reload after each ack.
+
+type AnomalyEvent = {
+  event_id: string;
+  detected_at: string;
+  rule_id: string;
+  severity: 'P1' | 'P2' | 'P3';
+  subject_id: string | null;
+  details: Record<string, unknown>;
+  acked_at: string | null;
+  acked_by: string | null;
+  ack_note: string | null;
+};
+
+const RULE_LABEL: Record<string, string> = {
+  DENY_SPIKE:            'Deny spike',
+  OFF_HOURS_ADMIN:       'Off-hours admin write',
+  UNAUTHORIZED_AI_AGENT: 'Unauthorized AI agent',
+  RECON_PATTERN:         'Recon pattern',
+  AI_COST_SPIKE:         'AI cost spike',
+};
+
+function AnomalyPanel() {
+  const toast = useToast();
+  const [events, setEvents] = useState<AnomalyEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [acking, setAcking] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      const r = await api.anomalyEvents({ status: 'open', limit: 50 });
+      setEvents(r.rows);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to load anomalies');
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const ack = async (event_id: string) => {
+    setAcking(event_id);
+    try {
+      await api.anomalyAck(event_id);
+      toast.success('Acknowledged');
+      await reload();
+    } catch (err: any) {
+      toast.error(err.message || 'Ack failed');
+    } finally {
+      setAcking(null);
+    }
+  };
+
+  if (loading) return null;
+  if (events.length === 0) return null;
+
+  // Group by severity for visual hierarchy: P1 first.
+  const grouped: Record<'P1' | 'P2' | 'P3', AnomalyEvent[]> = { P1: [], P2: [], P3: [] };
+  for (const e of events) grouped[e.severity].push(e);
+
+  return (
+    <div className="border border-rose-200 bg-rose-50/40 rounded-xl overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-rose-200 flex items-center gap-2 bg-rose-50">
+        <Siren size={16} className="text-rose-600" />
+        <span className="text-sm font-semibold text-rose-900">
+          {events.length} open {events.length === 1 ? 'anomaly' : 'anomalies'}
+        </span>
+        <span className="text-[11px] text-rose-700/70">
+          Detected by rule-based scanner. Ack closes the event without changing the underlying audit row.
+        </span>
+      </div>
+      <div className="divide-y divide-rose-100">
+        {(['P1', 'P2', 'P3'] as const).flatMap((sev) =>
+          grouped[sev].map((ev) => (
+            <AnomalyRow key={ev.event_id} ev={ev} acking={acking === ev.event_id} onAck={() => ack(ev.event_id)} />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AnomalyRow({ ev, acking, onAck }: { ev: AnomalyEvent; acking: boolean; onAck: () => void }) {
+  const sevColor = ev.severity === 'P1'
+    ? 'bg-rose-600 text-white'
+    : ev.severity === 'P2'
+      ? 'bg-amber-500 text-white'
+      : 'bg-slate-400 text-white';
+  const detailLine = summarizeDetails(ev.rule_id, ev.details);
+  return (
+    <div className="px-4 py-2.5 flex items-center gap-3">
+      <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold ${sevColor}`}>{ev.severity}</span>
+      <span className="text-xs font-semibold text-slate-800 min-w-[160px]">
+        {RULE_LABEL[ev.rule_id] ?? ev.rule_id}
+      </span>
+      {ev.subject_id && (
+        <span className="text-[11px] font-mono text-slate-600 bg-white border border-slate-200 px-1.5 py-0.5 rounded">
+          {ev.subject_id}
+        </span>
+      )}
+      <span className="text-[11px] text-slate-600 flex-1 truncate">{detailLine}</span>
+      <span className="text-[10px] text-slate-500 whitespace-nowrap">
+        {new Date(ev.detected_at).toLocaleString()}
+      </span>
+      <button
+        onClick={onAck}
+        disabled={acking}
+        className="text-[11px] flex items-center gap-1 px-2 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
+      >
+        {acking ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+        Ack
+      </button>
+    </div>
+  );
+}
+
+function summarizeDetails(rule_id: string, d: Record<string, unknown>): string {
+  switch (rule_id) {
+    case 'DENY_SPIKE':
+      return `Path ${d.access_path}: ${d.deny_count}/${d.total_count} (${d.deny_pct}%) at ${fmtBucket(String(d.bucket))}`;
+    case 'OFF_HOURS_ADMIN':
+      return `${d.action} on ${d.resource_type}${d.resource_id ? `:${d.resource_id}` : ''} (window ${d.window})`;
+    case 'UNAUTHORIZED_AI_AGENT':
+      return `${d.action} via ${d.agent_id}${d.model_id ? ` / ${d.model_id}` : ''} — Constitution §${d.constitution_section}`;
+    case 'RECON_PATTERN':
+      return `${d.distinct_resources} distinct resources in 5min (threshold ${d.threshold})`;
+    case 'AI_COST_SPIKE':
+      return `Provider ${d.provider_id}: $${d.cost_24h_usd} / 24h (${d.pct_of_budget}% of monthly budget $${d.monthly_budget_usd})`;
+    default:
+      return JSON.stringify(d);
+  }
 }
