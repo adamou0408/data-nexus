@@ -1,41 +1,62 @@
-import { useState, useEffect } from 'react';
-import { api, DataExplorerColumn, DataExplorerResult } from '../api';
-import { useAuthz } from '../AuthzContext';
-import { Table2, ChevronRight, CheckCircle2, XCircle, Lock, Eye, EyeOff, Filter, Code2 } from 'lucide-react';
+// Catalog SchemaView — table-schema frame renderer.
+// Logic copied from components/TablesTab.tsx and parameterised on
+// frame.table (no in-frame table picker; the picker lives in TableGridFrame).
 
-export function TablesTab() {
+import { useEffect, useState } from 'react';
+import { api, DataExplorerColumn, DataExplorerResult } from '../../api';
+import { useAuthz } from '../../AuthzContext';
+import { ChevronRight, CheckCircle2, XCircle, Lock, Eye, EyeOff, Filter, Code2 } from 'lucide-react';
+import type { CatalogStackAPI, TableSchemaFrame } from './types';
+
+type SchemaViewProps = {
+  frame: TableSchemaFrame;
+  api?: CatalogStackAPI;  // unused in Phase 1 schema view (no internal navigation yet)
+};
+
+export function SchemaView({ frame }: SchemaViewProps) {
   const { user } = useAuthz();
-  const [tables, setTables] = useState<{ table_name: string; table_type?: string; column_count: string }[]>([]);
-  const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [result, setResult] = useState<DataExplorerResult | null>(null);
-  const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
 
   useEffect(() => {
-    setLoading(true);
-    api.tables(user?.id, user?.groups).then(setTables).catch(() => {}).finally(() => setLoading(false));
-  }, [user]);
-
-  const explore = async (table: string) => {
-    setSelectedTable(table);
+    let cancelled = false;
     setDetailLoading(true);
     setResult(null);
-    try {
-      if (user) {
-        const r = await api.dataExplorer(user.id, user.groups, user.attrs, table);
-        setResult(r);
-      } else {
-        // Not logged in — show raw schema only
-        const r = await api.tableSchema(table);
-        setResult({
-          table, columns: r.columns.map(c => ({ ...c, access: 'visible' as const, mask_type: null, mask_function: null })),
-          rls_filter: 'TRUE', sample_data: r.sample_data, total_count: r.sample_data.length,
-          filtered_count: r.sample_data.length, mask_functions: [],
-        });
+
+    const load = async () => {
+      try {
+        if (user) {
+          const r = await api.dataExplorer(user.id, user.groups, user.attrs, frame.table);
+          if (!cancelled) setResult(r);
+        } else {
+          const r = await api.tableSchema(frame.table);
+          if (!cancelled) {
+            setResult({
+              table: frame.table,
+              columns: r.columns.map((c) => ({
+                ...c,
+                access: 'visible' as const,
+                mask_type: null,
+                mask_function: null,
+              })),
+              rls_filter: 'TRUE',
+              sample_data: r.sample_data,
+              total_count: r.sample_data.length,
+              filtered_count: r.sample_data.length,
+              mask_functions: [],
+            });
+          }
+        }
+      } catch {
+        if (!cancelled) setResult(null);
+      } finally {
+        if (!cancelled) setDetailLoading(false);
       }
-    } catch { setResult(null); }
-    finally { setDetailLoading(false); }
-  };
+    };
+
+    load();
+    return () => { cancelled = true; };
+  }, [frame.table, user]);
 
   const accessIcon = (access: string) => {
     if (access === 'denied') return <XCircle size={14} className="text-red-500" />;
@@ -45,11 +66,12 @@ export function TablesTab() {
 
   const accessBadge = (col: DataExplorerColumn) => {
     if (col.access === 'denied') return <span className="badge badge-red text-[10px]">DENIED</span>;
-    if (col.access === 'masked') return (
-      <span className="badge badge-amber text-[10px]">
-        MASKED ({col.mask_type})
-      </span>
-    );
+    if (col.access === 'masked')
+      return (
+        <span className="badge badge-amber text-[10px]">
+          MASKED ({col.mask_type})
+        </span>
+      );
     return <span className="badge badge-green text-[10px]">VISIBLE</span>;
   };
 
@@ -62,62 +84,24 @@ export function TablesTab() {
     return 'badge-slate';
   };
 
-  const stats = result ? {
-    visible: result.columns.filter(c => c.access === 'visible').length,
-    masked: result.columns.filter(c => c.access === 'masked').length,
-    denied: result.columns.filter(c => c.access === 'denied').length,
-  } : null;
+  const stats = result
+    ? {
+      visible: result.columns.filter((c) => c.access === 'visible').length,
+      masked: result.columns.filter((c) => c.access === 'masked').length,
+      denied: result.columns.filter((c) => c.access === 'denied').length,
+    }
+    : null;
 
   return (
     <div className="space-y-6">
       <div className="page-header">
-        <h1 className="page-title">Raw Tables</h1>
+        <h1 className="page-title font-mono">{frame.table}</h1>
         <p className="page-desc">
-          Direct table access with permission context — admin debugging tool
+          Schema with permission-aware access — visible / masked / denied per column for the current user.
         </p>
       </div>
 
-      {/* Table selection */}
-      <div className="card">
-        <div className="card-header">
-          <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
-            <Table2 size={16} className="text-blue-600" />
-            Business Data Tables & Views
-          </h3>
-          <span className="text-xs text-slate-400">
-            {tables.filter(t => t.table_type !== 'VIEW').length} tables, {tables.filter(t => t.table_type === 'VIEW').length} views
-          </span>
-        </div>
-        {loading ? (
-          <div className="card-body text-center py-8 text-slate-400">Loading...</div>
-        ) : (
-          <div className="card-body">
-            <div className="flex gap-2 flex-wrap">
-              {tables.map(t => {
-                const isView = t.table_type === 'VIEW';
-                return (
-                  <button key={t.table_name} onClick={() => explore(t.table_name)}
-                    className={`btn btn-sm font-mono text-xs gap-1 ${
-                      selectedTable === t.table_name
-                        ? 'bg-blue-600 text-white hover:bg-blue-700'
-                        : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-50'
-                    }`}>
-                    <span className={`text-[10px] font-bold ${selectedTable === t.table_name ? 'text-blue-200' : isView ? 'text-purple-500' : 'text-emerald-500'}`}>
-                      {isView ? '[V]' : '[T]'}
-                    </span>
-                    {t.table_name}
-                    <span className={`text-[10px] ${selectedTable === t.table_name ? 'text-blue-200' : 'text-slate-400'}`}>
-                      ({t.column_count})
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {selectedTable && detailLoading && (
+      {detailLoading && (
         <div className="card">
           <div className="card-body text-center py-12 text-slate-400">Loading table details...</div>
         </div>
@@ -161,7 +145,7 @@ export function TablesTab() {
             </div>
           )}
 
-          {/* Column Schema with Access */}
+          {/* Column Schema */}
           <div className="card">
             <div className="card-header">
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
@@ -180,11 +164,14 @@ export function TablesTab() {
                   </tr>
                 </thead>
                 <tbody>
-                  {result.columns.map(c => (
-                    <tr key={c.column_name} className={
-                      c.access === 'denied' ? 'bg-red-50/50' :
-                      c.access === 'masked' ? 'bg-amber-50/50' : ''
-                    }>
+                  {result.columns.map((c) => (
+                    <tr
+                      key={c.column_name}
+                      className={
+                        c.access === 'denied' ? 'bg-red-50/50' :
+                          c.access === 'masked' ? 'bg-amber-50/50' : ''
+                      }
+                    >
                       <td className="font-mono text-xs font-bold text-slate-900 flex items-center gap-2">
                         {user && accessIcon(c.access)}
                         {c.column_name}
@@ -217,7 +204,7 @@ export function TablesTab() {
             </div>
           </div>
 
-          {/* Sample Data (permission-filtered) */}
+          {/* Sample Data */}
           {result.sample_data.length > 0 && (
             <div className="card">
               <div className="card-header">
@@ -239,14 +226,17 @@ export function TablesTab() {
                 <table className="table">
                   <thead>
                     <tr>
-                      {result.columns.map(c => (
-                        <th key={c.column_name} className={`font-mono text-[10px] ${
-                          c.access === 'denied' ? 'text-red-400' :
-                          c.access === 'masked' ? 'text-amber-600' : ''
-                        }`}>
+                      {result.columns.map((c) => (
+                        <th
+                          key={c.column_name}
+                          className={`font-mono text-[10px] ${
+                            c.access === 'denied' ? 'text-red-400' :
+                              c.access === 'masked' ? 'text-amber-600' : ''
+                          }`}
+                        >
                           {c.column_name}
-                          {c.access === 'masked' && ' 🔒'}
-                          {c.access === 'denied' && ' ✕'}
+                          {c.access === 'masked' && ' [M]'}
+                          {c.access === 'denied' && ' [X]'}
                         </th>
                       ))}
                     </tr>
@@ -254,19 +244,22 @@ export function TablesTab() {
                   <tbody>
                     {result.sample_data.map((row, i) => (
                       <tr key={i}>
-                        {result.columns.map(c => {
+                        {result.columns.map((c) => {
                           const v = row[c.column_name];
                           const isDenied = v === '[DENIED]';
                           const isMasked = c.access === 'masked';
                           return (
-                            <td key={c.column_name} className={`text-xs max-w-[180px] truncate ${
-                              isDenied ? 'text-red-400 italic' :
-                              isMasked ? 'text-amber-600' :
-                              'text-slate-600'
-                            }`}>
+                            <td
+                              key={c.column_name}
+                              className={`text-xs max-w-[180px] truncate ${
+                                isDenied ? 'text-red-400 italic' :
+                                  isMasked ? 'text-amber-600' :
+                                    'text-slate-600'
+                              }`}
+                            >
                               {v === null ? <span className="text-slate-300 italic">null</span>
                                 : typeof v === 'object' ? JSON.stringify(v)
-                                : String(v)}
+                                  : String(v)}
                             </td>
                           );
                         })}

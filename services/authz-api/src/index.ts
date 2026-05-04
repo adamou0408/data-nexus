@@ -28,6 +28,7 @@ import { savedViewRouter } from './routes/saved-view';
 import { feedbackRouter } from './routes/feedback';
 import { businessTermRouter } from './routes/business-term';
 import { rolePackRouter } from './routes/role-pack';
+import { catalogUsageRouter } from './routes/catalog-usage';
 import { requireRole, requireAuth } from './middleware/authz';
 import { optionalJWT, buildJWTConfig } from './middleware/jwt';
 import { verifyCryptoKey } from './lib/crypto';
@@ -143,6 +144,11 @@ app.use('/api/business-term', requireRole('DATA_STEWARD'), businessTermRouter);
 // write = AUTHZ_ADMIN — per-route gates live inside the router so ops can read
 // without holding the writer role.
 app.use('/api/role-pack', requireAuth, rolePackRouter);
+
+// CATALOG-TELEMETRY-V01: frame open/close ingest (any auth user) + admin
+// stats. POST is open behind requireAuth; the GET stats endpoint applies
+// requireRole inline so badges can fail silently for non-admin viewers.
+app.use('/api/catalog', requireAuth, catalogUsageRouter);
 
 // Config snapshot & bulk import — AUTHZ_ADMIN per V083 (Govern stage).
 app.use('/api/config/snapshot', requireRole('AUTHZ_ADMIN'), configSnapshotRouter);

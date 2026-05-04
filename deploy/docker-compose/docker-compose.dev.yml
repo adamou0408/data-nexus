@@ -28,6 +28,11 @@ services:
       context: ../../services/authz-api
       dockerfile: Dockerfile.dev
     image: nexus/authz-api-dev
+    # Pull JWT_*, ENCRYPTION_KEY, and other secrets from root .env. Explicit
+    # `environment:` below overrides anything in env_file, so container-only
+    # values (DB_HOST=postgres etc.) win over .env's localhost defaults.
+    env_file:
+      - ../../.env
     environment:
       NODE_ENV: development
       PORT: "13001"

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { pool, getLocalDataPool } from '../db';
+import { pool, getDataSourcePool } from '../db';
 import { handleApiError } from '../lib/request-helpers';
 import { requireRole } from '../middleware/authz';
 
@@ -159,10 +159,19 @@ browseReadRouter.get('/batch-checks', async (_req, res) => {
 });
 
 browseReadRouter.post('/data-explorer', async (req, res) => {
-  const { user_id, groups = [], attributes = {}, table } = req.body;
+  const { user_id, groups = [], attributes = {}, table, data_source_id } = req.body;
 
   if (!table || table.startsWith('authz_')) {
     return res.status(400).json({ error: 'Invalid or internal table' });
+  }
+  // ARCH-02: query path requires explicit data_source_id. The historical
+  // fallback to the internal nexus_data pool was removed because it
+  // silently routed unmapped tables to an unrelated DB.
+  if (!data_source_id) {
+    return res.status(400).json({
+      error: 'data_source_id is required',
+      hint: 'Pass data_source_id in the body (e.g. "ds:pg_k8"). The internal-pool fallback was removed in ARCH-02.',
+    });
   }
 
   try {
@@ -178,8 +187,7 @@ browseReadRouter.post('/data-explorer', async (req, res) => {
       }
     }
 
-    // Business tables live in nexus_data (ARCH-01); authz_* in nexus_authz.
-    const dataPool = getLocalDataPool();
+    const dataPool = await getDataSourcePool(data_source_id);
 
     // Column schema
     const schemaResult = await dataPool.query(`
@@ -314,10 +322,18 @@ browseReadRouter.post('/data-explorer', async (req, res) => {
 browseReadRouter.get('/tables', async (req, res) => {
   const userId = req.query.user_id as string | undefined;
   const groups = req.query.groups ? (req.query.groups as string).split(',') : [];
+  const dataSourceId = req.query.data_source_id as string | undefined;
+
+  // ARCH-02: query path requires explicit data_source_id (no internal fallback).
+  if (!dataSourceId) {
+    return res.status(400).json({
+      error: 'data_source_id query parameter is required',
+      hint: 'e.g. /api/browse/tables?data_source_id=ds:pg_k8',
+    });
+  }
 
   try {
-    // ARCH-01: business tables live in nexus_data.
-    const dataPool = getLocalDataPool();
+    const dataPool = await getDataSourcePool(dataSourceId);
     const result = await dataPool.query(`
       SELECT table_name, table_type,
         (SELECT count(*) FROM information_schema.columns c
@@ -355,9 +371,18 @@ browseReadRouter.get('/tables/:table', async (req, res) => {
   if (tableName.startsWith('authz_')) {
     return res.status(403).json({ error: 'Cannot browse internal authz tables' });
   }
+  const dataSourceId = req.query.data_source_id as string | undefined;
+
+  // ARCH-02: query path requires explicit data_source_id (no internal fallback).
+  if (!dataSourceId) {
+    return res.status(400).json({
+      error: 'data_source_id query parameter is required',
+      hint: 'e.g. /api/browse/tables/<name>?data_source_id=ds:pg_k8',
+    });
+  }
+
   try {
-    // ARCH-01: business tables in nexus_data.
-    const dataPool = getLocalDataPool();
+    const dataPool = await getDataSourcePool(dataSourceId);
     const cols = await dataPool.query(`
       SELECT column_name, data_type, is_nullable, column_default,
              character_maximum_length, numeric_precision

@@ -110,6 +110,42 @@ INSERT INTO authz_group_member (group_id, user_id, source) VALUES
 ON CONFLICT (group_id, user_id) DO NOTHING;
 
 -- ============================================================
+-- 8. Path C bootstrap — register ds:pg_k8 (real Phison Greenplum)
+--
+-- ARCH-02 (2026-05-04): replaces the old `ds:local` mock fixture.
+-- We seed the row with cosmetic + identity columns so the dashboard
+-- has a starting point. Per docs/constitution.md Article 8, agents
+-- MUST NOT mutate identity fields (host/port/database_name/
+-- connector_user/connector_password/schemas) on an existing row
+-- without human consent. The ON CONFLICT clause therefore touches
+-- ONLY display_name + description.
+--
+-- connector_password is intentionally NULL here. Adam sets it via
+-- dashboard "Edit credentials" or via .env-driven init job. The
+-- column is nullable as of V031.
+-- ============================================================
+INSERT INTO authz_data_source (
+    source_id, db_type, host, port, database_name,
+    connector_user, connector_password, schemas,
+    is_active, display_name, description
+) VALUES (
+    'ds:pg_k8',
+    'greenplum',
+    '192.168.199.72',
+    30000,
+    'dc',
+    'gpadmin',
+    NULL,                  -- set out-of-band; constitution-protected field
+    ARRAY['tiptop'],
+    TRUE,
+    'Phison Greenplum (pg_k8 / tiptop)',
+    'Real Phison data warehouse — Path C demo target post-ARCH-02. Schema "tiptop" only. Set connector_password via dashboard or PG_K8_PASSWORD env injection.'
+)
+ON CONFLICT (source_id) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    description  = EXCLUDED.description;
+
+-- ============================================================
 -- Sections removed 2026-04-28 (徹底 prune per Adam):
 --   - Path C pool profiles / assignments / credentials
 --     (Adam manages pg_k8_read+ via dashboard pointing at real ds:pg_k8)

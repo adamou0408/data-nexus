@@ -2,17 +2,15 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api';
 import { SubjectsSection } from './SubjectsSection';
 import { RolesSection } from './RolesSection';
-import { ResourcesSection } from './ResourcesSection';
 import { PoliciesSection } from './PoliciesSection';
 import { ActionsSection } from './ActionsSection';
 import { PacksSection } from './PacksSection';
 
-export type AccessSection = 'subjects' | 'roles' | 'resources' | 'policies' | 'actions' | 'packs';
+export type AccessSection = 'subjects' | 'roles' | 'policies' | 'actions' | 'packs';
 
 const META: Record<AccessSection, { title: string; desc: string }> = {
   subjects:  { title: 'Subjects',  desc: 'Users, groups, and service accounts that can be authorized.' },
   roles:     { title: 'Roles',     desc: 'Named bundles of permissions assigned to subjects.' },
-  resources: { title: 'Resources', desc: 'Tables, pages, and APIs that permissions are granted against.' },
   policies:  { title: 'Policies',  desc: 'Conditional authorization rules (ABAC / row-level).' },
   actions:   { title: 'Actions',   desc: 'Verbs a subject can perform on a resource (read, write, etc).' },
   packs:     { title: 'Permission Packs', desc: 'Reusable bundles of (resource, action) tuples — apply once, reuse across roles.' },
@@ -24,7 +22,7 @@ export function AccessSectionPage({ section }: { section: AccessSection }) {
 
   const reload = useCallback(() => {
     const fetchers: Record<AccessSection, () => Promise<Record<string, unknown>[]>> = {
-      subjects: api.subjects, roles: api.roles, resources: api.resources,
+      subjects: api.subjects, roles: api.roles,
       policies: api.policies, actions: api.actions,
       // Role-pack list endpoint is wrapped — unwrap here so the section
       // contract (data: row[]) stays uniform.
@@ -58,7 +56,6 @@ export function AccessSectionPage({ section }: { section: AccessSection }) {
           <>
             {section === 'subjects' && <SubjectsSection data={data} onReload={reload} />}
             {section === 'roles' && <RolesSection data={data} onReload={reload} />}
-            {section === 'resources' && <ResourcesSection data={data} onReload={reload} />}
             {section === 'policies' && <PoliciesSection data={data} onReload={reload} />}
             {section === 'actions' && <ActionsSection data={data} onReload={reload} />}
             {section === 'packs' && <PacksSection data={data} onReload={reload} />}

@@ -13,14 +13,13 @@ import {
 export type TabId =
   | 'overview' | 'permissions'
   | 'tables' | 'raw-tables' | 'metabase' | 'data-query' | 'flow-composer'
-  | 'access-resources' | 'access-policies' | 'pool' | 'modules' | 'discover'
+  | 'access-resources' | 'access-policies' | 'pool' | 'modules' | 'access-pages' | 'discover'
   | 'access-subjects' | 'access-roles' | 'access-actions' | 'access-packs' | 'audit'
   | 'activity'
   | 'feedback-inbox'
   | 'business-terms'
   | 'ai-providers'
-  | 'config-tools'
-  | 'auto-page';   // BU-08 schema-driven UI preview slot (no sidebar entry)
+  | 'config-tools';
 
 type NavItem = {
   id: TabId;
@@ -63,6 +62,7 @@ const navGroups: NavGroup[] = [
     items: [
       { id: 'access-resources', label: 'Resources',  icon: <FolderTree size={18} />, requires: 'admin', countKey: 'resources' },
       { id: 'modules',          label: 'Modules',    icon: <Boxes size={18} />,      shortcut: 'g m' },
+      { id: 'access-pages',     label: 'Pages',      icon: <FileText size={18} />,   requires: 'steward' },
       { id: 'raw-tables',       label: 'Raw Tables', icon: <Table2 size={18} />,     requires: 'steward' },
     ],
   },

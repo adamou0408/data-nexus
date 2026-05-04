@@ -2,6 +2,12 @@ import { keycloak, ssoEnabled, ensureFreshToken } from './lib/keycloak';
 
 const BASE = '/api';
 
+// ARCH-02: query-path routes now require explicit data_source_id (no internal-pool
+// fallback). Default to ds:pg_k8 (Phison Greenplum/Tiptop) so existing dashboard
+// tabs keep working without per-tab pickers. Swap to a per-tab/workspace selector
+// when multiple business sources are onboarded.
+const DEFAULT_DATA_SOURCE_ID = 'ds:pg_k8';
+
 // Current user context for authenticated API calls (X-User-Id fallback path).
 // Persisted to localStorage so:
 //   (a) browser refresh keeps the picker selection, and
@@ -112,12 +118,13 @@ export const api = {
       method: 'POST', body: JSON.stringify({ user_id, groups, attributes, resource_type, path }),
     }),
 
-  rlsSimulate: (user_id: string, groups: string[], attributes: Record<string, string>, table?: string, path?: string) =>
+  rlsSimulate: (user_id: string, groups: string[], attributes: Record<string, string>, table?: string, path?: string, data_source_id: string = DEFAULT_DATA_SOURCE_ID) =>
     request<{ table: string; filter_clause: string; filtered_rows: Record<string, unknown>[]; filtered_count: number; total_count: number }>(
-      '/rls/simulate', { method: 'POST', body: JSON.stringify({ user_id, groups, attributes, table, path }) }
+      '/rls/simulate', { method: 'POST', body: JSON.stringify({ user_id, groups, attributes, table, path, data_source_id }) }
     ),
 
-  rlsData: () => request<Record<string, unknown>[]>('/rls/data'),
+  rlsData: (data_source_id: string = DEFAULT_DATA_SOURCE_ID) =>
+    request<Record<string, unknown>[]>(`/rls/data?data_source_id=${encodeURIComponent(data_source_id)}`),
 
   // Config-Driven UI engine
   configExecRoot: () =>
@@ -293,20 +300,21 @@ export const api = {
   poolAssignmentDelete: (id: number) =>
     request(`/pool/assignments/${id}`, { method: 'DELETE' }),
   poolCredentials: () => request<PoolCredential[]>('/pool/credentials'),
-  tables: (userId?: string, groups?: string[]) => {
+  tables: (userId?: string, groups?: string[], dataSourceId: string = DEFAULT_DATA_SOURCE_ID) => {
     const qs = new URLSearchParams();
+    qs.set('data_source_id', dataSourceId);
     if (userId) qs.set('user_id', userId);
     if (groups?.length) qs.set('groups', groups.join(','));
     return request<{ table_name: string; table_type?: string; column_count: string }[]>(`/browse/tables?${qs}`);
   },
-  tableSchema: (table: string) =>
+  tableSchema: (table: string, dataSourceId: string = DEFAULT_DATA_SOURCE_ID) =>
     request<{ table: string; columns: TableColumn[]; sample_data: Record<string, unknown>[] }>(
-      `/browse/tables/${encodeURIComponent(table)}`
+      `/browse/tables/${encodeURIComponent(table)}?data_source_id=${encodeURIComponent(dataSourceId)}`
     ),
   functions: () => request<SqlFunction[]>('/browse/functions'),
-  dataExplorer: (user_id: string, groups: string[], attributes: Record<string, string>, table: string) =>
+  dataExplorer: (user_id: string, groups: string[], attributes: Record<string, string>, table: string, data_source_id: string = DEFAULT_DATA_SOURCE_ID) =>
     request<DataExplorerResult>('/browse/data-explorer', {
-      method: 'POST', body: JSON.stringify({ user_id, groups, attributes, table }),
+      method: 'POST', body: JSON.stringify({ user_id, groups, attributes, table, data_source_id }),
     }),
   // Data Source Registry
   datasources: () => request<DataSource[]>('/datasources'),
@@ -358,6 +366,43 @@ export const api = {
   oracleExec: (data_source_id: string, function_name: string, params?: Record<string, any>) =>
     request<{ status: string; function_name: string; result: any }>('/oracle-exec', {
       method: 'POST', body: JSON.stringify({ data_source_id, function_name, params }),
+    }),
+
+  /** Oracle direct query (read-only) — whitelisted via authz_resource.
+   *  Resource must carry attributes.available_targets ∋ "oracle_direct" and
+   *  attributes.oracle_kind ∈ {view, table, function_scalar, function_table}.
+   *  Response is discriminated by `oracle_kind`: rowset for view/table/function_table,
+   *  scalar for function_scalar. Callers can narrow on `oracle_kind`. */
+  oracleDirectQuery: (
+    data_source_id: string,
+    resource_id: string,
+    params?: Record<string, unknown>,
+    limit?: number,
+  ) =>
+    request<
+      | {
+          status: 'ok';
+          resource_id: string;
+          target: 'oracle_direct';
+          oracle_kind: 'view' | 'table' | 'function_table';
+          columns: { name: string; type?: string }[];
+          rows: Record<string, unknown>[];
+          row_count: number;
+          truncated: boolean;
+          max_rows: number;
+          elapsed_ms: number;
+        }
+      | {
+          status: 'ok';
+          resource_id: string;
+          target: 'oracle_direct';
+          oracle_kind: 'function_scalar';
+          scalar_result: unknown;
+          elapsed_ms: number;
+        }
+    >('/data-query/oracle-direct', {
+      method: 'POST',
+      body: JSON.stringify({ data_source_id, resource_id, params, limit }),
     }),
 
   // Generic PG/Greenplum data-query (Path B — whitelisted via authz_resource)
@@ -512,6 +557,9 @@ export const api = {
   dagGet: (resource_id: string) =>
     request<{
       resource_id: string; display_name: string; data_source_id: string;
+      // PUB-PAGES-ADMIN-V01 Part A: catalog parent surfaced so PublishDagDialog
+      // can default the parent-module dropdown to the DAG's own parent.
+      parent_id: string | null;
       description?: string; nodes: any[]; edges: any[]; version: number;
     }>(`/dag/${encodeURIComponent(resource_id)}`),
 
@@ -595,6 +643,8 @@ export const api = {
   },
 
   // DAG-SUBDAG-EMBED-V01 — metadata the Composer needs to wire a subdag node.
+  // SUBDAG-HANDLE-V01 — added `exposed_outputs`: per-exposed-node IO[] used by
+  // the Composer to render per-column source handles on the subdag node.
   dagPublishedSnapshotMeta: (rid: string) =>
     request<{
       page_id: string;
@@ -604,6 +654,7 @@ export const api = {
       output_node_id: string;
       exposed_node_ids: string[] | null;
       form_schema: Array<{ name: string; type: string; pg_type?: string; required: boolean; default: unknown; help_text?: string; source_node_id: string }>;
+      exposed_outputs: Record<string, Array<{ name: string; semantic_type?: string; pgType?: string }>>;
     }>(`/dag/published/${encodeURIComponent(rid)}/snapshot-meta`),
 
   // DAG-PUBLISH-V01 — publish a DAG as a live Tier B page.
@@ -614,6 +665,11 @@ export const api = {
     page_id: string;
     title: string;
     parent_page_id?: string;
+    // PUB-PAGES-ADMIN-V01 Part A: catalog-tree parent (authz_resource.parent_id
+    // on the page mirror). Curator-facing in PublishDagDialog. Distinct from
+    // `parent_page_id` (legacy renderer drilldown), which the dialog no longer
+    // exposes.
+    parent_module_id?: string;
     description?: string;
     overwrite?: boolean;
     grant_read_to_roles?: string[];
@@ -853,12 +909,44 @@ export const api = {
   moduleDescriptors: () =>
     request<UIDescriptor[]>('/modules/descriptors'),
 
-  /** TIER-B-PAGE-RENAME-V01: rename and/or move a Tier B page in the catalog tree.
-   *  page_id is immutable (external refs depend on it); pass {} → 400. */
-  pageUpdate: (page_id: string, patch: { display_name?: string; parent_id?: string | null }) =>
+  /** TIER-B-PAGE-RENAME-V01 + PUB-PAGES-ADMIN-V01 Part B/C: edit metadata of
+   *  a Tier B page in the catalog. page_id is immutable; pass {} → 400.
+   *  - display_name: rename (mirrored to authz_ui_page.title)
+   *  - parent_id:    move in catalog tree (null = root)
+   *  - description:  free-form catalog metadata (Pages tab edit dialog)
+   *  - display_order: ordering inside parent module (Modules admin mode + Pages tab) */
+  pageUpdate: (page_id: string, patch: {
+    display_name?: string;
+    parent_id?: string | null;
+    description?: string | null;
+    display_order?: number;
+  }) =>
     request<{ updated: string; page_id: string }>(
       `/modules/pages/${encodeURIComponent(page_id)}`,
       { method: 'PATCH', body: JSON.stringify(patch) }
+    ),
+
+  /** PUB-PAGES-ADMIN-V01 Part B: inventory of every published_dag-backed page. */
+  pagesList: (filter?: { parent_module_id?: string; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (filter?.parent_module_id) qs.set('parent_module_id', filter.parent_module_id);
+    if (filter?.q) qs.set('q', filter.q);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<{ pages: PagesAdminRow[] }>(`/modules/pages${suffix}`);
+  },
+
+  /** PUB-PAGES-ADMIN-V01 Part E: row detail — page metadata + dag_snapshot
+   *  summary + recent admin audit (last 30 entries on this page). */
+  pageDetail: (page_id: string) =>
+    request<PagesAdminDetail>(`/modules/pages/${encodeURIComponent(page_id)}`),
+
+  /** PUB-PAGES-ADMIN-V01 Part D: soft-delete (is_active=FALSE on page mirror
+   *  + ui_page row; bless gate kept if siblings reference it). Returns 409
+   *  with blocking_parents[] if any other published_dag embeds this page. */
+  pageDelete: (page_id: string) =>
+    request<{ deleted: string; page_id: string; soft_delete: true }>(
+      `/modules/pages/${encodeURIComponent(page_id)}`,
+      { method: 'DELETE' }
     ),
 
   // Generic UI descriptors — any page_id registered in authz_ui_descriptor
@@ -1122,6 +1210,37 @@ export const api = {
   rolePackResync: (pack_id: string) =>
     request<{ pack_id: string; results: RolePackExpansion[] }>(
       `/role-pack/${encodeURIComponent(pack_id)}/resync`, { method: 'POST' }),
+
+  // CATALOG-TELEMETRY-V01: frame open/close events + admin stats.
+  catalogUsageStats: (preset: string, window: string = '7d', group_by: string = 'target_id') =>
+    request<{
+      window: string;
+      group_by: string;
+      rows: Array<{
+        group_key: string | null;
+        open_count: number;
+        distinct_users: number;
+        distinct_sessions: number;
+        avg_dwell_ms: number | null;
+        bounce_count: number;
+        bounce_rate: number;
+      }>;
+    }>(`/catalog/usage-stats?preset=${encodeURIComponent(preset)}&window=${encodeURIComponent(window)}&group_by=${encodeURIComponent(group_by)}`),
+
+  catalogUsageIngest: (events: Array<{
+    session_id: string;
+    preset: string;
+    frame_kind: string;
+    target_id?: string | null;
+    action: 'open' | 'close';
+    dwell_ms?: number;
+    trigger?: string;
+    context?: Record<string, unknown>;
+  }>) =>
+    request<{ ingested: number }>('/catalog/usage-event', {
+      method: 'POST',
+      body: JSON.stringify({ events }),
+    }),
 };
 
 export type SavedViewConfig = {
@@ -1469,6 +1588,44 @@ export type ModuleTreeNode = {
   user_actions: string[]; // actions the current user can perform (e.g. ['read','write'])
 };
 
+/** PUB-PAGES-ADMIN-V01 Part B: row in Pages admin inventory. */
+export type PagesAdminRow = {
+  page_id: string;
+  title: string;
+  description: string | null;
+  display_order: number;
+  dag_id: string;
+  data_source_id: string | null;
+  published_dag_rid: string;
+  page_rid: string;
+  parent_module_id: string | null;
+  parent_module_name: string | null;
+  embedders_count: number;
+  last_published_at: string | null;
+  last_published_by: string | null;
+};
+
+/** PUB-PAGES-ADMIN-V01 Part E: row-expand detail. */
+export type PagesAdminDetail = {
+  page: Omit<PagesAdminRow, 'embedders_count' | 'last_published_at' | 'last_published_by'>;
+  snapshot_meta: {
+    node_count: number;
+    output_node_id: string | null;
+    exposed_node_ids: string[];
+    form_schema: Array<{ name: string; type: string; pg_type?: string; required: boolean; default: unknown; help_text?: string; source_node_id: string }>;
+    embedded_subdags: Array<{ subdag_node_id: string; child_rid: string; child_output_node_id?: string }>;
+  };
+  recent_audit: Array<{
+    user_id: string;
+    action: string;
+    details: Record<string, unknown> | null;
+    created_at: string;
+    ip_address: string | null;
+    actor_type: string | null;
+    agent_id: string | null;
+  }>;
+};
+
 export type AIProviderPricing = Record<string, { input: number; output: number }>;
 
 export type AIProvider = {
@@ -1552,7 +1709,7 @@ export type ModuleDetails = {
     modules: { resource_id: string; display_name: string; table_count: number }[];
     tables: { resource_id: string; display_name: string; resource_type: string; column_count: number; data_source_id: string | null }[];
     functions: { resource_id: string; display_name: string; data_source_id: string | null; schema: string | null }[];
-    pages: { resource_id: string; display_name: string; page_id: string; dag_id: string | null; node_id: string | null }[];
+    pages: { resource_id: string; display_name: string; page_id: string; dag_id: string | null; node_id: string | null; display_order: number; has_dag: boolean }[];
   };
   access: { role_id: string; role_name: string; actions: { action_id: string; effect: string }[] }[];
   profiles: { profile_id: string; pg_role: string; connection_mode: string; data_source_id: string | null }[];

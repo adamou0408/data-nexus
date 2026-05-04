@@ -189,14 +189,25 @@ modulesRouter.get('/:id/details', async (req, res) => {
     // V081: Direct child pages (sink-as-authz_resource Tier B artifacts).
     // page_id stripped from resource_id ('page:<id>' → '<id>') so frontend
     // can dispatch open-auto-page directly without re-parsing.
+    //
+    // PUB-PAGES-ADMIN-V01 Part C: LEFT JOIN authz_ui_page so we can ORDER BY
+    // display_order ASC (then fall back to display_name when 0/equal). The
+    // ui_page row also gives us the canonical title (Edit dialog can update
+    // it without going through authz_resource), and we expose has_dag so the
+    // admin form picker only shows on rows the curator can republish.
     const childPages = await pool.query(`
       SELECT r.resource_id, r.display_name,
         r.attributes->>'page_id' AS page_id,
         r.attributes->>'dag_id'  AS dag_id,
-        r.attributes->>'node_id' AS node_id
+        r.attributes->>'node_id' AS node_id,
+        COALESCE(p.display_order, 0) AS display_order,
+        (p.published_dag_id IS NOT NULL) AS has_dag
       FROM authz_resource r
+      LEFT JOIN authz_ui_page p
+             ON p.page_id = r.attributes->>'page_id'
+            AND p.is_active = TRUE
       WHERE r.parent_id = $1 AND r.resource_type = 'page' AND r.is_active = TRUE
-      ORDER BY r.display_name
+      ORDER BY COALESCE(p.display_order, 0), r.display_name
     `, [moduleId]);
 
     // Access summary: which roles have permissions on this module
@@ -355,16 +366,34 @@ modulesRouter.delete('/:id', requireRole('DATA_STEWARD'), async (req, res) => {
 modulesRouter.patch('/pages/:page_id', requireRole('DATA_STEWARD'), async (req, res) => {
   const pageId = req.params.page_id;
   const userId = getUserId(req);
-  const { display_name, parent_id } = (req.body || {}) as { display_name?: unknown; parent_id?: unknown };
+  const { display_name, parent_id, description, display_order } = (req.body || {}) as {
+    display_name?: unknown;
+    parent_id?: unknown;
+    // PUB-PAGES-ADMIN-V01 Part B: free-form catalog metadata (Pages tab edit dialog).
+    description?: unknown;
+    // PUB-PAGES-ADMIN-V01 Part C: ordering inside parent module (V022:25 column).
+    display_order?: unknown;
+  };
 
   const willRename = typeof display_name === 'string' && display_name.trim().length > 0;
   const willMove = parent_id !== undefined; // null = move to root explicitly
+  const willDescribe = description !== undefined; // null/'' = clear
+  const willOrder = display_order !== undefined;
 
-  if (!willRename && !willMove) {
-    return res.status(400).json({ error: 'No change', detail: 'Provide display_name and/or parent_id.' });
+  if (!willRename && !willMove && !willDescribe && !willOrder) {
+    return res.status(400).json({
+      error: 'No change',
+      detail: 'Provide display_name, parent_id, description, and/or display_order.',
+    });
   }
   if (willMove && parent_id !== null && (typeof parent_id !== 'string' || !parent_id.startsWith('module:'))) {
     return res.status(400).json({ error: 'Invalid parent_id', detail: 'parent_id must be a module: resource or null.' });
+  }
+  if (willDescribe && description !== null && typeof description !== 'string') {
+    return res.status(400).json({ error: 'Invalid description', detail: 'description must be a string or null.' });
+  }
+  if (willOrder && (typeof display_order !== 'number' || !Number.isInteger(display_order))) {
+    return res.status(400).json({ error: 'Invalid display_order', detail: 'display_order must be an integer.' });
   }
 
   const resourceId = `page:${pageId}`;
@@ -415,19 +444,36 @@ modulesRouter.patch('/pages/:page_id', requireRole('DATA_STEWARD'), async (req, 
     if (willMove)   attrsExpr = `jsonb_set(${attrsExpr}, '{manual_override,parent_id}', 'true'::jsonb, TRUE)`;
     sets.push(`attributes = ${attrsExpr}`);
 
-    params.push(resourceId);
-    await client.query(
-      `UPDATE authz_resource SET ${sets.join(', ')} WHERE resource_id = $${params.length}`,
-      params
-    );
+    if (sets.length > 0) {
+      params.push(resourceId);
+      await client.query(
+        `UPDATE authz_resource SET ${sets.join(', ')} WHERE resource_id = $${params.length}`,
+        params
+      );
+    }
 
     // Mirror title to authz_ui_page (dual-write SSOT — V081 sink convention).
     // Best-effort: if the row doesn't exist (legacy page that never got a sink
     // snapshot), the resource update alone is the source of truth for the catalog.
-    if (willRename) {
+    // PUB-PAGES-ADMIN-V01 Part B/C: also mutate description + display_order
+    // (only present on authz_ui_page — they have no authz_resource analogue).
+    const pageSets: string[] = [];
+    const pageParams: unknown[] = [];
+    if (willRename) { pageParams.push((display_name as string).trim()); pageSets.push(`title = $${pageParams.length}`); }
+    if (willDescribe) {
+      const desc = description === null ? null : (description as string);
+      pageParams.push(desc);
+      pageSets.push(`description = $${pageParams.length}`);
+    }
+    if (willOrder) {
+      pageParams.push(display_order);
+      pageSets.push(`display_order = $${pageParams.length}`);
+    }
+    if (pageSets.length > 0) {
+      pageParams.push(pageId);
       await client.query(
-        `UPDATE authz_ui_page SET title = $1 WHERE page_id = $2`,
-        [(display_name as string).trim(), pageId]
+        `UPDATE authz_ui_page SET ${pageSets.join(', ')} WHERE page_id = $${pageParams.length}`,
+        pageParams
       );
     }
 
@@ -447,9 +493,290 @@ modulesRouter.patch('/pages/:page_id', requireRole('DATA_STEWARD'), async (req, 
     details: {
       ...(willRename ? { display_name: (display_name as string).trim() } : {}),
       ...(willMove ? { parent_id } : {}),
+      ...(willDescribe ? { description: description === null ? null : (description as string) } : {}),
+      ...(willOrder ? { display_order } : {}),
     },
   });
 
   await refreshModuleStats();
   res.json({ updated: resourceId, page_id: pageId });
+});
+
+// ─── PUB-PAGES-ADMIN-V01 Part B: Pages admin inventory ───
+//
+// Purpose: surface every published_dag-backed page with the metadata curators
+// need to manage them — backing DAG, last publisher, embedders count, catalog
+// parent. Steward-only (admin gets through via SYSADMIN bypass in requireRole).
+//
+// Why not in routes/dag.ts: this is catalog management, not DAG runtime.
+// Co-locating with the existing PATCH `/pages/:page_id` keeps all page-mutation
+// routes under one router.
+//
+// Filters:
+//   - parent_module_id: scope to a single module
+//   - q: case-insensitive substring on title or page_id
+//
+// N+1 safety: embedders_count uses a correlated subquery against the same
+// authz_ui_page table; published_dag set is dozens at demo scale, so the cost
+// is bounded. Revisit if catalog grows past ~200.
+modulesRouter.get('/pages', requireRole('DATA_STEWARD'), async (req, res) => {
+  const parentModuleId = typeof req.query.parent_module_id === 'string' ? req.query.parent_module_id : null;
+  const q = typeof req.query.q === 'string' && req.query.q.trim().length > 0 ? req.query.q.trim() : null;
+
+  // page mirror = authz_resource row with resource_id 'page:<page_id>',
+  // resource_type 'page'. authz_ui_page.resource_id points at the bless gate
+  // (published_dag:...), NOT the page mirror — V086 keeps them as siblings.
+  // We JOIN on the page mirror because that's the row whose parent_id is the
+  // catalog parent the curator chose in the publish dialog.
+  const params: unknown[] = [];
+  const where: string[] = [
+    `p.is_active = TRUE`,
+    `p.published_dag_id IS NOT NULL`,
+    `pm.is_active = TRUE`,
+    `pm.resource_type = 'page'`,
+  ];
+  if (parentModuleId) {
+    params.push(parentModuleId);
+    where.push(`pm.parent_id = $${params.length}`);
+  }
+  if (q) {
+    params.push(`%${q.toLowerCase()}%`);
+    where.push(`(LOWER(p.title) LIKE $${params.length} OR LOWER(p.page_id) LIKE $${params.length})`);
+  }
+
+  const sql = `
+    SELECT p.page_id,
+           p.title,
+           p.description,
+           p.display_order,
+           p.published_dag_id                          AS dag_id,
+           p.dag_snapshot->>'data_source_id'           AS data_source_id,
+           p.resource_id                               AS published_dag_rid,
+           pm.resource_id                              AS page_rid,
+           pm.parent_id                                AS parent_module_id,
+           parent.display_name                         AS parent_module_name,
+           (
+             SELECT COUNT(*) FROM authz_ui_page parent_p
+              WHERE parent_p.is_active = TRUE
+                AND parent_p.dag_snapshot->'embedded_subdags'
+                    @> jsonb_build_array(jsonb_build_object('child_rid', p.resource_id))
+           )                                            AS embedders_count,
+           (
+             SELECT created_at FROM authz_admin_audit_log
+              WHERE resource_id = p.resource_id
+                AND action IN ('DAG_PUBLISH', 'DAG_PUBLISH_OVERWRITE')
+              ORDER BY created_at DESC LIMIT 1
+           )                                            AS last_published_at,
+           (
+             SELECT user_id FROM authz_admin_audit_log
+              WHERE resource_id = p.resource_id
+                AND action IN ('DAG_PUBLISH', 'DAG_PUBLISH_OVERWRITE')
+              ORDER BY created_at DESC LIMIT 1
+           )                                            AS last_published_by
+      FROM authz_ui_page p
+      JOIN authz_resource pm     ON pm.resource_id = 'page:' || p.page_id
+      LEFT JOIN authz_resource parent ON parent.resource_id = pm.parent_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY pm.parent_id NULLS LAST, p.display_order, p.title`;
+
+  try {
+    const { rows } = await pool.query(sql, params);
+    res.json({
+      pages: rows.map(r => ({
+        page_id: r.page_id,
+        title: r.title,
+        description: r.description,
+        display_order: r.display_order ?? 0,
+        dag_id: r.dag_id,
+        data_source_id: r.data_source_id,
+        published_dag_rid: r.published_dag_rid,
+        page_rid: r.page_rid,
+        parent_module_id: r.parent_module_id,
+        parent_module_name: r.parent_module_name,
+        embedders_count: Number(r.embedders_count ?? 0),
+        last_published_at: r.last_published_at,
+        last_published_by: r.last_published_by,
+      })),
+    });
+  } catch (err) { handleApiError(res, err); }
+});
+
+// ─── PUB-PAGES-ADMIN-V01 Part E: Page detail / lineage panel ───
+//
+// Returns the inventory row + dag_snapshot summary + recent admin audit so the
+// PagesTab row-expand can show one consolidated view ("what's this page, what's
+// in it, who touched it"). Form schema and embedded_subdags are passed through
+// for the troubleshooting panel.
+//
+// Audit cap: last 30 entries on this page's resource_id (PUBLISH + UPDATE +
+// DELETE actions). Older detail still queryable from the Audit tab.
+modulesRouter.get('/pages/:page_id', requireRole('DATA_STEWARD'), async (req, res) => {
+  const pageId = req.params.page_id;
+  const resourceId = `page:${pageId}`;
+
+  try {
+    const pageRes = await pool.query(
+      `SELECT p.page_id, p.title, p.description, p.display_order,
+              p.published_dag_id                AS dag_id,
+              p.resource_id                     AS published_dag_rid,
+              p.dag_snapshot, p.form_schema,
+              p.dag_snapshot->>'data_source_id' AS data_source_id,
+              p.dag_snapshot->>'output_node_id' AS output_node_id,
+              p.dag_snapshot->'exposed_node_ids' AS exposed_node_ids,
+              p.dag_snapshot->'embedded_subdags' AS embedded_subdags,
+              pm.resource_id                    AS page_rid,
+              pm.parent_id                      AS parent_module_id,
+              parent.display_name               AS parent_module_name
+         FROM authz_ui_page p
+         JOIN authz_resource pm     ON pm.resource_id = 'page:' || p.page_id AND pm.resource_type = 'page' AND pm.is_active = TRUE
+         LEFT JOIN authz_resource parent ON parent.resource_id = pm.parent_id
+        WHERE p.page_id = $1 AND p.is_active = TRUE AND p.published_dag_id IS NOT NULL`,
+      [pageId]
+    );
+    if (pageRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Page not found or not a published_dag' });
+    }
+    const row = pageRes.rows[0];
+    const snapshotNodes = (row.dag_snapshot?.nodes ?? []) as unknown[];
+
+    const auditRes = await pool.query(
+      `SELECT user_id, action, details, created_at, ip_address, actor_type, agent_id
+         FROM authz_admin_audit_log
+        WHERE resource_id = $1
+        ORDER BY created_at DESC
+        LIMIT 30`,
+      [row.published_dag_rid]
+    );
+
+    res.json({
+      page: {
+        page_id: row.page_id,
+        title: row.title,
+        description: row.description,
+        display_order: row.display_order ?? 0,
+        dag_id: row.dag_id,
+        data_source_id: row.data_source_id,
+        published_dag_rid: row.published_dag_rid,
+        page_rid: row.page_rid,
+        parent_module_id: row.parent_module_id,
+        parent_module_name: row.parent_module_name,
+      },
+      snapshot_meta: {
+        node_count: snapshotNodes.length,
+        output_node_id: row.output_node_id,
+        exposed_node_ids: row.exposed_node_ids ?? [],
+        form_schema: row.form_schema ?? [],
+        embedded_subdags: row.embedded_subdags ?? [],
+      },
+      recent_audit: auditRes.rows,
+    });
+  } catch (err) { handleApiError(res, err); }
+});
+
+// ─── PUB-PAGES-ADMIN-V01 Part D: soft-delete with embedder block ───
+//
+// Two safety layers:
+//   1. Embedder check — if any other published_dag has this page in its
+//      embedded_subdags array, refuse with 409 + the blocking parents. The
+//      front-end pre-flights /api/dag/published/:rid/embedders, but we re-check
+//      here to defend against TOCTOU (race with a concurrent embed).
+//   2. Soft delete only — flips is_active=FALSE on both the page mirror
+//      (authz_resource) and the bless gate (also authz_resource, type
+//      'published_dag') plus authz_ui_page row. We deliberately leave
+//      role_permission rows intact: an inactive resource fails authz_check, so
+//      the effective grant is revoked, and the audit trail of who-had-read
+//      survives.
+//
+// What stays for V090+: hard delete + cron purge + role_permission cleanup.
+// Demo scope says soft-only; ops can revive a deletion by flipping is_active
+// back to TRUE in two tables.
+modulesRouter.delete('/pages/:page_id', requireRole('DATA_STEWARD'), async (req, res) => {
+  const pageId = req.params.page_id;
+  const userId = getUserId(req);
+  const resourceId = `page:${pageId}`;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const pageRow = await client.query(
+      `SELECT p.resource_id AS published_dag_rid, p.published_dag_id AS dag_id, p.title
+         FROM authz_ui_page p
+        WHERE p.page_id = $1 AND p.is_active = TRUE
+        FOR UPDATE`,
+      [pageId]
+    );
+    if (pageRow.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Page not found or already deleted' });
+    }
+    const publishedDagRid: string = pageRow.rows[0].published_dag_rid;
+
+    // 1. Embedder defense-in-depth — block if any active parent embeds this
+    //    page's bless gate.
+    const filter = JSON.stringify([{ child_rid: publishedDagRid }]);
+    const embedders = await client.query(
+      `SELECT page.page_id            AS parent_page_id,
+              page.resource_id        AS parent_published_dag_rid,
+              page.published_dag_id   AS parent_dag_id,
+              page.title              AS parent_title
+         FROM authz_ui_page page
+        WHERE page.is_active = TRUE
+          AND page.page_id <> $2
+          AND page.dag_snapshot->'embedded_subdags' @> $1::jsonb`,
+      [filter, pageId]
+    );
+    if (embedders.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: `Cannot delete: page is embedded in ${embedders.rows.length} other published_dag(s)`,
+        blocking_parents: embedders.rows,
+      });
+    }
+
+    // 2. Soft delete — page mirror + ui_page row are 1:1 with page_id, so
+    //    always flip them. The bless gate (published_dag:<dag_id>) is 1:DAG —
+    //    multiple page_ids from the same DAG can share it (V086 keyed on
+    //    dag_id, not page_id). Only deactivate the bless gate when this is
+    //    the LAST page referencing it; otherwise sibling pages would silently
+    //    lose BI_USER read access.
+    await client.query(
+      `UPDATE authz_resource SET is_active = FALSE WHERE resource_id = $1`,
+      [resourceId]
+    );
+    await client.query(
+      `UPDATE authz_ui_page SET is_active = FALSE WHERE page_id = $1`,
+      [pageId]
+    );
+    const remaining = await client.query(
+      `SELECT 1 FROM authz_ui_page
+        WHERE resource_id = $1 AND is_active = TRUE
+        LIMIT 1`,
+      [publishedDagRid]
+    );
+    if (remaining.rowCount === 0) {
+      await client.query(
+        `UPDATE authz_resource SET is_active = FALSE WHERE resource_id = $1`,
+        [publishedDagRid]
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    return handleApiError(res, err);
+  } finally {
+    client.release();
+  }
+
+  await logAdminAction(pool, {
+    userId,
+    action: 'DELETE_PAGE',
+    resourceType: 'page',
+    resourceId,
+    details: { soft_delete: true },
+  });
+
+  await refreshModuleStats();
+  res.json({ deleted: resourceId, page_id: pageId, soft_delete: true });
 });

@@ -1,7 +1,7 @@
 # API & Dashboard Reference
 
 > Maintained here. CLAUDE.md points to this file.
-> Last updated: 2026-04-27
+> Last updated: 2026-05-04
 
 ## API Endpoints
 
@@ -150,6 +150,137 @@ maintains symmetric `ALTER DEFAULT PRIVILEGES` for AC-1.7 rollback (V063).
 | PATCH | /api/discover/suggestions/:policy_id | Approve (status → `active`) or reject suggestion. Approving a deny suggestion makes it enforce via V064's widened allow-branch deny check |
 | POST | /api/discover/generate-app | Generate Path A scaffold from a discovered table |
 
+### Data Query (requireAuth)
+
+Path B endpoints that execute against registered data sources, gated by
+`authz_check`. Mounted at `/api/data-query` (`services/authz-api/src/index.ts:120`).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET  | /api/data-query/tables | List `table` / `view` resources for a `data_source_id` (with cached `outputs`) |
+| GET  | /api/data-query/functions | List `function` resources for a `data_source_id` (parsed args / return shape / subtype) |
+| POST | /api/data-query/functions/compatible | DAG "next step" — fns whose required inputs are coverable by supplied semantic types |
+| POST | /api/data-query/functions/exec | Execute a registered PG function; named-binds, capped at `MAX_ROWS=1000` |
+| POST | /api/data-query/oracle-direct | Read-only Oracle query against a registered view / table / scalar fn / table fn (see below) |
+| GET  | /api/data-query/functions/:resource_id/ddl | `pg_get_functiondef` for a deployed fn (steward-only) |
+| GET  | /api/data-query/functions/lint-all | Per-fn quality lint summary across the catalog |
+| POST | /api/data-query/functions/lint | Stateless DDL lint (no DB round-trip) |
+| POST | /api/data-query/functions/validate | Dry-run `CREATE FUNCTION` inside a rolled-back txn |
+| POST | /api/data-query/functions/deploy | Apply `CREATE FUNCTION`, register in `authz_resource`, grant `DATA_STEWARD` execute |
+
+#### POST /api/data-query/oracle-direct
+
+Executes a read-only query against an Oracle data source, going through the
+registered Oracle object (view, table, scalar function, or pipelined / table
+function) declared in `authz_resource`. Used by the Discover / DataQuery tab
+when the resource is tagged as reachable directly on Oracle (i.e. without
+waiting on the CDC replica). Source: `services/authz-api/src/routes/data-query.ts:324-500`.
+
+**Request body**
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `data_source_id` | string | yes | Must reference an active row in `authz_data_source` with `db_type='oracle'`. 404 otherwise (`data-query.ts:340-347`). |
+| `resource_id` | string | yes | Must be active in `authz_resource`, scoped to this `data_source_id`, and tagged for `oracle_direct` (see below). 404 if the resource row is missing. |
+| `params` | object | no | Bind name → bind value. Bind names must match `^[a-zA-Z_][a-zA-Z0-9_]*$`; passed via `oracledb` named binds (no string interpolation). 400 on a bad name (`data-query.ts:418`). |
+| `limit` | number | no | Row cap for rowset paths. Default `100`, hard-clamped to `[1, 1000]` via `MAX_ROWS=1000` (`data-query.ts:19`, `408-409`). Ignored for `function_scalar`. |
+
+**Resource attribute requirements** (`authz_resource.attributes`)
+
+The registered row must carry:
+
+| Attribute | Required value |
+|-----------|----------------|
+| `available_targets` | array containing `"oracle_direct"` (`data-query.ts:364-370`) |
+| `oracle_owner` | uppercase Oracle schema name matching `^[A-Z][A-Z0-9_$#]*$` |
+| `oracle_object` | uppercase object name matching the same regex |
+| `oracle_kind` | one of `view`, `table`, `function_scalar`, `function_table` |
+
+Missing `oracle_owner` / `oracle_object` / `oracle_kind` → 400 (`data-query.ts:375-380`).
+Identifier failing the regex → 400 (`data-query.ts:381-386`). Unsupported
+`oracle_kind` → 400 (`data-query.ts:438-443`).
+
+**Permission gate**
+
+Routed through `authz_check(user, groups, action, resource_id)`:
+
+- `oracle_kind = view | table` → action `select`
+- `oracle_kind = function_scalar | function_table` → action `execute`
+
+Deny → 403 with the audit event below recorded with `decision='deny'`
+(`data-query.ts:389-405`).
+
+**Read-only enforcement**
+
+Three independent layers — any one alone blocks DML:
+
+1. **Resource whitelist.** The endpoint refuses any `resource_id` not registered
+   with `available_targets ⊇ {"oracle_direct"}`, so unseeded objects are
+   unreachable regardless of caller intent.
+2. **Identifier whitelist.** `oracle_owner` and `oracle_object` are matched
+   against `ORACLE_IDENT_RE = /^[A-Z][A-Z0-9_$#]*$/` (`data-query.ts:21`)
+   before being interpolated. There is no path for SQL injection through the
+   object name.
+3. **`SET TRANSACTION READ ONLY` on the Oracle session.** The
+   `getOracleReadOnlyDriver` helper (`services/authz-api/src/lib/db-driver.ts`)
+   sets the session to read-only on connection open. Any DML — even smuggled
+   through a function body — is rejected by Oracle itself.
+
+The endpoint never accepts user-supplied SQL strings. Bind values flow through
+`oracledb.BIND_IN`; scalar function results come back through a single
+`BIND_OUT` named `__result__`.
+
+**Response — rowset path** (`oracle_kind ∈ {view, table, function_table}`,
+`data-query.ts:482-493`)
+
+```json
+{
+  "status": "ok",
+  "resource_id": "view:TIPTOP.V_ORDER_HEADER",
+  "target": "oracle_direct",
+  "oracle_kind": "view",
+  "columns": [{ "name": "ORDER_NO", "dataTypeID": "..." }],
+  "rows":    [{ "ORDER_NO": "..." }],
+  "row_count": 42,
+  "truncated": false,
+  "max_rows": 100,
+  "elapsed_ms": 87
+}
+```
+
+**Response — scalar path** (`oracle_kind = function_scalar`,
+`data-query.ts:471-481`)
+
+```json
+{
+  "status": "ok",
+  "resource_id": "function:TIPTOP.FN_FOO",
+  "target": "oracle_direct",
+  "oracle_kind": "function_scalar",
+  "scalar_result": "...",
+  "elapsed_ms": 12
+}
+```
+
+**Error codes**
+
+| Code | When | Source |
+|------|------|--------|
+| 400 | Missing `data_source_id` / `resource_id`; `available_targets` lacks `oracle_direct`; missing `oracle_owner` / `oracle_object` / `oracle_kind`; identifier fails regex; bind name fails regex; unsupported `oracle_kind` | `data-query.ts:334-336, 365-386, 418-420, 438-443` |
+| 403 | `authz_check` denied for the inferred action | `data-query.ts:395-405` |
+| 404 | Data source missing / inactive / not Oracle; resource not registered for this DS | `data-query.ts:345-347, 356-361` |
+
+**Audit trail**
+
+Every call writes one structured `audit({...})` event tagged
+`access_path='B'`, `action_id='oracle_direct_query'`, with `decision='allow'`
+or `'deny'` and a context payload (`data_source_id`, `oracle_kind`, plus
+`row_count` / `truncated` / `elapsed_ms` for rowset; `elapsed_ms` only for
+PL/SQL) — see `data-query.ts:396-400, 459-463`.
+
+On allow, also `logAdminAction(authzPool, { action: 'ORACLE_DIRECT_QUERY', ... })`
+to `authz_admin_audit_log` (`data-query.ts:464-469`).
+
 ### AI Assist — PG Function Authoring (requireRole: ADMIN, AUTHZ_ADMIN)
 
 Dogfood (Q3 2026) endpoints powering the AuthorPanel AI helper in DataQueryTab. All three pull a provider whose `purpose_tags` contains `'sql_authoring'` (`is_fallback DESC` tiebreak), call `${base_url}/chat/completions` (OpenAI-compatible), record an `authz_ai_usage` row (SHA-256 hash of prompt — never plaintext) and an `authz_admin_audit_log` row (`actor_type='ai_agent'`, `agent_id=provider_id`, `consent_given='human_explicit'`). Output never auto-deploys — generated SQL fills the textarea; Deploy still requires `window.confirm` + human click (Constitution §11.3).
@@ -178,7 +309,8 @@ index.ts
 ├── /api/config-exec    → config-exec.ts       (requireAuth)
 ├── /api/pool           → pool.ts              (requireRole ADMIN/AUTHZ_ADMIN/DBA)
 ├── /api/datasources    → datasource.ts        (requireRole ADMIN/AUTHZ_ADMIN/DBA)
-└── /api/discover       → discover.ts          (requireRole ADMIN/AUTHZ_ADMIN/DBA)
+├── /api/discover       → discover.ts          (requireRole ADMIN/AUTHZ_ADMIN/DBA)
+└── /api/data-query     → data-query.ts        (requireAuth — Path B exec + Oracle direct)
 ```
 
 ## Dashboard Tabs

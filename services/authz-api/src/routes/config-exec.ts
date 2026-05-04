@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { pool, getDataSourcePool, resolveDataSource, getLocalDataPool } from '../db';
+import { pool, getDataSourcePool, resolveDataSource } from '../db';
 import { buildMaskedSelect, ColumnDef } from '../lib/masked-query';
 import { handleApiError } from '../lib/request-helpers';
 import { audit } from '../audit';
@@ -245,9 +245,19 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
     const table = config.data_table;
 
     // Step 4: Resolve data source pool (SSOT from authz_data_source).
-    // ARCH-01: when no remote source is configured, business tables live in nexus_data.
+    // ARCH-02 (2026-05-04): the authz_resource MUST carry
+    // attributes->>'data_source_id'. The historical fallback to the
+    // internal nexus_data pool was removed — Path A pages that don't
+    // bind to a data_source_id now return HTTP 400 instead of silently
+    // running against an internal infra DB.
     const sourceId = await resolveDataSource(table);
-    const dataPool = sourceId ? await getDataSourcePool(sourceId) : getLocalDataPool();
+    if (!sourceId) {
+      return res.status(400).json({
+        error: 'data_source_id missing on authz_resource',
+        hint: `Set authz_resource.attributes->>'data_source_id' for table:${table} (e.g. "ds:pg_k8"). Fallback removed in ARCH-02.`,
+      });
+    }
+    const dataPool = await getDataSourcePool(sourceId);
 
     // Step 5: Build extra WHERE from drill-down params
     const extraWhere = buildExtraWhere(params, table, dataPool);

@@ -1,6 +1,8 @@
 /* eslint-disable no-console */
 // BU-06 E2E driver — run engine, approve a suggestion, exercise rewriter.
-// Usage: cd services/authz-api && npx tsx src/scripts/bu06-e2e.ts
+// Usage:
+//   BU06_TEST_TABLE=<table> BU06_TEST_COLUMN=<col> \
+//     npx tsx src/scripts/bu06-e2e.ts
 //
 // Validates the full bottom-up loop against the real dev database:
 //   1. Engine writes pending_review policies in the shape evaluator expects
@@ -8,11 +10,39 @@
 //   3. PolicyEvaluator + RewritePipeline rewrite a SELECT to apply the mask
 //
 // Fails loudly with non-zero exit if any step doesn't produce expected output.
+//
+// ARCH-02 (2026-05-04): the historical defaults `lot_status` / `cost`
+// were removed when the mock business tables were dropped. The test
+// table + masked column must now be supplied via env. TODO(Adam):
+// once we pick a stable demo column on tiptop (see
+// docs/standards/path-c-rls-demo-pg_k8-tiptop.md), bake those defaults
+// back in and add a discovery rule fixture that targets it.
 
 import { Pool } from 'pg';
 import { runDiscoveryRules } from '../lib/discovery-rule-engine';
 import { PolicyEvaluator } from '../lib/policy-evaluator';
 import { RewritePipeline } from '../lib/rewriter/pipeline';
+
+const _TEST_TABLE_RAW = process.env.BU06_TEST_TABLE;
+const _TEST_COLUMN_RAW = process.env.BU06_TEST_COLUMN;
+const TEST_DATABASE = process.env.BU06_TEST_DATABASE || 'nexus_data';
+
+if (!_TEST_TABLE_RAW || !_TEST_COLUMN_RAW) {
+  console.error(
+    '[bu06-e2e] BU06_TEST_TABLE and BU06_TEST_COLUMN env vars are required.\n' +
+    '  Example: BU06_TEST_TABLE=<TIPTOP_TEST_TABLE> BU06_TEST_COLUMN=<TIPTOP_PRED_COL> \\\n' +
+    '           BU06_TEST_DATABASE=dc npx tsx src/scripts/bu06-e2e.ts\n' +
+    '  Pre-ARCH-02 this defaulted to lot_status.cost in nexus_data — those\n' +
+    '  fixtures were removed. See docs/standards/path-c-rls-demo-pg_k8-tiptop.md.'
+  );
+  process.exit(2);
+}
+
+// After the guard above, both env vars are non-empty. Re-bind to non-optional
+// locals so TS can narrow inside async main() (top-level const narrowing
+// doesn't survive across function boundaries).
+const TEST_TABLE: string = _TEST_TABLE_RAW;
+const TEST_COLUMN: string = _TEST_COLUMN_RAW;
 
 const pool = new Pool({
   host: process.env.PGHOST || 'localhost',
@@ -58,21 +88,22 @@ async function main() {
     console.log(`      column_mask_rules:  ${JSON.stringify(s.column_mask_rules)}`);
   }
 
-  // Pick the cost mask (lot_status.cost) for the rewrite test.
-  const costPolicy = suggestions.rows.find(s =>
-    s.policy_name.includes('lot_status.cost'),
+  // Pick the mask matching the configured test table+column for the rewrite test.
+  const expectedPolicyKey = `${TEST_TABLE}.${TEST_COLUMN}`;
+  const targetPolicy = suggestions.rows.find(s =>
+    s.policy_name.includes(expectedPolicyKey),
   );
-  if (!costPolicy) {
-    fail('Expected a suggestion for lot_status.cost — engine output missing.');
+  if (!targetPolicy) {
+    fail(`Expected a suggestion for ${expectedPolicyKey} — engine output missing.`);
   }
 
   // Verify shape matches what evaluator wants
-  const rc = costPolicy.resource_condition || {};
-  if (rc.table !== 'lot_status') {
-    fail(`resource_condition.table = '${rc.table}' (expected 'lot_status')`);
+  const rc = targetPolicy.resource_condition || {};
+  if (rc.table !== TEST_TABLE) {
+    fail(`resource_condition.table = '${rc.table}' (expected '${TEST_TABLE}')`);
   }
-  const maskRules = costPolicy.column_mask_rules || {};
-  const expectedKey = 'lot_status.cost';
+  const maskRules = targetPolicy.column_mask_rules || {};
+  const expectedKey = expectedPolicyKey;
   const maskDef = maskRules[expectedKey];
   if (!maskDef || typeof maskDef !== 'object') {
     fail(`column_mask_rules['${expectedKey}'] missing or not an object: ${JSON.stringify(maskRules)}`);
@@ -82,19 +113,19 @@ async function main() {
   }
   console.log(`  ✓ Engine output shape matches evaluator expectations.`);
 
-  // 3) Approve the cost policy
-  console.log('\n[3/5] Approving lot_status.cost suggestion...');
+  // 3) Approve the policy
+  console.log(`\n[3/5] Approving ${expectedPolicyKey} suggestion...`);
   const upd = await pool.query(
     `UPDATE authz_policy
         SET status = 'active', updated_at = now()
       WHERE policy_id = $1
       RETURNING policy_id, status`,
-    [costPolicy.policy_id],
+    [targetPolicy.policy_id],
   );
   console.log('  →', upd.rows[0]);
 
   // 4) Run evaluator + rewriter against a SELECT
-  console.log('\n[4/5] Evaluating policies for non-admin user against lot_status...');
+  console.log(`\n[4/5] Evaluating policies for non-admin user against ${TEST_TABLE}...`);
   const evaluator = new PolicyEvaluator();
   const userCtx = {
     user_id: 'alice',
@@ -105,7 +136,7 @@ async function main() {
     groups: ['sales_team'],
     attributes: {},
   };
-  const evalResult = await evaluator.evaluate(pool, userCtx, 'lot_status');
+  const evalResult = await evaluator.evaluate(pool, userCtx, TEST_TABLE);
   console.log('  →', {
     action: evalResult.action,
     mask_count: evalResult.mask_policies.length,
@@ -113,13 +144,13 @@ async function main() {
     applied: evalResult.applied_policy_names,
   });
   if (evalResult.mask_policies.length === 0) {
-    fail('Evaluator did not load the cost mask policy as a mask_policy.');
+    fail(`Evaluator did not load the ${TEST_COLUMN} mask policy as a mask_policy.`);
   }
 
-  console.log('\n[5/5] Rewriting SELECT cost FROM lot_status...');
+  console.log(`\n[5/5] Rewriting SELECT ${TEST_COLUMN} FROM ${TEST_TABLE}...`);
   const pipeline = new RewritePipeline();
-  const baseSql = 'SELECT cost, customer FROM lot_status';
-  const rewritten = pipeline.rewrite(baseSql, evalResult, userCtx, 'lot_status');
+  const baseSql = `SELECT ${TEST_COLUMN} FROM ${TEST_TABLE}`;
+  const rewritten = pipeline.rewrite(baseSql, evalResult, userCtx, TEST_TABLE);
   console.log('  Original :', baseSql);
   console.log('  Rewritten:', rewritten.rewritten_sql);
   console.log('  Modified :', rewritten.was_modified);
@@ -132,27 +163,31 @@ async function main() {
   if (!/fn_mask_|CASE\s+WHEN|'\*\*\*'/i.test(rewritten.rewritten_sql)) {
     fail(`Rewritten SQL does not appear to apply masking: ${rewritten.rewritten_sql}`);
   }
-  console.log('  ✓ Rewriter applied mask to "cost" column.');
+  console.log(`  ✓ Rewriter applied mask to "${TEST_COLUMN}" column.`);
 
   // 6) Optional: actually execute the rewritten SQL against the data table
   //    to confirm the mask function is callable and returns a non-original value.
+  //    NB: requires the test table to physically exist in BU06_TEST_DATABASE
+  //    (default: nexus_data). With ARCH-02 the table will typically live on
+  //    ds:pg_k8/tiptop — point BU06_TEST_DATABASE at the right DB and ensure
+  //    the calling user has read on it.
   console.log('\n[6/6] Executing rewritten SQL against the live table...');
-  // lot_status lives in nexus_data; need a data pool. Reuse same creds.
   const dataPool = new Pool({
     host: process.env.PGHOST || 'localhost',
     port: Number(process.env.PGPORT || 15432),
     user: process.env.PGUSER || 'nexus_admin',
     password: process.env.PGPASSWORD || 'nexus_admin_pw',
-    database: 'nexus_data',
+    database: TEST_DATABASE,
   });
   try {
     const exists = await dataPool.query(
-      `SELECT to_regclass('public.lot_status') AS t`,
+      `SELECT to_regclass($1) AS t`,
+      [TEST_TABLE],
     );
     if (!exists.rows[0]?.t) {
-      console.log('  (skip) public.lot_status does not exist in nexus_data — only schema-level test.');
+      console.log(`  (skip) ${TEST_TABLE} does not exist in ${TEST_DATABASE} — only schema-level test.`);
     } else {
-      const baseRows = await dataPool.query('SELECT cost FROM lot_status LIMIT 3');
+      const baseRows = await dataPool.query(`SELECT ${TEST_COLUMN} FROM ${TEST_TABLE} LIMIT 3`);
       console.log('  bare    :', baseRows.rows);
       const maskedRows = await dataPool.query(rewritten.rewritten_sql + ' LIMIT 3');
       console.log('  masked  :', maskedRows.rows);

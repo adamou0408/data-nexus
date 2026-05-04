@@ -48,6 +48,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | [`dag-publish-v01-plan.md`](./dag-publish-v01-plan.md) | V086 — admin DAG → published Tier B 頁的 `publish=bless` primitive(single-leaf invariant, dag-exec, ConfigEngine PublishedDagPage) |
 | [`dag-publish-v01-fu-bidir-exposure.md`](./dag-publish-v01-fu-bidir-exposure.md) | DAG-PUBLISH-V01-FU — bidirectional exposure：input @ any layer + output @ any layer per-node admin opt-in(`expose_output` flag, multi-output diamond) |
 | [`dag-subdag-embed-v01-plan.md`](./dag-subdag-embed-v01-plan.md) | DAG-SUBDAG-EMBED-V01 — DAG 互相引用 / shared upstream。Sub-DAG 是 publish-time 概念(inline-expand)，runtime 仍是 flat DAG;dag-exec 零變更，主要在 publish resolver + DagTab UI |
+| [`ux-three-asks-plan.md`](./ux-three-asks-plan.md) | UX-THREE-ASKS-V01 — Query Tool Edit/Duplicate (pg_get_functiondef) + Catalog ModuleBreadcrumb atom (消兩份重複) + Flow Composer Run Trace panel (session-local, 不持久化)。三案互不依賴，純加性、不踩 hard gate |
 
 ---
 
@@ -87,6 +88,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | sink-as-authz-resource-plan | Adam (planner) → TBD executor | **DRAFT** (2026-04-29：response to Adam's "complete solution, no short-term workaround" request after asking how to find saved snapshot post-reload;golden seed `dag:material_search_fanout` 已 ship 同日) | rolling — close before Q4 2026 Tier B 自助 AC |
 | tier-a-feedback-plan | Adam (this session) | **DONE** (2026-04-29：V082 applied + 4 routes + smoke 10/10 + tsc×2 clean + FeedbackButton 浮動 UI wire 進 `TablePageWithSavedView`;**AC-7 frontend round-trip 未在瀏覽器手動驗證**;Curator Inbox tab UI 切 FU commit `FEEDBACK-V01-INBOX-FU`) | Q3 2026 rolling — A3 |
 | tier-a-business-term-admin-plan | Adam (this session) | **DONE** (2026-04-29：BIZ-TERM-V01 — 4 routes + BusinessTermsTab admin UI + smoke 12/12 pass + tsc×2 clean。**Gate-prep tooling for §3.4 C, not C itself**;raw-SQL friction 移除,blessed_term gate 仍 = 0;**AC-8 frontend round-trip 未在瀏覽器手動驗證** per `feedback_ui_verification`;dev-server tsx-watch reload 不可靠,smoke 跑在 temp port 13099 instance 上) | Q3 2026 rolling — gate-prep |
+| ux-three-asks-plan | Adam (this session) | **PROPOSAL** (2026-05-04：三案規劃 — Query Tool Edit/Duplicate、Catalog ModuleBreadcrumb atom、Flow Composer Run Trace panel;7 個 D1-D7 決策點待 review;預估 3 天) | rolling — pending Adam review |
 
 **Status legend:** STUB → draft → in-progress → ready-for-review → approved
 

@@ -75,13 +75,18 @@ export async function getDataSourceClient(sourceId: string): Promise<Client> {
 
 // Resolve which remote data source a table/view belongs to via
 // authz_resource.attributes->>'data_source_id'. Returns null when the
-// resource is not registered against any remote source — callers are
-// expected to fall back to getLocalDataPool() (nexus_data) for ARCH-01
-// business tables that live alongside authz state.
+// resource is not registered against any remote source.
 //
-// Historical "first active datasource" fallback was removed: it made
-// behaviour depend on registration order and would silently route an
-// unmapped table to an unrelated remote DB.
+// Post-ARCH-02 (2026-05-04): query-path callers (browse-read,
+// config-exec, rls-simulate) MUST treat null as a 400-level error and
+// require an explicit data_source_id from the client. The previous
+// "fall back to nexus_data" behaviour was removed because it tied
+// query routing to an internal DB that holds CDC sinks rather than
+// authoritative business data.
+//
+// Historical "first active datasource" fallback was removed earlier:
+// it made behaviour depend on registration order and would silently
+// route an unmapped table to an unrelated remote DB.
 export async function resolveDataSource(table: string): Promise<string | null> {
   for (const prefix of ['table', 'view']) {
     const result = await authzPool.query(
@@ -107,16 +112,31 @@ export function evictDataSourcePool(sourceId: string): void {
 }
 
 // ============================================================
-// Local nexus_data pool — for CDC schema operations
-// (CREATE SCHEMA, GRANT on CDC schemas, discovery queries)
-// Separate from authzPool which points to nexus_authz.
+// Internal nexus_data pool — INFRASTRUCTURE ONLY
+//
+// Strictly for operations on the internal nexus_data DB (separate
+// from nexus_authz):
+//   - Oracle CDC schema setup (CREATE SCHEMA _cdc_*, GRANT on CDC schemas)
+//   - DAG sink table provisioning
+//   - Path C native role infra (PG-side roles for RLS demos)
+//
+// MUST NOT be used by query-path routes (browse-read, config-exec,
+// rls-simulate, data-explorer). Those routes route via
+// getDataSourcePool(data_source_id) and reject requests with no
+// data_source_id (HTTP 400). Removed 2026-05-04 (ARCH-02): the
+// "免註冊 fallback" that silently used this pool when no DS was
+// supplied — it was load-bearing in routes that should never have
+// touched the internal DB.
+//
+// Renamed 2026-05-04 from getLocalDataPool / getLocalDataClient
+// to make the "internal infra DB" intent explicit at the call site.
 // ============================================================
 
-let _localDataPool: Pool | null = null;
+let _internalDataPool: Pool | null = null;
 
-export function getLocalDataPool(): Pool {
-  if (_localDataPool) return _localDataPool;
-  _localDataPool = new Pool({
+export function getInternalDataPool(): Pool {
+  if (_internalDataPool) return _internalDataPool;
+  _internalDataPool = new Pool({
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT || '15432'),
     database: process.env.DATA_DB_NAME || 'nexus_data',
@@ -124,10 +144,10 @@ export function getLocalDataPool(): Pool {
     password: process.env.DB_PASSWORD || 'nexus_dev_password',
     max: 5,
   });
-  return _localDataPool;
+  return _internalDataPool;
 }
 
-export async function getLocalDataClient(): Promise<Client> {
+export async function getInternalDataClient(): Promise<Client> {
   const client = new Client({
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT || '15432'),

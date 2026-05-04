@@ -1,4 +1,4 @@
-import { authzPool, getDataSourceClient, getLocalDataClient } from '../db';
+import { authzPool, getDataSourceClient, getInternalDataClient } from '../db';
 import { audit } from '../audit';
 
 // ── Types ──
@@ -98,7 +98,7 @@ export async function syncExternalGrants(sourceId?: string, requestUserId = 'sys
     const isOracle = dsProfiles[0].db_type === 'oracle';
     try {
       // Oracle sources: grants run on local nexus_data (CDC schema), not on Oracle
-      client = isOracle ? await getLocalDataClient() : await getDataSourceClient(dsId);
+      client = isOracle ? await getInternalDataClient() : await getDataSourceClient(dsId);
     } catch (err) {
       // Connection failed — mark all profiles for this DS as failed
       for (const p of dsProfiles) {
@@ -307,7 +307,7 @@ export async function syncRemoteCredential(pgRole: string, passwordHash: string,
     let client;
     try {
       // Oracle sources: credential sync on local nexus_data, not Oracle
-      client = row.db_type === 'oracle' ? await getLocalDataClient() : await getDataSourceClient(row.source_id);
+      client = row.db_type === 'oracle' ? await getInternalDataClient() : await getDataSourceClient(row.source_id);
       const role = quoteIdent(pgRole);
       await client.query(`ALTER ROLE ${role} WITH PASSWORD '${passwordHash.replace(/'/g, "''")}'`);
       actions.push({ action: 'CREDENTIAL_SYNC', detail: `Password updated for ${pgRole} on ${row.source_id}`, data_source_id: row.source_id, profile_id: pgRole, status: 'ok' });
@@ -330,7 +330,7 @@ export async function detectRemoteDrift(sourceId: string): Promise<DriftReport> 
   // Oracle sources: drift detection runs on local nexus_data (CDC schema)
   const dsInfo = await authzPool.query('SELECT db_type FROM authz_data_source WHERE source_id = $1', [sourceId]);
   const isOracle = dsInfo.rows[0]?.db_type === 'oracle';
-  const client = isOracle ? await getLocalDataClient() : await getDataSourceClient(sourceId);
+  const client = isOracle ? await getInternalDataClient() : await getDataSourceClient(sourceId);
 
   try {
     // Get profiles for this data source

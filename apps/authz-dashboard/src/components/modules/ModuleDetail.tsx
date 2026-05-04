@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api, ModuleDetails, ModuleTreeNode, UIDescriptor } from '../../api';
+import { useAuthz } from '../../AuthzContext';
 import { useToast } from '../Toast';
 import { TablesPanel } from './TablesPanel';
 import { AccessPanel } from './AccessPanel';
 import { MetadataGrid } from '../shared/MetadataGrid';
 import { DangerConfirmModal, ConfirmState } from '../shared/DangerConfirmModal';
-import { Loader2, Trash2, Pencil, FolderPlus, ChevronRight, Code2, FileText } from 'lucide-react';
+import { Loader2, Trash2, Pencil, FolderPlus, ChevronRight, Code2, FileText, Settings2, Save } from 'lucide-react';
 import { EmptyState } from '../shared/atoms/EmptyState';
 import { ModuleFormModal } from './ModuleFormModal';
 import { PageEditModal, PageEditTarget } from './PageEditModal';
@@ -36,12 +37,18 @@ export function ModuleDetail({
   onSelectModule: (id: string) => void;
 }) {
   const toast = useToast();
+  const { isSteward } = useAuthz();
   const [details, setDetails] = useState<ModuleDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [subTab, setSubTab] = useState<string>('tables');
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [showEdit, setShowEdit] = useState(false);
   const [editPage, setEditPage] = useState<PageEditTarget | null>(null);
+  // PUB-PAGES-ADMIN-V01 Part C: admin mode for the pages sub-tab. Steward-only;
+  // toggle persists for the duration of this ModuleDetail mount only (re-mounts
+  // when the user switches modules — that's intentional, sticky-across-modules
+  // would surprise curators).
+  const [pagesAdminMode, setPagesAdminMode] = useState(false);
 
   const breadcrumb = useMemo(() => buildBreadcrumb(moduleId, nodes), [moduleId, nodes]);
 
@@ -239,54 +246,79 @@ export function ModuleDetail({
           (children.pages?.length ?? 0) === 0 ? (
             <EmptyState icon={<FileText size={32} />} message="No saved pages under this module yet — save a DAG snapshot via Composer to populate." />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 text-left text-slate-500">
-                    <th className="pb-2 font-medium">Page</th>
-                    <th className="pb-2 font-medium">Page ID</th>
-                    <th className="pb-2 font-medium">Source DAG</th>
-                    {canWrite && <th className="pb-2 font-medium w-10"></th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {children.pages.map(p => (
-                    <tr
-                      key={p.resource_id}
-                      className="border-b border-slate-100 hover:bg-blue-50/50 cursor-pointer transition-colors"
-                      onClick={() => window.dispatchEvent(new CustomEvent('open-auto-page', { detail: { page_id: p.page_id } }))}
-                      title="Open page snapshot"
-                    >
-                      <td className="py-2 pr-3">
-                        <div className="flex items-center gap-1.5">
-                          <FileText size={12} className="text-blue-600" />
-                          <span className="font-medium text-slate-800">{p.display_name}</span>
-                        </div>
-                      </td>
-                      <td className="py-2 pr-3 font-mono text-slate-600">{p.page_id}</td>
-                      <td className="py-2 pr-3 font-mono text-slate-600">{p.dag_id || '—'}</td>
-                      {canWrite && (
-                        <td className="py-2 pr-3 text-right">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditPage({
-                                page_id: p.page_id,
-                                display_name: p.display_name,
-                                current_parent_id: moduleId,
-                              });
-                            }}
-                            className="text-slate-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50"
-                            title="Rename or move this page"
-                          >
-                            <Pencil size={12} />
-                          </button>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-2">
+              {isSteward && (
+                <div className="flex items-center justify-end">
+                  <button
+                    onClick={() => setPagesAdminMode(v => !v)}
+                    className={`text-[11px] px-2 py-1 rounded border flex items-center gap-1 ${pagesAdminMode ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}
+                    title="Inline edit module + display order"
+                    data-testid="pages-admin-mode-toggle"
+                  >
+                    <Settings2 size={12} /> Admin mode {pagesAdminMode ? 'on' : 'off'}
+                  </button>
+                </div>
+              )}
+              {pagesAdminMode && isSteward ? (
+                <PagesAdminTable
+                  rows={children.pages}
+                  modules={nodes}
+                  currentModuleId={moduleId}
+                  onSaved={() => { load(); onMutate(); }}
+                />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                        <th className="pb-2 font-medium">Page</th>
+                        <th className="pb-2 font-medium">Page ID</th>
+                        <th className="pb-2 font-medium">Source DAG</th>
+                        <th className="pb-2 font-medium w-12 text-right">Order</th>
+                        {canWrite && <th className="pb-2 font-medium w-10"></th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {children.pages.map(p => (
+                        <tr
+                          key={p.resource_id}
+                          className="border-b border-slate-100 hover:bg-blue-50/50 cursor-pointer transition-colors"
+                          onClick={() => window.dispatchEvent(new CustomEvent('catalog-open-page', { detail: { page_id: p.page_id } }))}
+                          title="Open page snapshot"
+                        >
+                          <td className="py-2 pr-3">
+                            <div className="flex items-center gap-1.5">
+                              <FileText size={12} className="text-blue-600" />
+                              <span className="font-medium text-slate-800">{p.display_name}</span>
+                            </div>
+                          </td>
+                          <td className="py-2 pr-3 font-mono text-slate-600">{p.page_id}</td>
+                          <td className="py-2 pr-3 font-mono text-slate-600">{p.dag_id || '—'}</td>
+                          <td className="py-2 pr-3 text-right font-mono text-slate-500">{p.display_order ?? 0}</td>
+                          {canWrite && (
+                            <td className="py-2 pr-3 text-right">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditPage({
+                                    page_id: p.page_id,
+                                    display_name: p.display_name,
+                                    current_parent_id: moduleId,
+                                  });
+                                }}
+                                className="text-slate-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50"
+                                title="Rename or move this page"
+                              >
+                                <Pencil size={12} />
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )
         )}
@@ -319,5 +351,146 @@ export function ModuleDetail({
         />
       )}
     </div>
+  );
+}
+
+// ─── PUB-PAGES-ADMIN-V01 Part C: Pages admin form picker ───
+//
+// Inline editor table that lets a steward change parent module + display order
+// for every page under the current module without opening a modal. Diff-aware
+// Save button (disabled until a row's value differs from the loaded snapshot)
+// avoids accidental no-op PATCHes that bump audit log noise.
+//
+// Drag-and-drop reorder is plan §5 polish — the numeric input here is the
+// "primary" surface; drag handle would be additive on top.
+type PageAdminRowProps = ModuleDetails['children']['pages'][number];
+
+function PagesAdminTable({
+  rows,
+  modules,
+  currentModuleId,
+  onSaved,
+}: {
+  rows: PageAdminRowProps[];
+  modules: ModuleTreeNode[];
+  currentModuleId: string;
+  onSaved: () => void;
+}) {
+  const moduleOptions = useMemo(
+    () => modules.filter(m => m.is_active).sort((a, b) => a.display_name.localeCompare(b.display_name)),
+    [modules]
+  );
+
+  return (
+    <div className="overflow-x-auto border border-amber-200 bg-amber-50/30 rounded">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-amber-200 text-left text-slate-600">
+            <th className="px-3 py-2 font-medium">Page</th>
+            <th className="px-3 py-2 font-medium">Move to module</th>
+            <th className="px-3 py-2 font-medium w-24 text-right">Display order</th>
+            <th className="px-3 py-2 font-medium w-20 text-right"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(p => (
+            <PagesAdminRow
+              key={p.resource_id}
+              row={p}
+              moduleOptions={moduleOptions}
+              currentModuleId={currentModuleId}
+              onSaved={onSaved}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PagesAdminRow({
+  row,
+  moduleOptions,
+  currentModuleId,
+  onSaved,
+}: {
+  row: PageAdminRowProps;
+  moduleOptions: ModuleTreeNode[];
+  currentModuleId: string;
+  onSaved: () => void;
+}) {
+  const toast = useToast();
+  const [parentId, setParentId] = useState<string>(currentModuleId);
+  const [order, setOrder] = useState<number>(row.display_order ?? 0);
+  const [saving, setSaving] = useState(false);
+  // Reset local edits whenever the row identity / loaded snapshot changes
+  // (e.g. parent refresh after another row's save).
+  useEffect(() => {
+    setParentId(currentModuleId);
+    setOrder(row.display_order ?? 0);
+  }, [row.resource_id, row.display_order, currentModuleId]);
+
+  const dirty = parentId !== currentModuleId || order !== (row.display_order ?? 0);
+
+  const save = async () => {
+    if (!dirty) return;
+    setSaving(true);
+    try {
+      const patch: Parameters<typeof api.pageUpdate>[1] = {};
+      if (parentId !== currentModuleId) patch.parent_id = parentId;
+      if (order !== (row.display_order ?? 0)) patch.display_order = order;
+      if (Object.keys(patch).length === 0) return;
+      await api.pageUpdate(row.page_id, patch);
+      toast.success(`Saved "${row.display_name}".`);
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <tr className="border-b border-amber-100 last:border-0" data-testid={`pages-admin-row-${row.page_id}`}>
+      <td className="px-3 py-2">
+        <div className="flex items-center gap-1.5">
+          <FileText size={12} className="text-blue-600 shrink-0" />
+          <span className="font-medium text-slate-800 truncate" title={row.display_name}>{row.display_name}</span>
+        </div>
+        <div className="text-[10px] text-slate-500 font-mono truncate">{row.page_id}</div>
+      </td>
+      <td className="px-3 py-2">
+        <select
+          value={parentId}
+          onChange={(e) => setParentId(e.target.value)}
+          className="w-full border border-slate-300 rounded px-2 py-1 bg-white font-mono text-[11px]"
+          data-testid={`pages-admin-parent-${row.page_id}`}
+        >
+          {moduleOptions.map(m => (
+            <option key={m.resource_id} value={m.resource_id}>{m.display_name} ({m.resource_id})</option>
+          ))}
+        </select>
+      </td>
+      <td className="px-3 py-2 text-right">
+        <input
+          type="number"
+          step={1}
+          value={order}
+          onChange={(e) => setOrder(parseInt(e.target.value || '0', 10))}
+          className="w-16 border border-slate-300 rounded px-2 py-1 font-mono text-[11px] text-right"
+          data-testid={`pages-admin-order-${row.page_id}`}
+        />
+      </td>
+      <td className="px-3 py-2 text-right">
+        <button
+          onClick={() => void save()}
+          disabled={!dirty || saving}
+          className="text-[11px] px-2 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
+          data-testid={`pages-admin-save-${row.page_id}`}
+        >
+          {saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />} Save
+        </button>
+      </td>
+    </tr>
   );
 }

@@ -518,14 +518,14 @@ export function DiscoverTab() {
                                 toast.success(
                                   `App generated: ${result.column_count} cols${result.truncated ? ' (truncated to 50)' : ''}. Opening preview…`,
                                 );
-                                window.dispatchEvent(new CustomEvent('open-auto-page', { detail: { page_id: result.page_id } }));
+                                window.dispatchEvent(new CustomEvent('catalog-open-page', { detail: { page_id: result.page_id } }));
                               } catch (err) {
                                 const msg = err instanceof Error ? err.message : String(err);
                                 if (msg.includes('app_already_generated')) {
                                   // Already generated — open preview anyway.
                                   const inferredPageId = `auto:${row.data_source_id}:${row.schema}.${tableName}`;
                                   toast.info(`Already generated — opening preview.`);
-                                  window.dispatchEvent(new CustomEvent('open-auto-page', { detail: { page_id: inferredPageId } }));
+                                  window.dispatchEvent(new CustomEvent('catalog-open-page', { detail: { page_id: inferredPageId } }));
                                 } else {
                                   toast.error(`Generate failed: ${msg}`);
                                 }

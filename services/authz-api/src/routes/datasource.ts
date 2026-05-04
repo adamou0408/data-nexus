@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Pool } from 'pg';
 import oracledb from 'oracledb';
-import { pool as authzPool, evictDataSourcePool, getLocalDataPool, getOracleConnection } from '../db';
+import { pool as authzPool, evictDataSourcePool, getInternalDataPool, getOracleConnection } from '../db';
 import { audit } from '../audit';
 import { encrypt, decrypt } from '../lib/crypto';
 import { logAdminAction } from '../lib/admin-audit';
@@ -198,7 +198,7 @@ datasourceRouter.post('/', async (req, res) => {
   // Step 2: Oracle — create CDC target schema in nexus_data
   if (isOracle) {
     try {
-      const localPool = getLocalDataPool();
+      const localPool = getInternalDataPool();
       await localPool.query('SELECT _nexus_create_cdc_schema($1)', [cdc_target_schema]);
     } catch (err) {
       return res.status(500).json({
@@ -495,7 +495,7 @@ datasourceRouter.post('/:id/test', async (req, res) => {
 
       // Test PG replica — CDC schema exists in nexus_data
       try {
-        const localPool = getLocalDataPool();
+        const localPool = getInternalDataPool();
         const schemaCheck = await localPool.query(
           `SELECT 1 FROM information_schema.schemata WHERE schema_name = $1`,
           [ds.cdc_target_schema]

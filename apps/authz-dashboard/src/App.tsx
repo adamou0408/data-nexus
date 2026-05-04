@@ -7,11 +7,11 @@ import { OverviewTab } from './components/OverviewTab';
 import { PermissionsTab } from './components/PermissionsTab';
 import { PoolTab } from './components/pool';
 import { AccessSectionPage, AccessSection } from './components/access-manager/AccessSectionPage';
-import { TablesTab } from './components/TablesTab';
 import { ConfigEngine } from './components/ConfigEngine';
 import { MetabaseTab } from './components/MetabaseTab';
 import { DataQueryTab } from './components/DataQueryTab';
 import { DagTab } from './components/DagTab';
+import { CatalogWorkspace } from './components/catalog/CatalogWorkspace';
 import { DiscoverTab } from './components/DiscoverTab';
 import { AIProvidersTab } from './components/AIProvidersTab';
 import { ActivityTab } from './components/ActivityTab';
@@ -21,11 +21,11 @@ import { ConfigToolsTab } from './components/ConfigToolsTab';
 import { CommandPalette } from './components/CommandPalette';
 import { X } from 'lucide-react';
 
-// Map sidebar access-* TabIds to Access Manager sections
+// Map sidebar access-* TabIds to Access Manager sections.
+// 'access-resources' is intentionally absent — it routes to <CatalogWorkspace preset="resources" /> below.
 const accessTabMap: Record<string, AccessSection> = {
   'access-subjects': 'subjects',
   'access-roles': 'roles',
-  'access-resources': 'resources',
   'access-policies': 'policies',
   'access-actions': 'actions',
   'access-packs': 'packs',
@@ -43,9 +43,11 @@ function AppInner() {
   const [tab, setTab] = useState<TabId>('overview');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [configToolsOpen, setConfigToolsOpen] = useState(false);
-  // BU-08: auto-generated page preview slot. When set, the 'auto-page' tab
-  // renders ConfigEngine for the auto page_id (auto:<source>:<schema>.<table>).
-  const [autoPagePreview, setAutoPagePreview] = useState<string | null>(null);
+  // Cross-tab Catalog open: DiscoverTab/DagTab dispatch `catalog-open-page`
+  // with a page_id (auto:<source>:<schema>.<table> or admin row id). We switch
+  // to the 'access-pages' tab and forward the id into <CatalogWorkspace> via
+  // pendingPageId; the workspace pushes a page-detail frame and calls back to clear.
+  const [catalogPendingPageId, setCatalogPendingPageId] = useState<string | null>(null);
   const { isAdmin, isAuthzAdmin, isSteward } = useAuthz();
 
   const navigate = (next: TabId | string) => {
@@ -71,17 +73,18 @@ function AppInner() {
     return () => window.removeEventListener('navigate-tab', handler);
   }, []);
 
-  // BU-08: open-auto-page event from GenerateAppButton → switch to preview tab.
+  // Catalog cross-tab open: DiscoverTab Generate App / DagTab publish dispatch
+  // 'catalog-open-page'. We switch to access-pages and forward the id to the
+  // workspace via pendingPageId.
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ page_id: string }>).detail;
-      if (detail?.page_id) {
-        setAutoPagePreview(detail.page_id);
-        setTab('auto-page' as TabId);
-      }
+      if (!detail?.page_id) return;
+      setCatalogPendingPageId(detail.page_id);
+      setTab('access-pages');
     };
-    window.addEventListener('open-auto-page', handler);
-    return () => window.removeEventListener('open-auto-page', handler);
+    window.addEventListener('catalog-open-page', handler);
+    return () => window.removeEventListener('catalog-open-page', handler);
   }, []);
 
   // Cmd/Ctrl+K palette
@@ -157,19 +160,18 @@ function AppInner() {
       {tab === 'metabase' && <MetabaseTab />}
       {tab === 'data-query' && <DataQueryTab />}
       {tab === 'flow-composer' && <DagTab />}
-      {tab === 'raw-tables' && <TablesTab />}
+      {tab === 'raw-tables' && <CatalogWorkspace preset="tables" />}
       {tab === 'pool' && <PoolTab />}
-      {tab === 'modules' && <ConfigEngine initialPageId="modules_home" />}
+      {tab === 'modules' && <CatalogWorkspace preset="modules" />}
+      {tab === 'access-pages' && (
+        <CatalogWorkspace
+          preset="pages"
+          pendingPageId={catalogPendingPageId}
+          onPendingConsumed={() => setCatalogPendingPageId(null)}
+        />
+      )}
+      {tab === 'access-resources' && <CatalogWorkspace preset="resources" />}
       {tab === 'discover' && <DiscoverTab />}
-      {tab === 'auto-page' && autoPagePreview && (
-        <ConfigEngine key={autoPagePreview} initialPageId={autoPagePreview} />
-      )}
-      {tab === 'auto-page' && !autoPagePreview && (
-        <div className="p-8 text-center text-slate-500">
-          <p>No auto-generated page selected.</p>
-          <p className="text-sm mt-2">Go to <button onClick={() => setTab('discover' as TabId)} className="text-blue-600 hover:underline">Discover</button> and use Generate App on a table.</p>
-        </div>
-      )}
       {accessSection && <AccessSectionPage key={accessSection} section={accessSection} />}
       {tab === 'ai-providers' && <AIProvidersTab />}
       {tab === 'audit' && <ConfigEngine initialPageId="audit_home" />}
@@ -198,8 +200,6 @@ function canAccessTab(
   tab: TabId,
   flags: { isAuthzAdmin: boolean; isSteward: boolean; isAdmin: boolean },
 ): boolean {
-  // Slot tabs (no sidebar entry) — opt-in by id.
-  if (tab === 'auto-page') return true;
   for (const g of navGroups) {
     for (const item of g.items) {
       if (item.id !== tab) continue;
