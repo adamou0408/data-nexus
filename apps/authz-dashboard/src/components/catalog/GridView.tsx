@@ -14,12 +14,13 @@
 // Two-segment "Catalog › <preset>" header (ux-three-asks 案 2).
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { Search, FileText, Loader2 } from 'lucide-react';
+import { Database, Search, FileText, Loader2 } from 'lucide-react';
 import {
   api,
   ModuleTreeNode,
   PagesAdminRow,
 } from '../../api';
+import { useDataSource } from '../../DataSourceContext';
 import { useSavedView } from '../../hooks/useSavedView';
 import { useToast } from '../Toast';
 import { ModuleBreadcrumb } from '../shared/atoms/ModuleBreadcrumb';
@@ -273,18 +274,39 @@ function PageGrid({ frame, stack }: { frame: PageGridFrame; stack: CatalogStackA
 
 function TableGrid({ frame: _frame, stack }: { frame: TableGridFrame; stack: CatalogStackAPI }) {
   const grid = readGridState(stack);
+  const { activeDataSourceId } = useDataSource();
   const [rows, setRows] = useState<TableRow[]>([]);
   const [loading, setLoading] = useState(true);
   const search = grid.search ?? '';
   const usageStats = useUsageStats('tables');
 
   useEffect(() => {
+    if (!activeDataSourceId) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    api.tables()
+    api.tables(undefined, undefined, activeDataSourceId)
       .then((data) => { setRows(data); })
       .catch(() => { setRows([]); })
       .finally(() => setLoading(false));
-  }, []);
+  }, [activeDataSourceId]);
+
+  if (!activeDataSourceId) {
+    return (
+      <div className="space-y-2">
+        <GridHeader leaf="Raw Tables" />
+        <div className="px-4">
+          <div className="py-16 text-center text-slate-500 border border-dashed border-slate-200 rounded-xl bg-white">
+            <Database className="mx-auto mb-3 text-slate-300" size={32} />
+            <div className="text-sm font-medium text-slate-700">No data source selected</div>
+            <div className="text-xs mt-1">Pick one from the sidebar picker (bottom-left) to browse tables.</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

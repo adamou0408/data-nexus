@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { useAuthz } from '../AuthzContext';
+import { useDataSource } from '../DataSourceContext';
 import { Database, Play, ArrowLeftRight, Lock, ShieldOff } from 'lucide-react';
 
 type SimResult = {
@@ -15,6 +16,7 @@ type SimResult = {
 
 export function RlsTab() {
   const { users } = useAuthz();
+  const { activeDataSourceId } = useDataSource();
   const [leftUser, setLeftUser] = useState(0);
   const [rightUser, setRightUser] = useState(3);
   const [tables, setTables] = useState<{ table_name: string; column_count: string }[]>([]);
@@ -23,29 +25,57 @@ export function RlsTab() {
   const [rightResult, setRightResult] = useState<SimResult | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Fetch business tables from DB
+  // Fetch business tables from DB whenever the active data source changes.
   useEffect(() => {
-    api.tables().then(t => {
+    if (!activeDataSourceId) {
+      setTables([]);
+      setTable('');
+      setLeftResult(null);
+      setRightResult(null);
+      return;
+    }
+    api.tables(undefined, undefined, activeDataSourceId).then(t => {
       setTables(t);
       if (t.length > 0 && !t.find(x => x.table_name === table)) setTable(t[0].table_name);
-    }).catch(() => {});
-  }, []);
+    }).catch(() => setTables([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDataSourceId]);
 
   const simulate = async () => {
     const lu = users[leftUser];
     const ru = users[rightUser];
-    if (!lu || !ru) return;
+    if (!lu || !ru || !activeDataSourceId) return;
     setLoading(true);
     try {
       const [l, r] = await Promise.all([
-        api.rlsSimulate(lu.id, lu.groups, lu.attrs, table),
-        api.rlsSimulate(ru.id, ru.groups, ru.attrs, table),
+        api.rlsSimulate(lu.id, lu.groups, lu.attrs, table, undefined, activeDataSourceId),
+        api.rlsSimulate(ru.id, ru.groups, ru.attrs, table, undefined, activeDataSourceId),
       ]);
       setLeftResult(l);
       setRightResult(r);
     } catch { /* ignore */ }
     setLoading(false);
   };
+
+  if (!activeDataSourceId) {
+    return (
+      <div className="space-y-6">
+        <div className="page-header">
+          <h1 className="page-title">RLS Simulator</h1>
+          <p className="page-desc">
+            Compare what different users see when querying data with <span className="code">authz_filter()</span> applied
+          </p>
+        </div>
+        <div className="card">
+          <div className="card-body text-center py-16 text-slate-500">
+            <Database className="mx-auto mb-3 text-slate-300" size={36} />
+            <div className="text-sm font-medium text-slate-700">No data source selected</div>
+            <div className="text-xs mt-1">Pick one from the sidebar picker (bottom-left) to simulate RLS.</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

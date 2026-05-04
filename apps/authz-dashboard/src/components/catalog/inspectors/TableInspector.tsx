@@ -3,8 +3,9 @@
 // table-schema frame.
 
 import { useEffect, useState } from 'react';
-import { X, Table2, Loader2, AlertTriangle } from 'lucide-react';
+import { X, Table2, Loader2, AlertTriangle, Database } from 'lucide-react';
 import { api } from '../../../api';
+import { useDataSource } from '../../../DataSourceContext';
 import type { InspectorRendererProps } from '../types';
 
 type Snapshot = {
@@ -19,15 +20,21 @@ export function TableInspector({ target, onClose, onOpen }: InspectorRendererPro
     throw new Error(`TableInspector received non-table target: ${target.kind}`);
   }
   const tableTarget = target;
+  const { activeDataSourceId } = useDataSource();
 
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!activeDataSourceId) {
+      setSnap(null);
+      setError(null);
+      return;
+    }
     let cancelled = false;
     setSnap(null);
     setError(null);
-    api.tableSchema(tableTarget.table)
+    api.tableSchema(tableTarget.table, activeDataSourceId)
       .then((r) => {
         if (cancelled) return;
         setSnap({
@@ -41,7 +48,7 @@ export function TableInspector({ target, onClose, onOpen }: InspectorRendererPro
         setError(err?.message ?? 'Failed to load schema');
       });
     return () => { cancelled = true; };
-  }, [tableTarget.table]);
+  }, [tableTarget.table, activeDataSourceId]);
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-zinc-900">
@@ -61,14 +68,21 @@ export function TableInspector({ target, onClose, onOpen }: InspectorRendererPro
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-4 text-sm">
-        {error && (
+        {!activeDataSourceId && (
+          <div className="flex items-start gap-2 text-zinc-500 text-xs">
+            <Database size={14} className="mt-0.5 shrink-0" />
+            <div>Pick a data source from the sidebar picker (bottom-left) to load this table's schema.</div>
+          </div>
+        )}
+
+        {activeDataSourceId && error && (
           <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
             <AlertTriangle size={14} />
             {error}
           </div>
         )}
 
-        {!snap && !error && (
+        {activeDataSourceId && !snap && !error && (
           <div className="flex items-center gap-2 text-zinc-500">
             <Loader2 size={14} className="animate-spin" />
             Loading…

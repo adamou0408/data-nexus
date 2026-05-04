@@ -17,6 +17,21 @@ import { emitPageSnapshot, deriveSinkUpstreamFn, SinkValidationError, SINK_KINDS
 import { findSingleLeaf, deriveFormSchema, executeDagAsPublished, PublishedDagSnapshot, DagNode, DagEdge } from '../lib/dag-exec';
 import { expandSubdags, SubdagExpansionError, EmbeddedSubdagRecord } from '../lib/dag-subdag-resolver';
 import { requireRole } from '../middleware/authz';
+import { runOracleDirect, OracleDirectError } from '../lib/oracle-direct';
+
+// Best-effort Oracle → Postgres type mapping for downstream operators that
+// branch on pgType strings (filter casts, sort comparators). Anything not
+// listed falls back to text — operators key off column NAMES first, types
+// second, so a fallback row still flows correctly through filter/projection.
+function oracleTypeToPgType(t?: string): string {
+  if (!t) return 'text';
+  const u = t.toUpperCase();
+  if (u === 'NUMBER' || u === 'BINARY_FLOAT' || u === 'BINARY_DOUBLE' || u === 'FLOAT') return 'numeric';
+  if (u === 'DATE' || u.startsWith('TIMESTAMP')) return 'timestamp';
+  if (u === 'BLOB' || u === 'RAW' || u === 'LONG RAW') return 'bytea';
+  // VARCHAR2, CHAR, NCHAR, NVARCHAR2, CLOB, NCLOB, ROWID, anything else → text
+  return 'text';
+}
 
 export const dagRouter = Router();
 
@@ -405,6 +420,64 @@ dagRouter.post('/execute-node', async (req, res) => {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return res.status(400).json({ error: 'Subdag execution failed', detail: msg, node_id: node.id });
+    }
+  }
+
+  // ── Oracle source dispatch ──
+  // Same role as a `fn` source: outputs a frame, no inbound edges. AuthZ +
+  // SQL building + READ ONLY enforcement are centralised in runOracleDirect
+  // (lib/oracle-direct.ts). Function-scalar kind is rejected here — it
+  // returns a single value, not a frame, so it can't feed downstream
+  // operators. Use POST /api/data-query/oracle-direct for scalar reads.
+  if (node.type === 'oracle-source') {
+    const rid = node.data.resource_id || '';
+    if (!rid) {
+      return res.status(400).json({ error: 'oracle-source requires node.data.resource_id', node_id: node.id });
+    }
+    try {
+      const result = await runOracleDirect({
+        sourceId: data_source_id,
+        resourceId: rid,
+        params: (node.data.bound_params || {}) as Record<string, unknown>,
+        limit: MAX_ROWS,
+        userId, groups,
+        caller: `dag/execute-node:${node.id}`,
+      });
+      if (result.kind !== 'rowset') {
+        return res.status(400).json({
+          error: 'oracle-source kind unsupported',
+          detail: `function_scalar produces a single value, not a frame. Use a function_table or view resource.`,
+          node_id: node.id,
+        });
+      }
+      const enrichedColumns = result.columns.map((c) => ({
+        name: c.name,
+        pgType: oracleTypeToPgType(c.type),
+        oracleType: c.type,
+      }));
+      return res.json({
+        status: 'ok',
+        node_id: node.id,
+        resource_id: result.resourceId,
+        target: 'oracle_direct',
+        oracle_kind: result.oracleKind,
+        columns: enrichedColumns,
+        rows: result.rows,
+        row_count: result.rowCount,
+        truncated: result.truncated,
+        elapsed_ms: result.elapsedMs,
+        lineage: [{ input: '*', source: `${result.resourceId} (oracle_direct)` }],
+      });
+    } catch (err) {
+      if (err instanceof OracleDirectError) {
+        return res.status(err.status).json({
+          error: err.message,
+          ...(err.detail ? { detail: err.detail } : {}),
+          node_id: node.id,
+        });
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      return res.status(500).json({ error: 'Oracle source execution failed', detail: msg, node_id: node.id });
     }
   }
 

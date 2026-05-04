@@ -139,7 +139,7 @@ ON CONFLICT (resource_id) DO UPDATE
 -- 5. Grants — DATA_STEWARD can select view, execute function
 INSERT INTO authz_role_permission (role_id, action_id, resource_id, effect)
 VALUES
-  ('DATA_STEWARD', 'select',  'view:ps55.__view_name__',   'allow'),
+  ('DATA_STEWARD', 'read',    'view:ps55.__view_name__',   'allow'),
   ('DATA_STEWARD', 'execute', 'function:ps55.__fn_name__', 'allow')
   -- ('DATA_STEWARD', 'execute', 'function:ps55.__tabfn_name__', 'allow')
 ON CONFLICT (role_id, action_id, resource_id) DO UPDATE

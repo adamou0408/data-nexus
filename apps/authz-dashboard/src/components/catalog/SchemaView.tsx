@@ -5,7 +5,8 @@
 import { useEffect, useState } from 'react';
 import { api, DataExplorerColumn, DataExplorerResult } from '../../api';
 import { useAuthz } from '../../AuthzContext';
-import { ChevronRight, CheckCircle2, XCircle, Lock, Eye, EyeOff, Filter, Code2 } from 'lucide-react';
+import { useDataSource } from '../../DataSourceContext';
+import { ChevronRight, CheckCircle2, XCircle, Lock, Eye, EyeOff, Filter, Code2, Database } from 'lucide-react';
 import type { CatalogStackAPI, TableSchemaFrame } from './types';
 
 type SchemaViewProps = {
@@ -15,10 +16,16 @@ type SchemaViewProps = {
 
 export function SchemaView({ frame }: SchemaViewProps) {
   const { user } = useAuthz();
+  const { activeDataSourceId } = useDataSource();
   const [result, setResult] = useState<DataExplorerResult | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
   useEffect(() => {
+    if (!activeDataSourceId) {
+      setResult(null);
+      setDetailLoading(false);
+      return;
+    }
     let cancelled = false;
     setDetailLoading(true);
     setResult(null);
@@ -26,10 +33,10 @@ export function SchemaView({ frame }: SchemaViewProps) {
     const load = async () => {
       try {
         if (user) {
-          const r = await api.dataExplorer(user.id, user.groups, user.attrs, frame.table);
+          const r = await api.dataExplorer(user.id, user.groups, user.attrs, frame.table, activeDataSourceId);
           if (!cancelled) setResult(r);
         } else {
-          const r = await api.tableSchema(frame.table);
+          const r = await api.tableSchema(frame.table, activeDataSourceId);
           if (!cancelled) {
             setResult({
               table: frame.table,
@@ -56,7 +63,24 @@ export function SchemaView({ frame }: SchemaViewProps) {
 
     load();
     return () => { cancelled = true; };
-  }, [frame.table, user]);
+  }, [frame.table, user, activeDataSourceId]);
+
+  if (!activeDataSourceId) {
+    return (
+      <div className="space-y-6">
+        <div className="page-header">
+          <h1 className="page-title font-mono">{frame.table}</h1>
+        </div>
+        <div className="card">
+          <div className="card-body text-center py-16 text-slate-500">
+            <Database className="mx-auto mb-3 text-slate-300" size={36} />
+            <div className="text-sm font-medium text-slate-700">No data source selected</div>
+            <div className="text-xs mt-1">Pick one from the sidebar picker (bottom-left) to view schema and data.</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const accessIcon = (access: string) => {
     if (access === 'denied') return <XCircle size={14} className="text-red-500" />;

@@ -121,6 +121,7 @@ const SUBTYPE_STYLES: Record<string, { bg: string; accent: string }> = {
   action: { bg: '#fef3c7', accent: '#d97706' },
   report: { bg: '#ede9fe', accent: '#7c3aed' },
   query:  { bg: '#f0f9ff', accent: '#0284c7' },
+  oracle: { bg: '#fff7ed', accent: '#ea580c' },
 };
 // Multiplicity badge — surfaces return_shape so curator sees "this fn returns
 // many rows / one row / one value" without opening Inspector. Source: PG fn
@@ -765,7 +766,33 @@ function SubdagNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
   );
 }
 
-const nodeTypes = { fn: FunctionNode, literal: OperatorNode, filter: OperatorNode, cast: OperatorNode, aggregate: OperatorNode, sink: SinkNode, subdag: SubdagNode };
+const nodeTypes = { fn: FunctionNode, 'oracle-source': FunctionNode, literal: OperatorNode, filter: OperatorNode, cast: OperatorNode, aggregate: OperatorNode, sink: SinkNode, subdag: SubdagNode };
+
+// Parse Oracle argument string ('L_ITEM VARCHAR2, L_DATE DATE, ...') into IO[].
+// Best-effort: takes the first whitespace-separated token as name. Mirrors the
+// shape stored in authz_resource.attributes.arguments by oracle-direct seeds.
+function parseOracleArgsString(s?: string): IO[] {
+  if (!s) return [];
+  return s.split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const name = part.split(/\s+/)[0] || '';
+      return { name, pgType: 'text' };
+    })
+    .filter((io) => io.name);
+}
+
+type OracleResource = {
+  resource_id: string;
+  resource_type: string;
+  display_name: string;
+  oracle_kind: 'view' | 'table' | 'function_table' | 'function_scalar';
+  oracle_owner: string;
+  oracle_object: string;
+  args: IO[];
+  data_source_id: string;
+};
 
 // ── Main tab ──
 export function DagTab() {
@@ -783,6 +810,7 @@ export function DagTab() {
   // can default its parent-module dropdown.
   const [dagParentId, setDagParentId] = useState<string | null>(null);
   const [functions, setFunctions] = useState<FnMeta[]>([]);
+  const [oracleResources, setOracleResources] = useState<OracleResource[]>([]);
   const [paletteFilter, setPaletteFilter] = useState('');
   const [nodes, setNodes] = useState<Node<NodeData>[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -904,6 +932,31 @@ export function DagTab() {
         parsed_args: (f.parsed_args || []).map((a: any) => ({ ...a, semantic_type: a.semantic_type })),
       })));
     }).catch(() => setFunctions([]));
+    // Oracle-direct resources: any view/function in this DS tagged
+    // available_targets ∋ 'oracle_direct'. Function-scalar is filtered out
+    // because it returns a single value, not a frame, so it can't feed
+    // downstream operators in a DAG. Use POST /api/data-query/oracle-direct
+    // for scalar reads.
+    api.resources().then((rs) => {
+      const oracleRows = (rs as any[]).filter((r) => {
+        const a = r.attributes || {};
+        const targets: unknown = a.available_targets;
+        return Array.isArray(targets)
+          && targets.includes('oracle_direct')
+          && a.data_source_id === dsId
+          && a.oracle_kind !== 'function_scalar';
+      });
+      setOracleResources(oracleRows.map((r) => ({
+        resource_id: r.resource_id,
+        resource_type: r.resource_type,
+        display_name: r.display_name || r.resource_id,
+        oracle_kind: r.attributes?.oracle_kind as OracleResource['oracle_kind'],
+        oracle_owner: r.attributes?.oracle_owner || '',
+        oracle_object: r.attributes?.oracle_object || '',
+        args: parseOracleArgsString(r.attributes?.arguments),
+        data_source_id: r.attributes?.data_source_id || dsId,
+      })));
+    }).catch(() => setOracleResources([]));
   }, [dsId]);
 
   // ── Helpers ──
@@ -981,6 +1034,34 @@ export function DagTab() {
         inputs, outputs,
         bound_params: {},
         return_shape: (fn.return_shape?.shape as ReturnShape) || 'unknown',
+      },
+    };
+    pushHistory();
+    setNodes((nds) => [...nds, node]);
+    setSelectedId(id);
+  };
+
+  // Oracle-source: same role as a fn source (outputs a frame, no inbound),
+  // but the row supply is an Oracle view/function executed via oracle-direct
+  // rather than a registered PG function. Args are surfaced as `inputs` so
+  // the existing fn inspector renders the bind UI for them; at execute time
+  // the backend reads them from `bound_params` (no upstream-edge wiring of
+  // Oracle args in this MVP — bind values typed in by curator).
+  const addOracleSourceNode = (r: OracleResource) => {
+    const id = nextNodeId();
+    const inputs: IO[] = r.args.map((a) => ({ ...a }));
+    const outputs: IO[] = [{ name: '__downstream', semantic_type: '__rowset' }];
+    const node: Node<NodeData> = {
+      id,
+      type: 'oracle-source',
+      position: { x: 80 + (nodes.length % 4) * 280, y: 80 + Math.floor(nodes.length / 4) * 260 },
+      data: {
+        resource_id: r.resource_id,
+        label: `${r.oracle_owner}.${r.oracle_object}`,
+        subtype: 'oracle',
+        inputs, outputs,
+        bound_params: {},
+        return_shape: 'table',
       },
     };
     pushHistory();
@@ -1337,7 +1418,7 @@ export function DagTab() {
             rows: lr.rows,
           };
         }
-        if (n.type === 'fn' && n.data.resource_id) {
+        if ((n.type === 'fn' || n.type === 'oracle-source') && n.data.resource_id) {
           upstream_resources[n.id] = n.data.resource_id;
         }
       }
@@ -1351,11 +1432,11 @@ export function DagTab() {
         if (!inEdge) return undefined;
         const src = nodes.find((n) => n.id === inEdge.source);
         if (!src) return undefined;
-        if (src.type === 'fn' && src.data.resource_id) return src.data.resource_id;
+        if ((src.type === 'fn' || src.type === 'oracle-source') && src.data.resource_id) return src.data.resource_id;
         return findFnAncestor(src.id, visited);
       };
       for (const n of nodes) {
-        if (n.type && n.type !== 'fn' && n.type !== 'literal' && !upstream_resources[n.id]) {
+        if (n.type && n.type !== 'fn' && n.type !== 'oracle-source' && n.type !== 'literal' && !upstream_resources[n.id]) {
           const rid = findFnAncestor(n.id);
           if (rid) upstream_resources[n.id] = rid;
         }
@@ -1829,6 +1910,31 @@ export function DagTab() {
               </button>
             </div>
           </div>
+
+          {/* Oracle direct sources — registered Oracle views/functions
+              tagged available_targets ∋ 'oracle_direct'. function_scalar
+              kind is filtered out at fetch time. */}
+          {oracleResources.length > 0 && (
+            <div className="mb-3">
+              <div className="text-[10px] uppercase tracking-wide flex items-center gap-1 mb-1" style={{ color: '#ea580c' }}>
+                <Database size={12} /> Oracle sources ({oracleResources.length})
+              </div>
+              <div className="space-y-1">
+                {oracleResources.map((r) => (
+                  <button
+                    key={r.resource_id}
+                    onClick={() => addOracleSourceNode(r)}
+                    data-testid={`palette-oracle-${r.resource_id}`}
+                    className="w-full text-left text-xs px-2 py-1 rounded border border-orange-200 bg-orange-50 hover:bg-orange-100 text-slate-700 flex items-center gap-1.5"
+                    title={`${r.oracle_kind} — ${r.oracle_owner}.${r.oracle_object}${r.args.length > 0 ? ` (${r.args.length} arg${r.args.length === 1 ? '' : 's'})` : ''}`}
+                  >
+                    <span className="font-medium">{r.oracle_owner}.{r.oracle_object}</span>
+                    <span className="text-[10px] text-slate-500 ml-auto">[{r.oracle_kind}]</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Sinks — composer-native terminal artifacts.
               See .claude/plans/v3-phase-1/sink-as-node-kind-plan.md §3.5 */}

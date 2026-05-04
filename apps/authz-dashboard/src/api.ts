@@ -2,11 +2,11 @@ import { keycloak, ssoEnabled, ensureFreshToken } from './lib/keycloak';
 
 const BASE = '/api';
 
-// ARCH-02: query-path routes now require explicit data_source_id (no internal-pool
-// fallback). Default to ds:pg_k8 (Phison Greenplum/Tiptop) so existing dashboard
-// tabs keep working without per-tab pickers. Swap to a per-tab/workspace selector
-// when multiple business sources are onboarded.
-const DEFAULT_DATA_SOURCE_ID = 'ds:pg_k8';
+// DS-PICKER-V01: query-path helpers (rlsSimulate / rlsData / tables /
+// tableSchema / dataExplorer) require an explicit data_source_id — no platform-
+// neutral default. The dashboard's <DataSourcePicker> + DataSourceContext owns
+// "which source is active" globally; consumer tabs MUST pass it through. See
+// ARCH-02 (backend now 400s without data_source_id).
 
 // Current user context for authenticated API calls (X-User-Id fallback path).
 // Persisted to localStorage so:
@@ -118,12 +118,12 @@ export const api = {
       method: 'POST', body: JSON.stringify({ user_id, groups, attributes, resource_type, path }),
     }),
 
-  rlsSimulate: (user_id: string, groups: string[], attributes: Record<string, string>, table?: string, path?: string, data_source_id: string = DEFAULT_DATA_SOURCE_ID) =>
+  rlsSimulate: (user_id: string, groups: string[], attributes: Record<string, string>, table: string | undefined, path: string | undefined, data_source_id: string) =>
     request<{ table: string; filter_clause: string; filtered_rows: Record<string, unknown>[]; filtered_count: number; total_count: number }>(
       '/rls/simulate', { method: 'POST', body: JSON.stringify({ user_id, groups, attributes, table, path, data_source_id }) }
     ),
 
-  rlsData: (data_source_id: string = DEFAULT_DATA_SOURCE_ID) =>
+  rlsData: (data_source_id: string) =>
     request<Record<string, unknown>[]>(`/rls/data?data_source_id=${encodeURIComponent(data_source_id)}`),
 
   // Config-Driven UI engine
@@ -300,19 +300,19 @@ export const api = {
   poolAssignmentDelete: (id: number) =>
     request(`/pool/assignments/${id}`, { method: 'DELETE' }),
   poolCredentials: () => request<PoolCredential[]>('/pool/credentials'),
-  tables: (userId?: string, groups?: string[], dataSourceId: string = DEFAULT_DATA_SOURCE_ID) => {
+  tables: (userId: string | undefined, groups: string[] | undefined, dataSourceId: string) => {
     const qs = new URLSearchParams();
     qs.set('data_source_id', dataSourceId);
     if (userId) qs.set('user_id', userId);
     if (groups?.length) qs.set('groups', groups.join(','));
     return request<{ table_name: string; table_type?: string; column_count: string }[]>(`/browse/tables?${qs}`);
   },
-  tableSchema: (table: string, dataSourceId: string = DEFAULT_DATA_SOURCE_ID) =>
+  tableSchema: (table: string, dataSourceId: string) =>
     request<{ table: string; columns: TableColumn[]; sample_data: Record<string, unknown>[] }>(
       `/browse/tables/${encodeURIComponent(table)}?data_source_id=${encodeURIComponent(dataSourceId)}`
     ),
   functions: () => request<SqlFunction[]>('/browse/functions'),
-  dataExplorer: (user_id: string, groups: string[], attributes: Record<string, string>, table: string, data_source_id: string = DEFAULT_DATA_SOURCE_ID) =>
+  dataExplorer: (user_id: string, groups: string[], attributes: Record<string, string>, table: string, data_source_id: string) =>
     request<DataExplorerResult>('/browse/data-explorer', {
       method: 'POST', body: JSON.stringify({ user_id, groups, attributes, table, data_source_id }),
     }),

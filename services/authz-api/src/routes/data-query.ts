@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import oracledb from 'oracledb';
 import { pool as authzPool, getDataSourcePool, getDataSourceClient } from '../db';
 import { audit } from '../audit';
 import { logAdminAction } from '../lib/admin-audit';
@@ -12,23 +11,11 @@ import {
   classifyType,
 } from '../lib/function-metadata';
 import { lintFunction } from '../lib/fn-quality-lint';
-import { getOracleReadOnlyDriver } from '../lib/db-driver';
+import { runOracleDirect, OracleDirectError } from '../lib/oracle-direct';
 
 export const dataQueryRouter = Router();
 
 const MAX_ROWS = 1000;
-
-const ORACLE_IDENT_RE = /^[A-Z][A-Z0-9_$#]*$/;
-const BIND_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-
-function quoteOracleIdent(s: string): string {
-  if (!ORACLE_IDENT_RE.test(s)) {
-    throw new Error(`Invalid Oracle identifier: ${s}`);
-  }
-  // Oracle quoted identifiers preserve case and disallow embedded ".
-  // Whitelist already excludes ", so direct interpolation is safe.
-  return '"' + s + '"';
-}
 
 function quoteIdent(s: string): string {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)) {
@@ -331,170 +318,52 @@ dataQueryRouter.post('/oracle-direct', async (req, res) => {
   const userId = getUserId(req);
   const groups = (req.headers['x-user-groups'] as string || '').split(',').filter(Boolean);
 
-  if (!data_source_id || !resource_id) {
-    return res.status(400).json({ error: 'data_source_id and resource_id are required' });
-  }
-
   try {
-    // 1. DS must be Oracle + active
-    const dsResult = await authzPool.query(
-      `SELECT source_id, db_type FROM authz_data_source
-       WHERE source_id = $1 AND is_active = TRUE AND db_type = 'oracle'`,
-      [data_source_id]
-    );
-    if (dsResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Oracle data source not found or inactive' });
-    }
+    const result = await runOracleDirect({
+      sourceId: data_source_id || '',
+      resourceId: resource_id || '',
+      params, limit, userId, groups,
+      caller: 'data-query/oracle-direct',
+    });
 
-    // 2. Resource must be registered, scoped to this DS, and tagged oracle_direct
-    const resResult = await authzPool.query(
-      `SELECT resource_id, resource_type, attributes FROM authz_resource
-       WHERE resource_id = $1 AND is_active = TRUE
-         AND attributes->>'data_source_id' = $2`,
-      [resource_id, data_source_id]
-    );
-    if (resResult.rows.length === 0) {
-      return res.status(404).json({
-        error: 'Resource not found',
-        detail: `${resource_id} not registered for ${data_source_id}`,
-      });
-    }
-    const resRow = resResult.rows[0];
-    const attrs = resRow.attributes || {};
-    const targets: string[] = Array.isArray(attrs.available_targets) ? attrs.available_targets : [];
-    if (!targets.includes('oracle_direct')) {
-      return res.status(400).json({
-        error: 'Resource not available for oracle_direct',
-        detail: `attributes.available_targets must include "oracle_direct" (got ${JSON.stringify(targets)})`,
-      });
-    }
-
-    const oracleOwner = String(attrs.oracle_owner || '').toUpperCase();
-    const oracleObject = String(attrs.oracle_object || '').toUpperCase();
-    const oracleKind = String(attrs.oracle_kind || '');
-    if (!oracleOwner || !oracleObject || !oracleKind) {
-      return res.status(400).json({
-        error: 'Resource missing Oracle metadata',
-        detail: 'attributes must include oracle_owner, oracle_object, oracle_kind',
-      });
-    }
-    if (!ORACLE_IDENT_RE.test(oracleOwner) || !ORACLE_IDENT_RE.test(oracleObject)) {
-      return res.status(400).json({
-        error: 'Oracle identifier rejected',
-        detail: `owner=${oracleOwner}, object=${oracleObject} must match ${ORACLE_IDENT_RE}`,
-      });
-    }
-
-    // 3. Permission gate — view/table = select, function = execute
-    const isFunctionKind = oracleKind === 'function_scalar' || oracleKind === 'function_table';
-    const action = isFunctionKind ? 'execute' : 'select';
-    const checkResult = await authzPool.query(
-      'SELECT authz_check($1, $2, $3, $4) AS allowed',
-      [userId, groups, action, resource_id]
-    );
-    if (!checkResult.rows[0].allowed) {
-      audit({
-        access_path: 'B', subject_id: userId,
-        action_id: 'oracle_direct_query', resource_id,
-        decision: 'deny', context: { data_source_id, oracle_kind: oracleKind, action },
-      });
-      return res.status(403).json({
-        error: 'Forbidden',
-        detail: `${userId} lacks ${action} access to ${resource_id}`,
-      });
-    }
-
-    // 4. Build SQL + binds. Identifiers are whitelisted; values pass through binds.
-    const requestedLimit = typeof limit === 'number' && Number.isFinite(limit) ? Math.floor(limit) : 100;
-    const effectiveLimit = Math.min(Math.max(1, requestedLimit), MAX_ROWS);
-
-    const qOwner = quoteOracleIdent(oracleOwner);
-    const qObject = quoteOracleIdent(oracleObject);
-
-    // Validate bind names — only alnum + underscore, can't begin with digit.
-    const binds: Record<string, oracledb.BindParameter> = {};
-    const paramNames: string[] = [];
-    for (const [k, v] of Object.entries(params || {})) {
-      if (!BIND_NAME_RE.test(k)) {
-        return res.status(400).json({ error: `Invalid bind name: ${k}` });
-      }
-      paramNames.push(k);
-      binds[k] = { val: v as number | string | Date | null, dir: oracledb.BIND_IN };
-    }
-
-    let sql: string;
-    let isPlsql = false;
-    if (oracleKind === 'view' || oracleKind === 'table') {
-      // FETCH FIRST is supported on Oracle 12c+; tiptop_oracle is 19c.
-      sql = `SELECT * FROM ${qOwner}.${qObject} FETCH FIRST ${effectiveLimit} ROWS ONLY`;
-    } else if (oracleKind === 'function_table') {
-      const argList = paramNames.map((p) => `:${p}`).join(', ');
-      sql = `SELECT * FROM TABLE(${qOwner}.${qObject}(${argList})) FETCH FIRST ${effectiveLimit} ROWS ONLY`;
-    } else if (oracleKind === 'function_scalar') {
-      const argList = paramNames.map((p) => `:${p}`).join(', ');
-      binds['__result__'] = { dir: oracledb.BIND_OUT, type: oracledb.STRING, maxSize: 32767 };
-      sql = `BEGIN :__result__ := ${qOwner}.${qObject}(${argList}); END;`;
-      isPlsql = true;
-    } else {
-      return res.status(400).json({
-        error: 'Unsupported oracle_kind',
-        detail: `${oracleKind} not in {view, table, function_scalar, function_table}`,
-      });
-    }
-
-    // 5. Execute through the read-only driver. SELECT and PL/SQL share one
-    //    connection (driver sets TRANSACTION READ ONLY once on open).
-    const driver = await getOracleReadOnlyDriver(data_source_id);
-    const t0 = Date.now();
-    try {
-      const result = await driver.execute(sql, binds, { maxRows: effectiveLimit });
-      const elapsedMs = Date.now() - t0;
-
-      const auditCtx = isPlsql
-        ? { data_source_id, oracle_kind: oracleKind, elapsed_ms: elapsedMs }
+    logAdminAction(authzPool, {
+      userId, action: 'ORACLE_DIRECT_QUERY',
+      resourceType: result.resourceType, resourceId: result.resourceId,
+      details: result.kind === 'scalar'
+        ? { oracle_kind: result.oracleKind, elapsed_ms: result.elapsedMs }
         : {
-            data_source_id, oracle_kind: oracleKind,
-            row_count: result.rowCount, truncated: result.truncated, elapsed_ms: elapsedMs,
-          };
-      audit({
-        access_path: 'B', subject_id: userId,
-        action_id: 'oracle_direct_query', resource_id,
-        decision: 'allow', context: auditCtx,
-      });
-      logAdminAction(authzPool, {
-        userId, action: 'ORACLE_DIRECT_QUERY',
-        resourceType: resRow.resource_type, resourceId: resource_id,
-        details: auditCtx,
-        ip: getClientIp(req),
-      });
+            oracle_kind: result.oracleKind, row_count: result.rowCount,
+            truncated: result.truncated, elapsed_ms: result.elapsedMs,
+          },
+      ip: getClientIp(req),
+    });
 
-      if (isPlsql) {
-        const out = (result.outBinds as { __result__?: unknown } | undefined)?.__result__ ?? null;
-        return res.json({
-          status: 'ok',
-          resource_id,
-          target: 'oracle_direct',
-          oracle_kind: oracleKind,
-          scalar_result: out,
-          elapsed_ms: elapsedMs,
-        });
-      }
+    if (result.kind === 'scalar') {
       return res.json({
         status: 'ok',
-        resource_id,
+        resource_id: result.resourceId,
         target: 'oracle_direct',
-        oracle_kind: oracleKind,
-        columns: result.columns,
-        rows: result.rows,
-        row_count: result.rowCount,
-        truncated: result.truncated,
-        max_rows: effectiveLimit,
-        elapsed_ms: elapsedMs,
+        oracle_kind: result.oracleKind,
+        scalar_result: result.scalarResult,
+        elapsed_ms: result.elapsedMs,
       });
-    } finally {
-      await driver.close();
     }
+    return res.json({
+      status: 'ok',
+      resource_id: result.resourceId,
+      target: 'oracle_direct',
+      oracle_kind: result.oracleKind,
+      columns: result.columns,
+      rows: result.rows,
+      row_count: result.rowCount,
+      truncated: result.truncated,
+      max_rows: result.maxRows,
+      elapsed_ms: result.elapsedMs,
+    });
   } catch (err) {
+    if (err instanceof OracleDirectError) {
+      return res.status(err.status).json({ error: err.message, ...(err.detail ? { detail: err.detail } : {}) });
+    }
     handleApiError(res, err);
   }
 });

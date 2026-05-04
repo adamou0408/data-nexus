@@ -1,5 +1,6 @@
 import { ReactNode, useState, useEffect } from 'react';
 import { useAuthz } from '../AuthzContext';
+import { DataSourcePicker } from './DataSourcePicker';
 import {
   Shield, Database, Table2,
   Server, FileText, LayoutDashboard,
@@ -278,7 +279,7 @@ export function Layout({
           </button>
         </div>
 
-        {/* User selector + settings (bottom of sidebar) */}
+        {/* User selector + data source picker + settings (bottom of sidebar) */}
         <div className="border-t border-slate-800 p-3 space-y-2">
           {!collapsed && (
             <div className="relative">
@@ -303,6 +304,11 @@ export function Layout({
               </select>
             </div>
           )}
+
+          {/* DS-PICKER-V01: global data-source picker. Drives api.tables /
+              api.tableSchema / api.dataExplorer / api.rlsSimulate. Discover Tab
+              has its own per-source selection and is intentionally decoupled. */}
+          <DataSourcePicker collapsed={collapsed} />
 
           {user && config && !collapsed && (
             <div className="flex items-start justify-between gap-2">

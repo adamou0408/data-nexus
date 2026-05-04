@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { AuthzProvider, useAuthz } from './AuthzContext';
+import { DataSourceProvider } from './DataSourceContext';
 import { RenderTokensProvider } from './RenderTokensContext';
 import { ToastProvider } from './components/Toast';
 import { Layout, TabId, navGroups } from './components/Layout';
@@ -239,11 +240,13 @@ function ConfigToolsModal({ onClose }: { onClose: () => void }) {
 export default function App() {
   return (
     <AuthzProvider>
-      <RenderTokensProvider>
-        <ToastProvider>
-          <AppInner />
-        </ToastProvider>
-      </RenderTokensProvider>
+      <DataSourceProvider>
+        <RenderTokensProvider>
+          <ToastProvider>
+            <AppInner />
+          </ToastProvider>
+        </RenderTokensProvider>
+      </DataSourceProvider>
     </AuthzProvider>
   );
 }
