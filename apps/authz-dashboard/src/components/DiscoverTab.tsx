@@ -586,7 +586,7 @@ export function DiscoverTab() {
       {/* Promote modal */}
       {promoteRow && (
         <div
-          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+          role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
           onClick={() => !promoting && setPromoteRow(null)}
           data-testid="promote-modal"
         >
@@ -758,7 +758,7 @@ export function DiscoverTab() {
       {/* Reparent modal — detach or move a mapped resource */}
       {reparentRow && reparentRow.mapped_to_module && (
         <div
-          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+          role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
           onClick={() => !reparenting && setReparentRow(null)}
           data-testid="reparent-modal"
         >
@@ -926,7 +926,7 @@ export function DiscoverTab() {
       {/* Bulk modal — Phase E: create_attach / attach / detach across many rows */}
       {bulkOpen && (
         <div
-          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+          role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
           onClick={() => !bulkRunning && setBulkOpen(false)}
           data-testid="bulk-modal"
         >

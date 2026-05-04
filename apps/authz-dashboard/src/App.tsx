@@ -102,7 +102,12 @@ function AppInner() {
     const isTypingTarget = (el: EventTarget | null) => {
       if (!(el instanceof HTMLElement)) return false;
       const tag = el.tagName;
-      return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable) return true;
+      // Don't fire g-prefix shortcuts while focus is inside a modal — even on a
+      // button. Otherwise tab-cycling inside a wizard and pressing g+<letter>
+      // would unmount the host tab and tear the modal down. Modals opt in by
+      // setting role="dialog" on the wrapper (also good a11y).
+      return el.closest('[role="dialog"]') !== null;
     };
 
     const shortcutMap: Record<string, TabId> = {};
@@ -216,7 +221,7 @@ function ConfigToolsModal({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/50" />
       <div className="relative w-full max-w-5xl max-h-[90vh] bg-white rounded-xl shadow-2xl border border-slate-200 flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
