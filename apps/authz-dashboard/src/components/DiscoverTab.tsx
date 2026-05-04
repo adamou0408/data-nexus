@@ -587,7 +587,7 @@ export function DiscoverTab() {
       {promoteRow && (
         <div
           role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
-          onClick={() => !promoting && setPromoteRow(null)}
+          onMouseDown={(e) => { if (e.target === e.currentTarget && !promoting) setPromoteRow(null); }}
           data-testid="promote-modal"
         >
           <div
@@ -759,7 +759,7 @@ export function DiscoverTab() {
       {reparentRow && reparentRow.mapped_to_module && (
         <div
           role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
-          onClick={() => !reparenting && setReparentRow(null)}
+          onMouseDown={(e) => { if (e.target === e.currentTarget && !reparenting) setReparentRow(null); }}
           data-testid="reparent-modal"
         >
           <div
@@ -927,7 +927,7 @@ export function DiscoverTab() {
       {bulkOpen && (
         <div
           role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
-          onClick={() => !bulkRunning && setBulkOpen(false)}
+          onMouseDown={(e) => { if (e.target === e.currentTarget && !bulkRunning) setBulkOpen(false); }}
           data-testid="bulk-modal"
         >
           <div

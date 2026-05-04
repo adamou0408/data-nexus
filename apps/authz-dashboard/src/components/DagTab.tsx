@@ -2853,7 +2853,7 @@ function SaveAsPageDialog({
   }, [onClose]);
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="absolute inset-0 bg-black/40" />
       <div
         className="relative w-full max-w-md bg-white rounded-lg shadow-xl border border-slate-200 flex flex-col"
@@ -3031,7 +3031,7 @@ function PublishDagDialog({
   }, [onClose]);
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="absolute inset-0 bg-black/40" />
       <div
         className="relative w-full max-w-md bg-white rounded-lg shadow-xl border border-slate-200 flex flex-col"

@@ -79,7 +79,7 @@ export function FeedbackButton({ pageId, targetPath = 'page' }: FeedbackButtonPr
           role="dialog"
           aria-modal="true"
           aria-labelledby="feedback-dialog-title"
-          onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
         >
           <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
             <div className="flex items-center justify-between border-b px-5 py-3">
