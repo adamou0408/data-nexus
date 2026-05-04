@@ -1,0 +1,78 @@
+# Dev overlay — adds containerized authz-api + dashboard with bind-mount HMR.
+#
+# Usage (via Makefile):
+#   make dev-docker       # start full stack in containers
+#   make down-docker      # stop full stack
+#   make logs-docker      # tail api + ui
+#
+# Direct:
+#   docker compose \
+#     -f deploy/docker-compose/docker-compose.yml \
+#     -f deploy/docker-compose/docker-compose.dev.yml \
+#     up -d --build
+#
+# Notes:
+#   - Source dirs are bind-mounted, but each service shadows ./node_modules
+#     with an anonymous volume so the container's Linux node_modules stays
+#     intact regardless of what the host has.
+#   - Polling watch is enabled (CHOKIDAR_USEPOLLING=true) — required on
+#     Windows / Docker Desktop bind mounts; native fs events don't propagate.
+#   - Container DNS: dashboard proxies /api to http://authz-api-dev:13001.
+#     authz-api connects to PostgreSQL/Redis via the existing service names.
+#   - Conflicts with `make dev` (host-mode) on ports 13001 / 13173. Stop one
+#     before starting the other.
+
+services:
+  authz-api-dev:
+    build:
+      context: ../../services/authz-api
+      dockerfile: Dockerfile.dev
+    image: nexus/authz-api-dev
+    environment:
+      NODE_ENV: development
+      PORT: "13001"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: nexus_authz
+      DB_USER: nexus_admin
+      DB_PASSWORD: nexus_dev_password
+      REDIS_URL: redis://redis:6379
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "400"
+    ports:
+      - "13001:13001"
+    volumes:
+      - ../../services/authz-api:/app
+      # Anonymous volume on /app/node_modules — keeps the npm-ci'd
+      # Linux modules from being clobbered by the bind mount.
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:13001/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  dashboard-dev:
+    build:
+      context: ../../apps/authz-dashboard
+      dockerfile: Dockerfile.dev
+    image: nexus/dashboard-dev
+    environment:
+      NODE_ENV: development
+      PORT: "13173"
+      API_PROXY_TARGET: http://authz-api-dev:13001
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "400"
+    ports:
+      - "13173:13173"
+    volumes:
+      - ../../apps/authz-dashboard:/app
+      - /app/node_modules
+    depends_on:
+      - authz-api-dev

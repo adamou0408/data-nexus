@@ -8,11 +8,13 @@ PSQL    := $(COMPOSE) exec -T postgres psql -U nexus_admin -d nexus_authz
 COMPOSE_LDAP := docker compose -f deploy/docker-compose/docker-compose.yml -f deploy/docker-compose/docker-compose.ldap.yml
 COMPOSE_METABASE := docker compose -f deploy/docker-compose/docker-compose.yml -f deploy/docker-compose/docker-compose.metabase.yml
 COMPOSE_ALL := docker compose -f deploy/docker-compose/docker-compose.yml -f deploy/docker-compose/docker-compose.ldap.yml -f deploy/docker-compose/docker-compose.metabase.yml
+COMPOSE_DEV := docker compose -f deploy/docker-compose/docker-compose.yml -f deploy/docker-compose/docker-compose.dev.yml
 
 .PHONY: help up down restart status logs \
         db-reset db-psql db-migrate db-seed db-shell pgaudit-swap \
         backup restore \
         verify clean dev dev-api dev-ui \
+        dev-docker down-docker logs-docker rebuild-docker \
         up-ldap down-ldap ldap-up ldap-down ldap-sync \
         metabase-up metabase-down up-all down-all clean-all
 
@@ -168,6 +170,24 @@ install: ## Install all npm dependencies
 	cd services/authz-api && npm install
 	cd services/identity-sync && npm install
 	cd apps/authz-dashboard && npm install
+
+# ── Dockerized dev (full stack with bind-mount HMR) ─────────
+
+dev-docker: ## Start full stack in containers (PG + Redis + API + UI, hot reload)
+	$(COMPOSE_DEV) up -d --build
+	@echo "API:       http://localhost:13001/healthz"
+	@echo "Dashboard: http://localhost:13173"
+	@echo "Use 'make logs-docker' to tail."
+
+down-docker: ## Stop the dockerized dev stack (keeps volumes)
+	$(COMPOSE_DEV) down
+
+logs-docker: ## Tail authz-api-dev + dashboard-dev logs
+	$(COMPOSE_DEV) logs -f authz-api-dev dashboard-dev
+
+rebuild-docker: ## Rebuild api/ui images (e.g., after package.json changes)
+	$(COMPOSE_DEV) build authz-api-dev dashboard-dev
+	$(COMPOSE_DEV) up -d authz-api-dev dashboard-dev
 
 # ── LDAP ─────────────────────────────────────────────────────
 
