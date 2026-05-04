@@ -8,6 +8,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { api, ModuleTreeNode } from '../api';
 import { isCompatibleHandle, checkHandleCompat } from '../utils/handleCompat';
+import { EdgeWithType } from './dag/EdgeWithType';
 
 type DataSourceLite = { source_id: string; display_name: string; db_type: string };
 import { useToast } from './Toast';
@@ -778,6 +779,11 @@ function SubdagNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
 }
 
 const nodeTypes = { fn: FunctionNode, 'oracle-source': FunctionNode, literal: OperatorNode, filter: OperatorNode, cast: OperatorNode, aggregate: OperatorNode, sink: SinkNode, subdag: SubdagNode };
+// XDB-TIER-B-L3: every edge routes through EdgeWithType so the precomputed
+// `compat` payload (set by DagTab's edgesWithCompat memo) drives red-line
+// rendering + right-click "Insert cast" affordance. Edges saved without a
+// `type` field still default-render through this component.
+const edgeTypes = { default: EdgeWithType };
 
 // Parse Oracle argument string ('L_ITEM VARCHAR2, L_DATE DATE, ...') into IO[].
 // Best-effort: takes the first whitespace-separated token as name. Mirrors the
@@ -924,6 +930,103 @@ export function DagTab() {
   const selected = useMemo(() => nodes.find((n) => n.id === selectedId) || null, [nodes, selectedId]);
   const selectedNodes = useMemo(() => nodes.filter((n) => n.selected), [nodes]);
   const selectedEdges = useMemo(() => edges.filter((e) => e.selected), [edges]);
+
+  // XDB-TIER-B-L3: insert a cast operator that splits an existing edge.
+  //
+  // Behaviour:
+  //   * Locates the edge by id and resolves its source/target nodes.
+  //   * Picks the upstream column (sourceHandle) name and pgType so the
+  //     new cast node's op_config.source_column is pre-filled.
+  //   * Sets target_logical_type from the menu choice; target_pgType is
+  //     left at the cast operator's default since the L1 logical_type now
+  //     drives backend coercion (logicalToPgType in dag-operators).
+  //   * Replaces the original edge with two: (source → cast) + (cast → target).
+  //
+  // Why this lives here (not in EdgeWithType): we need access to nodes,
+  // setNodes, setEdges, and pushHistory. Keeping the dirty work in DagTab
+  // and passing only a closure to the edge component avoids stale-closure
+  // bugs on rapid mutations.
+  const insertCastOnEdge = useCallback((edgeId: string, target: LogicalType) => {
+    const edge = edges.find((e) => e.id === edgeId);
+    if (!edge) return;
+    const srcNode = nodes.find((n) => n.id === edge.source);
+    const tgtNode = nodes.find((n) => n.id === edge.target);
+    if (!srcNode || !tgtNode) return;
+    const srcCols = srcNode.data.last_result?.columns || srcNode.data.outputs || [];
+    const upCol = srcCols.find((c) => c.name === edge.sourceHandle);
+
+    const id = nextNodeId();
+    // Position halfway between source and target so the curator sees the
+    // new cast node land where the edge used to be.
+    const sx = srcNode.position?.x ?? 0;
+    const sy = srcNode.position?.y ?? 0;
+    const tx = tgtNode.position?.x ?? 0;
+    const ty = tgtNode.position?.y ?? 0;
+    const castNode: Node<NodeData> = {
+      id,
+      type: 'cast',
+      position: { x: (sx + tx) / 2, y: (sy + ty) / 2 + 20 },
+      data: {
+        resource_id: '',
+        label: 'cast',
+        subtype: 'operator',
+        inputs: [{ name: '__upstream', semantic_type: '__rowset' }],
+        outputs: [{ name: '__downstream', semantic_type: '__rowset' }],
+        bound_params: {},
+        op_kind: 'cast',
+        op_config: {
+          kind: 'cast',
+          source_column: edge.sourceHandle || upCol?.name || '',
+          target_pgType: 'text',
+          target_logical_type: target,
+        },
+      },
+    };
+
+    pushHistory();
+    setNodes((nds) => [...nds, castNode]);
+    setEdges((eds) => {
+      const remaining = eds.filter((e) => e.id !== edgeId);
+      const e1: Edge = {
+        id: `e${Date.now()}_a_${id}`,
+        source: edge.source,
+        sourceHandle: edge.sourceHandle,
+        target: id,
+        targetHandle: '__upstream',
+        style: { stroke: '#94a3b8', strokeWidth: 2 },
+      };
+      const e2: Edge = {
+        id: `e${Date.now()}_b_${id}`,
+        source: id,
+        sourceHandle: '__downstream',
+        target: edge.target,
+        targetHandle: edge.targetHandle,
+        style: { stroke: '#94a3b8', strokeWidth: 2 },
+      };
+      return [...remaining, e1, e2];
+    });
+    showToast(`Inserted cast (target: ${target}) between ${edge.source} and ${edge.target}`, 'success');
+  }, [edges, nodes, pushHistory, showToast]);
+
+  // XDB-TIER-B-L3: enrich edges with precomputed `compat` so EdgeWithType
+  // can render red-line / warn / ok without re-walking nodes per render.
+  // Recomputes when nodes change (post-run last_result columns refresh
+  // logical_type) or edges change (new connection / cast insertion).
+  // The closure carries `insertCastOnEdge` through edge.data so the renderer
+  // can dispatch back without holding a useReactFlow handle.
+  const edgesWithCompat = useMemo(() => {
+    return edges.map((e) => {
+      const src = nodes.find((n) => n.id === e.source);
+      const tgt = nodes.find((n) => n.id === e.target);
+      if (!src || !tgt) return { ...e, data: { ...(e.data || {}), onInsertCast: insertCastOnEdge } };
+      const srcCols = src.data.last_result?.columns || src.data.outputs || [];
+      const o = srcCols.find((x) => x.name === e.sourceHandle);
+      const i = tgt.data.inputs.find((x) => x.name === e.targetHandle);
+      if (!o || !i) return { ...e, data: { ...(e.data || {}), onInsertCast: insertCastOnEdge } };
+      const compat = checkHandleCompat(o, i);
+      return { ...e, data: { ...(e.data || {}), compat, onInsertCast: insertCastOnEdge } };
+    });
+  }, [edges, nodes, insertCastOnEdge]);
 
   // ── Load data sources + DAG list ──
   useEffect(() => {
@@ -2041,7 +2144,7 @@ export function DagTab() {
               <DragSrcContext.Provider value={dragSrc}>
                 <ReactFlow
                   nodes={nodes}
-                  edges={edges}
+                  edges={edgesWithCompat}
                   onNodesChange={onNodesChange}
                   onEdgesChange={onEdgesChange}
                   onConnect={onConnect}
@@ -2051,6 +2154,7 @@ export function DagTab() {
                   onNodeClick={(_, n) => setSelectedId(n.id)}
                   onPaneClick={() => setSelectedId(null)}
                   nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
                   deleteKeyCode={['Delete', 'Backspace']}
                   multiSelectionKeyCode={['Control', 'Meta']}
                   selectionKeyCode={'Shift'}
@@ -2137,6 +2241,47 @@ export function DagTab() {
             </button>
           </div>
           <div className="p-3 overflow-y-auto flex-1">
+          {/* XDB-TIER-B-L3: when one or more edges are selected and at least one
+              carries a block/warn compat verdict, surface it here so the user
+              gets the same suggested-cast affordance as the right-click menu —
+              useful when the badge is hard to click on a dense canvas. */}
+          {selectedEdges.length > 0 && (() => {
+            const blockedEdges = selectedEdges
+              .map((se) => edgesWithCompat.find((e) => e.id === se.id))
+              .filter((e): e is NonNullable<typeof e> => !!e && (e.data as any)?.compat?.level === 'block');
+            if (blockedEdges.length === 0) return null;
+            return (
+              <div className="mb-3 rounded border border-red-200 bg-red-50 p-2 text-xs">
+                <div className="flex items-center gap-1 font-semibold text-red-800 mb-1">
+                  <AlertCircle size={12} /> Edge type mismatch
+                </div>
+                {blockedEdges.map((e) => {
+                  const c = (e.data as any).compat as { fromLogical?: LogicalType; toLogical?: LogicalType; suggestedCasts?: LogicalType[]; reason?: string };
+                  return (
+                    <div key={e.id} className="mt-1 space-y-1">
+                      <div className="text-red-700 font-mono text-[11px]">{e.source}.{e.sourceHandle} → {e.target}.{e.targetHandle}</div>
+                      <div className="text-red-700">{c.reason}</div>
+                      {(c.suggestedCasts || []).length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-1">
+                          {(c.suggestedCasts || []).map((t) => (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => insertCastOnEdge(e.id, t)}
+                              className="px-1.5 py-0.5 rounded border border-red-300 bg-white hover:bg-red-100 text-red-800 text-[10px] font-mono"
+                              data-testid={`inspector-insert-cast-${e.id}-${t}`}
+                            >
+                              cast → {t}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
           {!selected ? (
             <EmptyState message="No node selected" hint="Click a node to bind parameters or run it." icon={<Workflow size={24} />} />
           ) : (

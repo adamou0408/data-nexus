@@ -18,7 +18,8 @@ import { findSingleLeaf, deriveFormSchema, executeDagAsPublished, PublishedDagSn
 import { expandSubdags, SubdagExpansionError, EmbeddedSubdagRecord } from '../lib/dag-subdag-resolver';
 import { requireRole } from '../middleware/authz';
 import { runOracleDirect, OracleDirectError } from '../lib/oracle-direct';
-import { pgTypeToLogical } from '../lib/db-driver';
+import { pgTypeToLogical, LogicalType } from '../lib/db-driver';
+import { canConnect, pgTypeStringToLogical } from '../lib/logical-type-compat';
 
 // Best-effort Oracle → Postgres type mapping for downstream operators that
 // branch on pgType strings (filter casts, sort comparators). Anything not
@@ -647,6 +648,31 @@ dagRouter.post('/execute-node', async (req, res) => {
       if (matchingEdge) {
         const up = upstream[matchingEdge.source];
         if (up?.row0 && matchingEdge.sourceHandle && matchingEdge.sourceHandle in up.row0) {
+          // XDB-TIER-B-L3: cross-DB edge boundary check. Reject when both
+          // sides have a known logical_type and they're incompatible —
+          // surface suggested cast targets so the curator can resolve via
+          // an explicit cast operator rather than a silent auto-coerce.
+          const upCol = (up.columns || []).find((c) => c.name === matchingEdge.sourceHandle);
+          const argInputForLT: any = (fnAttrs.inputs || []).find((i: any) => i.name === arg.name);
+          const upLT: LogicalType | undefined =
+            upCol?.logical_type || pgTypeStringToLogical(upCol?.pgType);
+          const argLT: LogicalType | undefined =
+            argInputForLT?.logical_type || pgTypeStringToLogical(argInputForLT?.pgType);
+          if (upLT && argLT && upLT !== 'unknown' && argLT !== 'unknown') {
+            const verdict = canConnect(upLT, argLT);
+            if (!verdict.ok) {
+              return res.status(422).json({
+                error: 'type-mismatch',
+                from: upLT,
+                to: argLT,
+                suggestedCast: verdict.needCast || ['string'],
+                hint: `Insert a cast operator with target_logical_type=${(verdict.needCast || ['string'])[0]}`,
+                node_id: node.id,
+                input: arg.name,
+                source: `${matchingEdge.source}.${matchingEdge.sourceHandle}`,
+              });
+            }
+          }
           pushBind(arg, up.row0[matchingEdge.sourceHandle], `${matchingEdge.source}.${matchingEdge.sourceHandle}`);
           continue;
         }
