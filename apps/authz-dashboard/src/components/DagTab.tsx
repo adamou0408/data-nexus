@@ -3982,7 +3982,7 @@ function PublishDagDialog({
                 <span>
                   <span className="font-medium">Explorer</span>
                   <span className="text-[10px] text-slate-500 block">
-                    Multi-leaf navigable DAG; every non-sink node is browsable. Renderer ships in a follow-up.
+                    Multi-leaf navigable DAG; every non-sink node is browsable.
                   </span>
                 </span>
               </label>

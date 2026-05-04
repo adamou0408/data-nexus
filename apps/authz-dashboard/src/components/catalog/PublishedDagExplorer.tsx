@@ -614,7 +614,7 @@ export function PublishedDagExplorer({
       {popover && (
         <div
           className="fixed inset-0 bg-black/30 z-40 flex items-center justify-center p-4"
-          onClick={(e) => {
+          onMouseDown={(e) => {
             if (e.target === e.currentTarget) setPopover(null);
           }}
         >
