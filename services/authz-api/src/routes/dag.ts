@@ -18,11 +18,14 @@ import { findSingleLeaf, deriveFormSchema, executeDagAsPublished, PublishedDagSn
 import { expandSubdags, SubdagExpansionError, EmbeddedSubdagRecord } from '../lib/dag-subdag-resolver';
 import { requireRole } from '../middleware/authz';
 import { runOracleDirect, OracleDirectError } from '../lib/oracle-direct';
+import { pgTypeToLogical } from '../lib/db-driver';
 
 // Best-effort Oracle → Postgres type mapping for downstream operators that
 // branch on pgType strings (filter casts, sort comparators). Anything not
 // listed falls back to text — operators key off column NAMES first, types
 // second, so a fallback row still flows correctly through filter/projection.
+// (logical_type is the new primary axis — pgType retained for legacy
+// operator paths during L1 rollout.)
 function oracleTypeToPgType(t?: string): string {
   if (!t) return 'text';
   const u = t.toUpperCase();
@@ -470,6 +473,7 @@ dagRouter.post('/execute-node', async (req, res) => {
       }
       const enrichedColumns = result.columns.map((c) => ({
         name: c.name,
+        logical_type: c.logical_type,
         pgType: oracleTypeToPgType(c.type),
         oracleType: c.type,
       }));
@@ -671,7 +675,11 @@ dagRouter.post('/execute-node', async (req, res) => {
 
     const truncated = (qres.rowCount || 0) > MAX_ROWS;
     const rows = truncated ? qres.rows.slice(0, MAX_ROWS) : qres.rows;
-    const columns = qres.fields.map((f) => ({ name: f.name, dataTypeID: f.dataTypeID }));
+    const columns = qres.fields.map((f) => ({
+      name: f.name,
+      dataTypeID: f.dataTypeID,
+      logical_type: pgTypeToLogical(f.dataTypeID),
+    }));
 
     // Decorate columns with semantic_type from function metadata
     const outputs = fnAttrs.outputs || [];

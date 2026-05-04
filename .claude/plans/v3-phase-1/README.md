@@ -38,6 +38,7 @@ This directory holds the implementation sub-plans that decompose the master Phas
 | [`doc-reorg-proposal.md`](./doc-reorg-proposal.md) | Doc architecture reorg proposal (executed 2026-04-22, historical) |
 | [`npi-gate-signoff-dogfood.md`](./npi-gate-signoff-dogfood.md) | First composite-action workflow dogfood — V073-V078 + workflow router + NpiGateConsoleTab; closes wishlist W-MGR-03 |
 | [`composer-operator-and-sink.md`](./composer-operator-and-sink.md) | Flow Composer 補 operator (literal/filter/cast/aggregate) + sink-as-node-kind primitives — 擋 catalog bloat ~30 fn/季 |
+| [`cross-db-tier-b-integration.md`](./cross-db-tier-b-integration.md) | Cross-DB / Cross-Schema × Tier B 整合（4-layer + Tier A primitives 串接，per-node DS, logical_type, cross-DS publish）— APPROVED 2026-05-04 |
 | [`sink-as-node-kind-plan.md`](./sink-as-node-kind-plan.md) | Composer sink primitive (`sink_kind='page'` MVP, api/cron 延後) — Q4 2026 Tier B AC 最後一塊;舊 Save-as-page button 真 alias 保留 |
 | [`help-text-primitive-plan.md`](./help-text-primitive-plan.md) | Tier A primitive #1 — `help_text` JSONB 欄擴張 + `HelpIcon` (`?` tooltip) wire 進 Path A column header + filter label |
 | [`tier-a-primitives-roadmap.md`](./tier-a-primitives-roadmap.md) | 6 個 Tier A 項目排序 + 每項 key decisions(saved_view / feedback / subscription gated / business_term mask gated / D reference / E deferred) |

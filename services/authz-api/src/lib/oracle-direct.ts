@@ -112,6 +112,7 @@ export async function runOracleDirect(input: OracleDirectInput): Promise<OracleD
 
   const oracleOwner = String(attrs.oracle_owner || '').toUpperCase();
   const oracleObject = String(attrs.oracle_object || '').toUpperCase();
+  const oraclePackage = String(attrs.oracle_package || '').toUpperCase();
   const oracleKind = String(attrs.oracle_kind || '') as OracleKind;
   if (!oracleOwner || !oracleObject || !oracleKind) {
     throw new OracleDirectError(
@@ -125,6 +126,20 @@ export async function runOracleDirect(input: OracleDirectInput): Promise<OracleD
       400,
       'Oracle identifier rejected',
       `owner=${oracleOwner}, object=${oracleObject} must match ${ORACLE_IDENT_RE}`,
+    );
+  }
+  if (oraclePackage && !ORACLE_IDENT_RE.test(oraclePackage)) {
+    throw new OracleDirectError(
+      400,
+      'Oracle package identifier rejected',
+      `package=${oraclePackage} must match ${ORACLE_IDENT_RE}`,
+    );
+  }
+  if (oraclePackage && oracleKind !== 'function_scalar' && oracleKind !== 'function_table') {
+    throw new OracleDirectError(
+      400,
+      'oracle_package only allowed for function kinds',
+      `oracle_kind=${oracleKind} cannot have a package — drop attributes.oracle_package`,
     );
   }
 
@@ -150,6 +165,8 @@ export async function runOracleDirect(input: OracleDirectInput): Promise<OracleD
   const effectiveLimit = Math.min(Math.max(1, requestedLimit), MAX_ROWS);
   const qOwner = quoteOracleIdent(oracleOwner);
   const qObject = quoteOracleIdent(oracleObject);
+  const qPackage = oraclePackage ? quoteOracleIdent(oraclePackage) : '';
+  const qualifiedName = qPackage ? `${qOwner}.${qPackage}.${qObject}` : `${qOwner}.${qObject}`;
 
   const binds: Record<string, oracledb.BindParameter> = {};
   const paramNames: string[] = [];
@@ -164,14 +181,14 @@ export async function runOracleDirect(input: OracleDirectInput): Promise<OracleD
   let sql: string;
   let isPlsql = false;
   if (oracleKind === 'view' || oracleKind === 'table') {
-    sql = `SELECT * FROM ${qOwner}.${qObject} FETCH FIRST ${effectiveLimit} ROWS ONLY`;
+    sql = `SELECT * FROM ${qualifiedName} FETCH FIRST ${effectiveLimit} ROWS ONLY`;
   } else if (oracleKind === 'function_table') {
     const argList = paramNames.map((p) => `:${p}`).join(', ');
-    sql = `SELECT * FROM TABLE(${qOwner}.${qObject}(${argList})) FETCH FIRST ${effectiveLimit} ROWS ONLY`;
+    sql = `SELECT * FROM TABLE(${qualifiedName}(${argList})) FETCH FIRST ${effectiveLimit} ROWS ONLY`;
   } else if (oracleKind === 'function_scalar') {
     const argList = paramNames.map((p) => `:${p}`).join(', ');
-    binds['__result__'] = { dir: oracledb.BIND_OUT, type: oracledb.STRING, maxSize: 32767 };
-    sql = `BEGIN :__result__ := ${qOwner}.${qObject}(${argList}); END;`;
+    binds['ret_val'] = { dir: oracledb.BIND_OUT, type: oracledb.STRING, maxSize: 32767 };
+    sql = `BEGIN :ret_val := ${qualifiedName}(${argList}); END;`;
     isPlsql = true;
   } else {
     throw new OracleDirectError(
@@ -201,7 +218,7 @@ export async function runOracleDirect(input: OracleDirectInput): Promise<OracleD
     });
 
     if (isPlsql) {
-      const out = (result.outBinds as { __result__?: unknown } | undefined)?.__result__ ?? null;
+      const out = (result.outBinds as { ret_val?: unknown } | undefined)?.ret_val ?? null;
       return {
         kind: 'scalar',
         resourceId,

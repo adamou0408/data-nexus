@@ -26,7 +26,12 @@ import {
 
 // ── Types ──
 type SemanticType = string; // free-form, e.g. 'material_no', 'product_family'
-type IO = { name: string; semantic_type?: SemanticType; hasDefault?: boolean; pgType?: string };
+// L1: DB-agnostic logical type for cross-DB frame interchange (mirrors backend db-driver.ts).
+// 9 logical types + unknown fallback. Edges check logical_type compat across DS boundaries.
+type LogicalType =
+  | 'string' | 'int64' | 'decimal' | 'float64'
+  | 'bool' | 'date' | 'timestamp' | 'bytes' | 'json' | 'unknown';
+type IO = { name: string; semantic_type?: SemanticType; hasDefault?: boolean; pgType?: string; logical_type?: LogicalType };
 type SinkKind = 'page'; // future: 'api' | 'scheduled_job' | 'alert'
 type PageSinkConfig = {
   kind: 'page';
@@ -64,7 +69,7 @@ type FilterCompound = FilterLeaf | { and: FilterCompound[] } | { or: FilterCompo
 type OpConfig =
   | { kind: 'literal'; value: string; pgType: string; semantic_type?: string }
   | ({ kind: 'filter' } & (FilterLeaf | { and: FilterCompound[] } | { or: FilterCompound[] }))
-  | { kind: 'cast'; source_column: string; target_pgType: string; target_semantic_type?: string }
+  | { kind: 'cast'; source_column: string; target_pgType: string; target_logical_type?: LogicalType; target_semantic_type?: string }
   | { kind: 'aggregate'; group_by: string[]; aggregations: AggregateSpec[] }
   | { kind: 'sort'; order_by: Array<{ column: string; dir: 'asc' | 'desc' }> }
   | { kind: 'limit'; n: number }
@@ -92,7 +97,7 @@ type NodeData = {
   subdag_user_inputs?: string[];
   bound_subdag_params?: Record<string, unknown>;
   last_result?: {
-    columns: Array<{ name: string; semantic_type?: string; pgType?: string }>;
+    columns: Array<{ name: string; semantic_type?: string; pgType?: string; logical_type?: LogicalType }>;
     rows: Record<string, unknown>[];
     row_count: number;
     elapsed_ms: number;
@@ -375,7 +380,7 @@ function OperatorNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
       if (Array.isArray(cfg.or)) return `OR (${cfg.or.length})`;
       return `${cfg.column || '?'} ${cfg.op || 'eq'} ${cfg.value ?? '?'}`;
     }
-    if (opKind === 'cast') return `${cfg.source_column || '?'} → ${cfg.target_pgType || 'text'}`;
+    if (opKind === 'cast') return `${cfg.source_column || '?'} → ${cfg.target_logical_type || cfg.target_pgType || 'text'}`;
     if (opKind === 'aggregate') {
       const grp = (cfg.group_by || []).length > 0 ? `by ${(cfg.group_by || []).join(',')}` : '(no groups)';
       const aggs = (cfg.aggregations || []).map((a: AggregateSpec) => `${a.fn}(${a.column || '?'})`).join(', ') || '(no aggs)';
@@ -1016,12 +1021,12 @@ export function DagTab() {
   const addFunctionNode = (fn: FnMeta) => {
     const id = nextNodeId();
     const inputs: IO[] = (fn.parsed_args || []).map((a: any) => ({
-      name: a.name, semantic_type: a.semantic_type, hasDefault: a.hasDefault, pgType: a.pgType,
+      name: a.name, semantic_type: a.semantic_type, hasDefault: a.hasDefault, pgType: a.pgType, logical_type: a.logical_type,
     }));
     const outputs: IO[] = fn.return_shape?.shape === 'table'
-      ? (fn.return_shape.columns || []).map((c: any) => ({ name: c.name, semantic_type: c.semantic_type, pgType: c.pgType }))
+      ? (fn.return_shape.columns || []).map((c: any) => ({ name: c.name, semantic_type: c.semantic_type, pgType: c.pgType, logical_type: c.logical_type }))
       : fn.return_shape?.shape === 'setof' || fn.return_shape?.shape === 'scalar'
-      ? [{ name: 'value', semantic_type: undefined, pgType: (fn.return_shape as any).pgType }]
+      ? [{ name: 'value', semantic_type: undefined, pgType: (fn.return_shape as any).pgType, logical_type: (fn.return_shape as any).logical_type }]
       : [];
     const node: Node<NodeData> = {
       id,
@@ -3202,7 +3207,24 @@ function OperatorInspector({
         )}
       </div>
       <div>
-        <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Target pgType</label>
+        {/* L1: target_logical_type drives cross-DB cast. When set, backend resolves the
+            actual DB type (e.g. PG numeric / Oracle NUMBER) per executing DS. target_pgType
+            below is the legacy escape hatch for PG-only flows. */}
+        <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Target logical_type (cross-DB safe)</label>
+        <select
+          data-testid="op-cast-target-logical"
+          value={c.target_logical_type || ''}
+          onChange={(e) => onChange({ target_logical_type: (e.target.value || undefined) as LogicalType | undefined })}
+          className="w-full text-xs border border-slate-200 rounded px-2 py-1"
+        >
+          <option value="">— (use pgType below) —</option>
+          {(['string','int64','decimal','float64','bool','date','timestamp','bytes','json'] as LogicalType[]).map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Target pgType (legacy)</label>
         <select
           data-testid="op-cast-target-pgtype"
           value={c.target_pgType || 'text'}

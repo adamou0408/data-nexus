@@ -24,10 +24,66 @@ import { getOracleConnection } from '../db';
 // explicitly). Set once at module load — oracledb is process-wide.
 oracledb.fetchAsString = [oracledb.CLOB];
 
+// ── Logical type layer (cross-db-tier-b-integration §L1).
+// 9 DB-agnostic types + `unknown` fallback. Source-of-truth for
+// type compatibility checks at DAG edges. PG OIDs and Oracle type
+// strings both map into this enum so frame interchange is uniform.
+export type LogicalType =
+  | 'string' | 'int64' | 'decimal' | 'float64'
+  | 'bool' | 'date' | 'timestamp' | 'bytes' | 'json' | 'unknown';
+
+// PG type OIDs from `pg_type.oid`. Covers the common cases the
+// composer encounters; unknown OIDs surface as 'unknown' so edges
+// reject explicitly rather than silently mistype.
+const PG_OID_TO_LOGICAL: Record<number, LogicalType> = {
+  16: 'bool',
+  17: 'bytes',
+  20: 'int64',  // int8
+  21: 'int64',  // int2
+  23: 'int64',  // int4
+  25: 'string', // text
+  114: 'json',
+  700: 'float64', // float4
+  701: 'float64', // float8
+  1042: 'string', // bpchar
+  1043: 'string', // varchar
+  1082: 'date',
+  1114: 'timestamp',
+  1184: 'timestamp', // timestamptz
+  1700: 'decimal',   // numeric
+  3802: 'json',      // jsonb
+};
+
+export function pgTypeToLogical(oid: number): LogicalType {
+  return PG_OID_TO_LOGICAL[oid] ?? 'unknown';
+}
+
+// Oracle type strings come from `dbTypeName`. NUMBER without
+// scale could be int or decimal — we conservatively return
+// 'decimal' (no precision loss). Curators who know it's an int
+// can cast via the cast operator.
+export function oracleTypeToLogical(t: string | undefined): LogicalType {
+  if (!t) return 'unknown';
+  const u = t.toUpperCase();
+  if (u === 'VARCHAR2' || u === 'CHAR' || u === 'NVARCHAR2' || u === 'NCHAR' ||
+      u === 'CLOB' || u === 'NCLOB' || u === 'LONG' || u === 'ROWID') return 'string';
+  if (u.startsWith('VARCHAR') || u.startsWith('CHAR')) return 'string';
+  if (u === 'NUMBER' || u.startsWith('NUMBER')) return 'decimal';
+  if (u === 'BINARY_FLOAT' || u === 'BINARY_DOUBLE' || u === 'FLOAT') return 'float64';
+  if (u === 'DATE') return 'date';
+  if (u.startsWith('TIMESTAMP')) return 'timestamp';
+  if (u === 'BLOB' || u === 'RAW' || u === 'LONG RAW') return 'bytes';
+  // INTERVAL, JSON-as-CLOB, etc. — conservative fallback to string
+  if (u.startsWith('INTERVAL')) return 'string';
+  return 'unknown';
+}
+
 export interface DriverColumn {
   name: string;
-  /** Oracle column type (e.g. "VARCHAR2", "NUMBER"). */
+  /** Native column type as the driver reports it (e.g. PG "text", Oracle "VARCHAR2"). Kept for inspector display. */
   type?: string;
+  /** DB-agnostic logical type for cross-DB frame interchange. Always populated. */
+  logical_type: LogicalType;
 }
 
 export interface DriverResult {
@@ -83,10 +139,14 @@ export async function getOracleReadOnlyDriver(sourceId: string): Promise<ReadOnl
       const truncated = rawRows.length > maxRows;
       const rows = truncated ? rawRows.slice(0, maxRows) : rawRows;
 
-      const columns: DriverColumn[] = (result.metaData || []).map((m) => ({
-        name: m.name,
-        type: typeof m.dbTypeName === 'string' ? m.dbTypeName : undefined,
-      }));
+      const columns: DriverColumn[] = (result.metaData || []).map((m) => {
+        const oracleType = typeof m.dbTypeName === 'string' ? m.dbTypeName : undefined;
+        return {
+          name: m.name,
+          type: oracleType,
+          logical_type: oracleTypeToLogical(oracleType),
+        };
+      });
 
       return {
         rows, columns, rowCount: rows.length, truncated,

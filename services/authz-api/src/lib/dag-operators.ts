@@ -9,9 +9,14 @@
 // V1 kinds: literal | filter | cast | aggregate | sort | limit | projection.
 // ============================================================
 
+// LogicalType is sourced from db-driver to keep one source-of-truth
+// for the 9-type cross-DB enum (cross-db-tier-b-integration §L1).
+import type { LogicalType } from './db-driver';
+
 export interface OperatorColumn {
   name: string;
-  pgType?: string;
+  pgType?: string;            // legacy axis, kept for backward compat with cast/filter/coerce paths
+  logical_type?: LogicalType; // primary axis going forward (L1+); optional during rollout
   semantic_type?: string;
   dataTypeID?: number;
 }
@@ -37,6 +42,67 @@ export interface AggregateSpec {
   fn: AggregateFn;
   column: string;       // upstream column name; for 'count' the value is largely irrelevant — non-null rows
   alias?: string;       // output column name; defaults to '<fn>_<column>'
+}
+
+// LogicalType → best-effort PG type string. Used when the cast operator
+// has only target_logical_type set but downstream paths still want a
+// pgType hint. Bidirectional with pgTypeToLogical (db-driver) for the
+// common cases; lossy on int4 vs int8 etc — not the source-of-truth.
+export function logicalToPgType(lt: LogicalType | undefined): string | undefined {
+  if (!lt) return undefined;
+  switch (lt) {
+    case 'string':    return 'text';
+    case 'int64':     return 'int8';
+    case 'decimal':   return 'numeric';
+    case 'float64':   return 'float8';
+    case 'bool':      return 'bool';
+    case 'date':      return 'date';
+    case 'timestamp': return 'timestamptz';
+    case 'bytes':     return 'bytea';
+    case 'json':      return 'jsonb';
+    default:          return 'text';
+  }
+}
+
+// ── Coercion by logical_type — the cross-DB-aware coerce path
+// (cross-db-tier-b-integration §L1). Cast operator prefers this when
+// `target_logical_type` is set in op_config; otherwise falls back to
+// the legacy pgType-keyed coerceLiteral below.
+export function coerceByLogicalType(raw: unknown, lt: LogicalType): unknown {
+  if (raw === null || raw === undefined) return raw;
+  switch (lt) {
+    case 'string':
+      // Stringify primitives; pass strings through; JSON.stringify objects so
+      // downstream rendering gets a stable text payload regardless of source DB.
+      if (typeof raw === 'string') return raw;
+      if (typeof raw === 'number' || typeof raw === 'boolean' || typeof raw === 'bigint') return String(raw);
+      if (raw instanceof Date) return raw.toISOString();
+      try { return JSON.stringify(raw); } catch { return String(raw); }
+    case 'int64':
+    case 'decimal':
+    case 'float64': {
+      if (typeof raw === 'number' || typeof raw === 'bigint') return raw;
+      const n = Number(raw as any);
+      return Number.isFinite(n) ? n : raw;
+    }
+    case 'bool': {
+      if (typeof raw === 'boolean') return raw;
+      const s = String(raw).toLowerCase();
+      return s === 'true' || s === '1' || s === 't' || s === 'y' || s === 'yes';
+    }
+    case 'json':
+      if (typeof raw !== 'string') return raw;
+      try { return JSON.parse(raw); } catch { return raw; }
+    case 'date':
+    case 'timestamp':
+      // Pass through — downstream binding handles Date / ISO string parse.
+      return raw;
+    case 'bytes':
+      // Bytes stay opaque at L1 (Buffer / b64 string passthrough).
+      return raw;
+    default:
+      return raw;
+  }
 }
 
 // ── Coercion: turn a string-typed UI value into the right JS primitive based
@@ -508,19 +574,40 @@ export function runOperator(opts: {
 
   if (op_kind === 'cast') {
     const sourceColumn = String(op_config.source_column || '');
-    const targetPg = (op_config.target_pgType as string) || 'text';
+    // L1 (cross-db-tier-b-integration §L1): target_logical_type is the new
+    // primary axis. target_pgType retained as legacy fallback so existing
+    // saved DAGs keep working without re-publish. When both set, logical_type
+    // wins because it carries cross-DB semantics; pgType is computed
+    // best-effort for downstream PG-binding paths.
+    const targetLogical = op_config.target_logical_type as LogicalType | undefined;
+    const targetPgRaw = op_config.target_pgType as string | undefined;
+    const targetPg = targetPgRaw || logicalToPgType(targetLogical) || 'text';
     const targetSem = op_config.target_semantic_type as string | undefined;
     if (!sourceColumn) throw new Error(`Operator ${node_id} (cast): op_config.source_column is required.`);
+    if (!targetLogical && !targetPgRaw) {
+      throw new Error(`Operator ${node_id} (cast): op_config.target_logical_type or target_pgType is required.`);
+    }
     const patchedCols: OperatorColumn[] = upCols.map((c) =>
-      c.name === sourceColumn ? { ...c, pgType: targetPg, semantic_type: targetSem ?? c.semantic_type } : c
+      c.name === sourceColumn
+        ? {
+            ...c,
+            pgType: targetPg,
+            logical_type: targetLogical ?? c.logical_type,
+            semantic_type: targetSem ?? c.semantic_type,
+          }
+        : c
     );
     // Coerce values in that column row-by-row to make the cast effective at runtime,
     // not just metadata. Downstream fn binding will see the new JS type.
+    const coerce = targetLogical
+      ? (v: unknown) => coerceByLogicalType(v, targetLogical)
+      : (v: unknown) => coerceLiteral(v, targetPg);
     const patchedRows = upRows.map((r) => ({
       ...r,
-      [sourceColumn]: coerceLiteral(r[sourceColumn], targetPg),
+      [sourceColumn]: coerce(r[sourceColumn]),
     }));
-    lineage.push({ input: '__upstream', source: `${src.source} (cast ${sourceColumn} → ${targetPg})` });
+    const castLabel = targetLogical || targetPg;
+    lineage.push({ input: '__upstream', source: `${src.source} (cast ${sourceColumn} → ${castLabel})` });
     return {
       columns: patchedCols,
       rows: patchedRows,
