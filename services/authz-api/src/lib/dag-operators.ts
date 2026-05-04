@@ -6,7 +6,7 @@
 // They inherit AuthZ from the upstream fn whose output they shape — see
 // plan §3.2 for the rationale.
 //
-// Phase 1 kinds: literal | filter | cast.
+// V1 kinds: literal | filter | cast | aggregate | sort | limit | projection.
 // ============================================================
 
 export interface OperatorColumn {
@@ -30,9 +30,9 @@ export interface OperatorRunResult {
   lineage: Array<{ input: string; source: string }>;
 }
 
-type OpKind = 'literal' | 'filter' | 'cast' | 'aggregate';
+type OpKind = 'literal' | 'filter' | 'cast' | 'aggregate' | 'sort' | 'limit' | 'projection';
 
-export type AggregateFn = 'sum' | 'count' | 'min' | 'max' | 'avg';
+export type AggregateFn = 'sum' | 'count' | 'min' | 'max' | 'avg' | 'array_agg';
 export interface AggregateSpec {
   fn: AggregateFn;
   column: string;       // upstream column name; for 'count' the value is largely irrelevant — non-null rows
@@ -71,6 +71,10 @@ export function coerceLiteral(raw: unknown, pgType?: string): unknown {
 function computeAgg(fn: AggregateFn, values: unknown[]): unknown {
   const nonNull = values.filter((v) => v !== null && v !== undefined);
   if (fn === 'count') return nonNull.length;
+  // Why empty → []: PG's array_agg returns NULL on empty group, but downstream
+  // fns that take text[] as required input would NPE in JS on null; an empty
+  // array fails their "1~5 keywords" check loudly instead.
+  if (fn === 'array_agg') return nonNull;
   if (nonNull.length === 0) return null;
   if (fn === 'min' || fn === 'max') {
     return nonNull.reduce((acc, v) => {
@@ -92,30 +96,38 @@ function computeAgg(fn: AggregateFn, values: unknown[]): unknown {
 // ── Predicate evaluator for `filter` operator.
 type FilterOp = 'eq' | 'ne' | 'in' | 'gt' | 'lt' | 'like';
 
-function applyPredicate(
-  rows: Record<string, unknown>[],
-  column: string,
-  op: FilterOp,
-  value: string,
-): Record<string, unknown>[] {
-  if (!Array.isArray(rows) || rows.length === 0) return [];
+interface LeafCondition {
+  column: string;
+  op: FilterOp;
+  value: string;
+}
+type CompoundCondition =
+  | LeafCondition
+  | { and: CompoundCondition[] }
+  | { or: CompoundCondition[] };
+
+function isLeafCondition(c: unknown): c is LeafCondition {
+  return !!c && typeof c === 'object' && 'column' in (c as object);
+}
+
+// Single-row leaf evaluator — extracted so compound AND/OR can short-circuit
+// per row without rebuilding rowset filters.
+function evalLeaf(row: Record<string, unknown>, column: string, op: FilterOp, value: string): boolean {
   switch (op) {
     case 'eq':
-      return rows.filter((r) => String(r[column] ?? '') === value);
+      return String(row[column] ?? '') === value;
     case 'ne':
-      return rows.filter((r) => String(r[column] ?? '') !== value);
+      return String(row[column] ?? '') !== value;
     case 'in': {
       const set = new Set(value.split(',').map((s) => s.trim()).filter((s) => s.length > 0));
-      return rows.filter((r) => set.has(String(r[column] ?? '')));
+      return set.has(String(row[column] ?? ''));
     }
     case 'gt':
     case 'lt': {
       const n = Number(value);
-      const cmp = op === 'gt' ? (a: number) => a > n : (a: number) => a < n;
-      return rows.filter((r) => {
-        const m = Number(r[column]);
-        return Number.isFinite(m) && cmp(m);
-      });
+      const m = Number(row[column]);
+      if (!Number.isFinite(m)) return false;
+      return op === 'gt' ? m > n : m < n;
     }
     case 'like': {
       // Escape regex meta chars first, THEN translate SQL LIKE wildcards.
@@ -130,13 +142,53 @@ function applyPredicate(
       try {
         re = new RegExp(safe, 'i');
       } catch {
-        return [];
+        return false;
       }
-      return rows.filter((r) => re.test(String(r[column] ?? '')));
+      return re.test(String(row[column] ?? ''));
     }
     default:
-      return rows;
+      return true;
   }
+}
+
+function applyPredicate(
+  rows: Record<string, unknown>[],
+  column: string,
+  op: FilterOp,
+  value: string,
+): Record<string, unknown>[] {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  return rows.filter((r) => evalLeaf(r, column, op, value));
+}
+
+// Compound condition evaluator with depth guard. Why max depth 3: prevents a
+// curator copy-pasting a giant logic blob into one filter; chain multiple
+// filter nodes instead. 3 covers `(A AND B) OR (C AND D)` which is practical.
+function evalCompound(
+  row: Record<string, unknown>,
+  cond: CompoundCondition,
+  depth: number,
+  nodeId: string,
+): boolean {
+  if (depth > 3) {
+    throw new Error(`Operator ${nodeId} (filter): nested condition depth exceeds 3.`);
+  }
+  if (isLeafCondition(cond)) {
+    return evalLeaf(row, cond.column, (cond.op || 'eq') as FilterOp, String(cond.value ?? ''));
+  }
+  if ('and' in cond && Array.isArray(cond.and)) {
+    for (const sub of cond.and) {
+      if (!evalCompound(row, sub, depth + 1, nodeId)) return false;
+    }
+    return true;
+  }
+  if ('or' in cond && Array.isArray(cond.or)) {
+    for (const sub of cond.or) {
+      if (evalCompound(row, sub, depth + 1, nodeId)) return true;
+    }
+    return false;
+  }
+  return true;
 }
 
 // ── Main entry: dispatch on op_kind. Caller passes resolved upstream frames
@@ -182,6 +234,24 @@ export function runOperator(opts: {
   const upCols = frame.columns || [];
 
   if (op_kind === 'filter') {
+    // Compound shape detection: `op_config.and` / `op_config.or` triggers the
+    // new path; legacy single-condition payloads still flow through the leaf.
+    // Why backward compatible (not filter_v2): old DAGs already published with
+    // single-condition filters must keep working without re-publish.
+    const hasAnd = Array.isArray((op_config as { and?: unknown[] }).and);
+    const hasOr = Array.isArray((op_config as { or?: unknown[] }).or);
+    if (hasAnd || hasOr) {
+      const cond = op_config as unknown as CompoundCondition;
+      const filtered = upRows.filter((r) => evalCompound(r, cond, 1, node_id));
+      lineage.push({ input: '__upstream', source: `${src.source} (filter compound ${hasAnd ? 'AND' : 'OR'})` });
+      return {
+        columns: upCols,
+        rows: filtered,
+        row_count: filtered.length,
+        elapsed_ms: Date.now() - t0,
+        lineage,
+      };
+    }
     const column = String(op_config.column || '');
     const op = (op_config.op || 'eq') as FilterOp;
     const value = String(op_config.value ?? '');
@@ -192,6 +262,169 @@ export function runOperator(opts: {
       columns: upCols,
       rows: filtered,
       row_count: filtered.length,
+      elapsed_ms: Date.now() - t0,
+      lineage,
+    };
+  }
+
+  if (op_kind === 'sort') {
+    // Why an op (not an aggregate flag): sort is order-preserving identity;
+    // aggregate transforms shape. Mixing muddles semantics.
+    const orderByRaw = (op_config as { order_by?: unknown }).order_by;
+    const orderBy: Array<{ column: string; dir: 'asc' | 'desc' }> = Array.isArray(orderByRaw)
+      ? (orderByRaw as unknown[]).map((o) => {
+          const obj = o as { column?: string; dir?: string };
+          const dir: 'asc' | 'desc' = obj.dir === 'desc' ? 'desc' : 'asc';
+          return { column: String(obj.column || ''), dir };
+        }).filter((o) => o.column)
+      : [];
+    if (orderBy.length === 0) {
+      throw new Error(`Operator ${node_id} (sort): op_config.order_by[] is required (at least one key).`);
+    }
+    const NUMERIC_PG = new Set(['integer', 'bigint', 'numeric', 'double precision', 'real', 'smallint', 'int', 'int2', 'int4', 'int8', 'float4', 'float8']);
+    const isNumericCol = (col: string): boolean => {
+      const u = upCols.find((c) => c.name === col);
+      const t = (u?.pgType || '').toLowerCase().trim();
+      if (!t) return false;
+      if (NUMERIC_PG.has(t)) return true;
+      return t.includes('int') || t.startsWith('numeric') || t.includes('decimal');
+    };
+    // Sorted via Array.prototype.sort (stable since ES2019). Multi-key
+    // tie-break runs in declared order. Nulls always last regardless of dir
+    // — end users find that less surprising than PG's NULLS-FIRST-on-DESC.
+    const sorted = [...upRows].sort((a, b) => {
+      for (const k of orderBy) {
+        const av = a[k.column];
+        const bv = b[k.column];
+        const aNull = av === null || av === undefined;
+        const bNull = bv === null || bv === undefined;
+        if (aNull && bNull) continue;
+        if (aNull) return 1;                                       // null → end (always last)
+        if (bNull) return -1;
+        let cmp: number;
+        if (isNumericCol(k.column)) {
+          const an = Number(av), bn = Number(bv);
+          cmp = an < bn ? -1 : an > bn ? 1 : 0;
+        } else {
+          const as = String(av), bs = String(bv);
+          cmp = as < bs ? -1 : as > bs ? 1 : 0;
+        }
+        if (cmp !== 0) return k.dir === 'desc' ? -cmp : cmp;
+      }
+      return 0;
+    });
+    lineage.push({ input: '__upstream', source: `${src.source} (sort ${orderBy.map((o) => `${o.column} ${o.dir}`).join(', ')})` });
+    return {
+      columns: upCols,
+      rows: sorted,
+      row_count: sorted.length,
+      elapsed_ms: Date.now() - t0,
+      lineage,
+    };
+  }
+
+  if (op_kind === 'limit') {
+    const n = (op_config as { n?: unknown }).n;
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
+      throw new Error(`Operator ${node_id} (limit): op_config.n must be a non-negative integer.`);
+    }
+    // n=0 → empty rows, columns preserved (NOT a noop / NOT an error).
+    const limited = upRows.slice(0, n);
+    lineage.push({ input: '__upstream', source: `${src.source} (limit ${n})` });
+    return {
+      columns: upCols,
+      rows: limited,
+      row_count: limited.length,
+      elapsed_ms: Date.now() - t0,
+      lineage,
+    };
+  }
+
+  if (op_kind === 'projection') {
+    // Why one op for keep+rename+add: they almost always co-occur (build a
+    // presentation layer). Three ops would mean three nodes for one logical
+    // operation. Order: keep → rename → add.
+    const keepRaw = (op_config as { keep?: unknown }).keep;
+    const renameRaw = (op_config as { rename?: unknown }).rename;
+    const addRaw = (op_config as { add?: unknown }).add;
+    const keep: string[] | undefined = Array.isArray(keepRaw) ? keepRaw.map(String) : undefined;
+    const rename: Record<string, string> = renameRaw && typeof renameRaw === 'object'
+      ? Object.fromEntries(Object.entries(renameRaw as Record<string, unknown>).map(([k, v]) => [k, String(v)]))
+      : {};
+    const add: Array<{ name: string; expr: string; pgType?: string }> = Array.isArray(addRaw)
+      ? (addRaw as unknown[]).map((a) => {
+          const o = a as { name?: string; expr?: string; pgType?: string };
+          return { name: String(o.name || ''), expr: String(o.expr ?? ''), pgType: o.pgType };
+        }).filter((a) => a.name)
+      : [];
+
+    // Step 1: keep — restrict columns. Drops unmentioned columns.
+    const keptCols: OperatorColumn[] = keep
+      ? keep.map((n) => upCols.find((c) => c.name === n)).filter((c): c is OperatorColumn => !!c)
+      : [...upCols];
+
+    // Step 2: rename — translate kept columns' names, preserve metadata.
+    const renamedCols: OperatorColumn[] = keptCols.map((c) =>
+      rename[c.name] ? { ...c, name: rename[c.name] } : c,
+    );
+
+    // Step 3: build per-row template substitution. Why string templates only,
+    // not eval: sandboxed eval is an attack surface for ops costs. Templates
+    // cover 80% case (label / concat). For arithmetic, use aggregate or SQL fn.
+    // Expr resolves against POST-rename column names (rename runs before add
+    // per spec) so curators reference what they just renamed.
+    const TEMPLATE_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+    const warnedRefs = new Set<string>();
+    const postRenameNames = new Set(renamedCols.map((c) => c.name));
+    const evalExpr = (row: Record<string, unknown>, expr: string): unknown => {
+      let hadRef = false;
+      let nullDueToMissing = false;
+      const out = expr.replace(TEMPLATE_RE, (_m, ref: string) => {
+        hadRef = true;
+        if (!postRenameNames.has(ref)) {
+          if (!warnedRefs.has(ref)) {
+            warnedRefs.add(ref);
+            lineage.push({ input: `add:expr`, source: `warning: column '${ref}' not found in upstream` });
+          }
+          nullDueToMissing = true;
+          return '';
+        }
+        const v = row[ref];
+        return v === null || v === undefined ? '' : String(v);
+      });
+      // Mixed text + missing ref → null (per spec: missing → null + warning).
+      if (hadRef && nullDueToMissing) return null;
+      return out;
+    };
+
+    const outRows = upRows.map((r) => {
+      const next: Record<string, unknown> = {};
+      // Copy kept columns under their new names if renamed (so expr sees them).
+      for (const oldC of keptCols) {
+        const newName = rename[oldC.name] || oldC.name;
+        next[newName] = r[oldC.name];
+      }
+      // Evaluate add exprs against the post-rename row.
+      for (const a of add) {
+        next[a.name] = evalExpr(next, a.expr);
+      }
+      return next;
+    });
+
+    const addedCols: OperatorColumn[] = add.map((a) => ({
+      name: a.name,
+      pgType: a.pgType || 'text',
+    }));
+    const outCols: OperatorColumn[] = [...renamedCols, ...addedCols];
+
+    lineage.push({
+      input: '__upstream',
+      source: `${src.source} (projection keep=${keep ? keep.length : 'all'} rename=${Object.keys(rename).length} add=${add.length})`,
+    });
+    return {
+      columns: outCols,
+      rows: outRows,
+      row_count: outRows.length,
       elapsed_ms: Date.now() - t0,
       lineage,
     };
@@ -254,6 +487,7 @@ export function runOperator(opts: {
         const pgType =
           a.fn === 'count' ? 'bigint'
           : a.fn === 'avg' ? 'numeric'
+          : a.fn === 'array_agg' ? (upCol?.pgType ? `${upCol.pgType}[]` : 'text[]')
           : (upCol?.pgType || 'numeric');
         return { name: alias, pgType };
       }),
