@@ -3,7 +3,8 @@ import { pool, getDataSourcePool, resolveDataSource } from '../db';
 import { buildMaskedSelect, ColumnDef } from '../lib/masked-query';
 import { handleApiError } from '../lib/request-helpers';
 import { audit } from '../audit';
-import { executeDagAsPublished, DagExecError, PublishedDagSnapshot } from '../lib/dag-exec';
+import { executeDagAsPublished, DagExecError, PublishedDagSnapshot, DagExecOutput } from '../lib/dag-exec';
+import { applyColumnRenamesToFrame } from '../lib/dag-publish';
 
 export const configExecRouter = Router();
 
@@ -104,9 +105,36 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
     // for published pages points at `published_dag:<dag_id>`. No additional
     // check here — the bless gate is the boundary.
     if (config.published_dag_id && config.dag_snapshot) {
-      const snapshot = config.dag_snapshot as PublishedDagSnapshot;
+      const snapshot = config.dag_snapshot as PublishedDagSnapshot & {
+        cached_outputs?: {
+          outputs: Record<string, DagExecOutput>;
+          primary_output_node_id: string;
+          frozen_form_inputs?: Record<string, unknown>;
+          row_count: number;
+          truncated: boolean;
+        };
+        cached_at?: string;
+        cached_columns?: Array<{ name: string; semantic_type?: string; dataTypeID?: number }>;
+      };
       const formInputs = (params && typeof params === 'object') ? params : {};
       const hasInputs = Object.keys(formInputs).length > 0;
+
+      // XDB-TIER-B-L4: render_mode + column_renames live as page-level columns
+      // (V092). fn_ui_page surfaces them on the config payload; default
+      // 'snapshot' for legacy rows that pre-date V092. Empty {} means no
+      // renames need to be applied.
+      const renderMode: 'snapshot' | 'live' = (config.render_mode === 'live' ? 'live' : 'snapshot');
+      const columnRenames: Record<string, string> = (config.column_renames && typeof config.column_renames === 'object')
+        ? (config.column_renames as Record<string, string>)
+        : {};
+      // Legacy fallback: rows published before V092 have no `cached_outputs`,
+      // so even if their (defaulted) render_mode is 'snapshot' we behave like
+      // live mode — re-execute on every render. The migration comment notes
+      // this explicitly.
+      const hasCachedOutputs = renderMode === 'snapshot'
+        && snapshot.cached_outputs
+        && typeof snapshot.cached_outputs === 'object'
+        && snapshot.cached_outputs.outputs;
 
       // EXPLORER-MODE-V01 Phase B: explorer renderer needs the edge list and
       // exposed-node set client-side to compute drill candidates per cell.
@@ -126,6 +154,70 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
           }
         : {};
 
+      // XDB-TIER-B-L4.3: helper — apply column_renames map to a multi-output
+      // bundle (used by both snapshot and live branches so the consumer-side
+      // flat namespace is always renamed-per-publish-time-choice).
+      const applyRenames = (outputs: Record<string, DagExecOutput>): Record<string, DagExecOutput> => {
+        if (!columnRenames || Object.keys(columnRenames).length === 0) return outputs;
+        const renamed: Record<string, DagExecOutput> = {};
+        for (const [nodeId, frame] of Object.entries(outputs)) {
+          const r = applyColumnRenamesToFrame(nodeId, frame.columns, frame.rows, columnRenames);
+          renamed[nodeId] = {
+            columns: r.columns,
+            rows: r.rows,
+            row_count: r.rows.length,
+            truncated: frame.truncated,
+          };
+        }
+        return renamed;
+      };
+
+      // XDB-TIER-B-L4.1: SNAPSHOT mode fast-path. When the page was published
+      // with `render_mode='snapshot'` AND has frozen `cached_outputs`, return
+      // those rows directly — no DAG re-execute, no per-render authz_check
+      // beyond the bless-gate above. The frozen form inputs are surfaced in
+      // meta so the front-end can show "rendered with these values at
+      // <cached_at>". A page with form_schema=[] (parameterless snapshot)
+      // simply lands straight on the data view.
+      if (hasCachedOutputs) {
+        const cached = snapshot.cached_outputs!;
+        const renamedOutputs = applyRenames(cached.outputs);
+        const primaryId = cached.primary_output_node_id || snapshot.output_node_id;
+        const primaryFrame = renamedOutputs[primaryId];
+        audit({
+          access_path: 'A',
+          subject_id: user.user_id,
+          action_id: 'read',
+          resource_id: config.resource_id || `published_dag:${config.published_dag_id}`,
+          decision: 'allow',
+          context: {
+            page_id, mode: 'published_dag', stage: 'snapshot_render',
+            row_count: primaryFrame?.row_count ?? 0,
+            cached_at: snapshot.cached_at,
+          },
+        });
+        return res.json({
+          config: { ...config, columns: primaryFrame?.columns || snapshot.cached_columns || [] },
+          data: primaryFrame?.rows || [],
+          meta: {
+            published_dag: true,
+            stage: 'snapshot_render',
+            render_mode: 'snapshot',
+            cached_at: snapshot.cached_at,
+            form_schema: config.form_schema || [],
+            frozen_form_inputs: cached.frozen_form_inputs,
+            output_node_id: primaryId,
+            row_count: primaryFrame?.row_count ?? 0,
+            truncated: primaryFrame?.truncated ?? false,
+            outputs: renamedOutputs,
+            primary_output_node_id: primaryId,
+            display_mode: snapshot.display_mode || 'tabular',
+            column_renames: columnRenames,
+            ...explorerMeta,
+          },
+        });
+      }
+
       if (!hasInputs) {
         // First-load: hand the form schema back, rows empty.
         audit({
@@ -134,7 +226,7 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
           action_id: 'read',
           resource_id: config.resource_id || `published_dag:${config.published_dag_id}`,
           decision: 'allow',
-          context: { page_id, mode: 'published_dag', stage: 'form_load' },
+          context: { page_id, mode: 'published_dag', stage: 'form_load', render_mode: renderMode },
         });
         return res.json({
           config: { ...config, columns: [] },
@@ -142,17 +234,25 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
           meta: {
             published_dag: true,
             stage: 'form_load',
+            render_mode: renderMode,
             form_schema: config.form_schema || [],
             // EXPLORER-MODE-V01: surface mode at form_load so the front-end
             // can choose its renderer before the user submits. V086 snapshots
             // lack the field — default to 'tabular' (the historical behavior).
             display_mode: snapshot.display_mode || 'tabular',
+            column_renames: columnRenames,
             ...explorerMeta,
           },
         });
       }
 
       try {
+        // XDB-TIER-B-L4.1: LIVE mode (and legacy snapshot fallback when
+        // cached_outputs is absent) — re-execute under caller's identity.
+        // dag-exec already pulls per-node DS pools (L2), so cross-DS DAGs
+        // run each fn against the right pool. authz is the bless-gate above
+        // (Fork A); per-node authz_check is intentionally not added — the
+        // bless covers the full pipeline shape.
         const result = await executeDagAsPublished({
           dagSnapshot: snapshot,
           userId: user.user_id,
@@ -160,6 +260,11 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
           formInputs,
           publishedDagRid: config.resource_id || `published_dag:${config.published_dag_id}`,
         });
+        // XDB-TIER-B-L4.3: apply column_renames to multi-output map AND to
+        // the V086-flat result (back-compat: top-level columns/rows still
+        // mirror the primary frame).
+        const renamedOutputs = applyRenames(result.outputs);
+        const primaryFrame = renamedOutputs[result.primary_output_node_id];
         audit({
           access_path: 'A',
           subject_id: user.user_id,
@@ -168,17 +273,19 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
           decision: 'allow',
           context: {
             page_id, mode: 'published_dag', stage: 'exec',
+            render_mode: renderMode,
             row_count: result.row_count,
             elapsed_ms: result.elapsed_ms,
             output_node_id: result.output_node_id,
           },
         });
         return res.json({
-          config: { ...config, columns: result.columns },
-          data: result.rows,
+          config: { ...config, columns: primaryFrame?.columns || result.columns },
+          data: primaryFrame?.rows || result.rows,
           meta: {
             published_dag: true,
             stage: 'exec',
+            render_mode: renderMode,
             form_schema: config.form_schema || [],
             output_node_id: result.output_node_id,
             row_count: result.row_count,
@@ -189,12 +296,13 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
             // PublishedDagPage renders one section per key; falls back to
             // single-table mode if `outputs` is absent (shouldn't happen
             // post-FU, but kept for resilience).
-            outputs: result.outputs,
+            outputs: renamedOutputs,
             primary_output_node_id: result.primary_output_node_id,
             // EXPLORER-MODE-V01: same default-to-'tabular' rule as form_load
             // so the front-end's exec-stage renderer matches the form-stage
             // choice without a second source of truth.
             display_mode: snapshot.display_mode || 'tabular',
+            column_renames: columnRenames,
             // Phase B: surface edges + exposed_node_ids only for explorer
             // pages — tabular renderer doesn't read them.
             ...explorerMeta,

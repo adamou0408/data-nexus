@@ -624,6 +624,10 @@ modulesRouter.get('/pages/:page_id', requireRole('DATA_STEWARD'), async (req, re
               p.dag_snapshot->>'output_node_id' AS output_node_id,
               p.dag_snapshot->'exposed_node_ids' AS exposed_node_ids,
               p.dag_snapshot->'embedded_subdags' AS embedded_subdags,
+              p.dag_snapshot->>'display_mode'   AS display_mode,
+              p.dag_snapshot->>'cached_at'      AS snapshot_cached_at,
+              p.render_mode                      AS render_mode,
+              p.column_renames                   AS column_renames,
               pm.resource_id                    AS page_rid,
               pm.parent_id                      AS parent_module_id,
               parent.display_name               AS parent_module_name
@@ -637,7 +641,16 @@ modulesRouter.get('/pages/:page_id', requireRole('DATA_STEWARD'), async (req, re
       return res.status(404).json({ error: 'Page not found or not a published_dag' });
     }
     const row = pageRes.rows[0];
-    const snapshotNodes = (row.dag_snapshot?.nodes ?? []) as unknown[];
+    const snapshotNodes = (row.dag_snapshot?.nodes ?? []) as Array<{ id: string; data?: { data_source_id?: string } }>;
+    // XDB-TIER-B-L4: derive cross-DS shape so the catalog inspector can
+    // render a "Cross-DS · N sources" badge.  Each node may carry its own
+    // data_source_id (V086-FU L2); fall back to the dag-level default.
+    const dsSet = new Set<string>();
+    for (const n of snapshotNodes) {
+      const ds = n?.data?.data_source_id || row.data_source_id;
+      if (ds) dsSet.add(ds);
+    }
+    const dataSourceIds = Array.from(dsSet);
 
     const auditRes = await pool.query(
       `SELECT user_id, action, details, created_at, ip_address, actor_type, agent_id
@@ -660,6 +673,14 @@ modulesRouter.get('/pages/:page_id', requireRole('DATA_STEWARD'), async (req, re
         page_rid: row.page_rid,
         parent_module_id: row.parent_module_id,
         parent_module_name: row.parent_module_name,
+        // XDB-TIER-B-L4: surface the new V092 axes so the catalog inspector
+        // can render "Snapshot · cached at X" / "Live · re-run on render"
+        // chips, plus a "Cross-DS · N sources" badge when applicable.
+        render_mode: row.render_mode || 'snapshot',
+        display_mode: row.display_mode || 'tabular',
+        column_renames: row.column_renames || {},
+        data_source_ids: dataSourceIds,
+        snapshot_cached_at: row.snapshot_cached_at,
       },
       snapshot_meta: {
         node_count: snapshotNodes.length,

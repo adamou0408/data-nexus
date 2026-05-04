@@ -3981,6 +3981,17 @@ function PublishDagDialog({
   // opt-in for multi-leaf DAGs whose value is "navigate every node" rather
   // than "view one final result table".
   const [displayMode, setDisplayMode] = useState<'tabular' | 'explorer'>('tabular');
+  // XDB-TIER-B-L4.1: render-mode picker. Default 'snapshot' (matches the
+  // server-side V092 default + the publish-time freeze contract).  The
+  // helper text frames the trade-off so curators don't pick blind: snapshot
+  // = fast + stale, live = slow + always fresh + role-changes immediate.
+  const [renderMode, setRenderMode] = useState<'snapshot' | 'live'>('snapshot');
+  // XDB-TIER-B-L4.3: cross-DS column-collision rename map. Populated only
+  // after the publish endpoint returns 409 with the conflict list — the
+  // dialog then surfaces an inline rename form, blocks submit until every
+  // conflict has a rename target, and replays the submit with the map.
+  const [columnRenames, setColumnRenames] = useState<Record<string, string>>({});
+  const [columnConflicts, setColumnConflicts] = useState<Array<{ name: string; sourceNodes: string[] }>>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -4026,13 +4037,38 @@ function PublishDagDialog({
       setError('title is required.');
       return;
     }
-    if (userInputs.length === 0) {
-      setError('No params marked as form inputs. Tick "Expose as form input" on at least one bound param before publishing.');
+    // XDB-TIER-B-L4: relax form-input requirement for SNAPSHOT mode.  A
+    // parameterless snapshot is a valid "frozen result page" (replaces the
+    // legacy "Save as Page" path).  Live mode still needs at least one form
+    // input — server enforces this too, but UI catches it pre-flight.
+    if (renderMode === 'live' && userInputs.length === 0) {
+      setError('Live mode requires at least one form input. Tick "Expose as form input" on a bound param, or switch to Snapshot.');
       return;
     }
     if (!parentModuleId) {
       setError('Pick a parent module — the page needs to land somewhere in Catalog → Modules.');
       return;
+    }
+    // XDB-TIER-B-L4.3: when conflicts have surfaced from a prior 409, every
+    // conflict must have a rename value before we resubmit.
+    if (columnConflicts.length > 0) {
+      const missing: string[] = [];
+      for (const c of columnConflicts) {
+        for (const node of c.sourceNodes) {
+          const k = `${node}__${c.name}`;
+          if (!columnRenames[k] || !columnRenames[k].trim()) missing.push(k);
+        }
+      }
+      // We allow ONE node per conflict to keep the original name, so the
+      // rule is "at most one missing per conflict".  Stricter UX: require
+      // every node to be renamed so curator explicitly picks every name.
+      const conflictsStillUnresolved = columnConflicts.filter((c) =>
+        c.sourceNodes.filter((n) => !(columnRenames[`${n}__${c.name}`] || '').trim()).length > 1
+      );
+      if (conflictsStillUnresolved.length > 0) {
+        setError(`Resolve every column collision: ${conflictsStillUnresolved.map((c) => c.name).join(', ')}.`);
+        return;
+      }
     }
     setSubmitting(true);
     try {
@@ -4044,15 +4080,42 @@ function PublishDagDialog({
         description: description.trim() || undefined,
         overwrite,
         display_mode: displayMode,
+        render_mode: renderMode,
+        // Only send rename map if it has anything; saves a small payload
+        // round-trip on the common no-conflict case.
+        ...(Object.keys(columnRenames).length > 0 ? { column_renames: columnRenames } : {}),
       });
       try { localStorage.setItem(PUBLISH_LAST_PARENT_KEY, parentModuleId); } catch { /* non-fatal */ }
       onPublished(r.page_id);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('already exists')) {
-        setError('Page already exists. Tick "Overwrite existing" to replace it.');
+      // XDB-TIER-B-L4.3: detect the structured 409 response from the publish
+      // endpoint and surface its conflict list so the curator can name each
+      // colliding column.  Other errors keep the legacy plain-string path.
+      const errAny = e as { status?: number; body?: { error?: string; conflicts?: Array<{ name: string; sourceNodes: string[] }>; detail?: { conflicts?: Array<{ name: string; sourceNodes: string[] }> } }; message?: string };
+      const rawConflicts = errAny?.body?.conflicts || errAny?.body?.detail?.conflicts;
+      const conflicts = Array.isArray(rawConflicts) ? rawConflicts : undefined;
+      if (errAny?.status === 409 && conflicts && conflicts.length > 0) {
+        setColumnConflicts(conflicts);
+        // Pre-fill any rename slots already provided so the curator's prior
+        // edits aren't blown away on resubmit.
+        setColumnRenames((prev) => {
+          const next = { ...prev };
+          for (const c of conflicts) {
+            for (const n of c.sourceNodes) {
+              const k = `${n}__${c.name}`;
+              if (!(k in next)) next[k] = '';
+            }
+          }
+          return next;
+        });
+        setError(`Cross-DS column collision detected on ${conflicts.length} name(s). Rename below, then click Publish.`);
       } else {
-        setError(msg);
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('already exists')) {
+          setError('Page already exists. Tick "Overwrite existing" to replace it.');
+        } else {
+          setError(msg);
+        }
       }
     } finally {
       setSubmitting(false);
@@ -4197,6 +4260,90 @@ function PublishDagDialog({
               </label>
             </div>
           </div>
+
+          {/* XDB-TIER-B-L4.1: render-mode picker — orthogonal to Display mode. */}
+          {/* Display mode = how the page is laid out (tabular vs explorer). */}
+          {/* Render mode = is the data frozen-at-publish or re-executed-live. */}
+          {/* The two compose freely: tabular+snapshot, explorer+live, etc.   */}
+          <div>
+            <label className="block text-slate-700 font-medium mb-1">Render mode</label>
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-start gap-2 text-slate-700">
+                <input
+                  type="radio"
+                  name="publish-render-mode"
+                  value="snapshot"
+                  checked={renderMode === 'snapshot'}
+                  onChange={() => setRenderMode('snapshot')}
+                  data-testid="publish-render-mode-snapshot"
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">Snapshot</span>
+                  <span className="text-[10px] text-slate-500 block">
+                    Freeze DAG outputs at publish time. Fast, but data + authz are stale until re-publish.
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-slate-700">
+                <input
+                  type="radio"
+                  name="publish-render-mode"
+                  value="live"
+                  checked={renderMode === 'live'}
+                  onChange={() => setRenderMode('live')}
+                  data-testid="publish-render-mode-live"
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">Live</span>
+                  <span className="text-[10px] text-slate-500 block">
+                    Re-execute the DAG every render under the caller's authz. Slower; role changes take effect immediately.
+                  </span>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          {/* XDB-TIER-B-L4.3: cross-DS column-collision rename form.  Only  */}
+          {/* shown after a 409 surfaces conflicts; the curator then names  */}
+          {/* each colliding column and resubmits.                          */}
+          {columnConflicts.length > 0 && (
+            <div className="bg-amber-50 border border-amber-300 rounded p-2" data-testid="publish-column-renames">
+              <div className="font-medium text-amber-900 mb-1.5">
+                Cross-DS column collisions ({columnConflicts.length})
+              </div>
+              <div className="text-[10px] text-slate-600 mb-2">
+                Two or more exposed nodes emit the same flat column name. Pick a unique flat name for each — leave at most one node per row blank to keep its original name.
+              </div>
+              <div className="space-y-2">
+                {columnConflicts.map((c) => (
+                  <div key={c.name} className="border border-amber-200 rounded p-1.5 bg-white">
+                    <div className="font-mono text-[11px] text-slate-700 mb-1">
+                      Conflict: <span className="font-semibold">{c.name}</span>
+                    </div>
+                    <div className="space-y-1">
+                      {c.sourceNodes.map((n) => {
+                        const k = `${n}__${c.name}`;
+                        return (
+                          <div key={k} className="flex items-center gap-1.5">
+                            <span className="font-mono text-[10px] text-slate-500 shrink-0">{n}.{c.name} →</span>
+                            <input
+                              data-testid={`publish-rename-${k}`}
+                              value={columnRenames[k] || ''}
+                              onChange={(e) => setColumnRenames((prev) => ({ ...prev, [k]: e.target.value }))}
+                              placeholder={`e.g. ${n}_${c.name}`}
+                              className="flex-1 border border-slate-200 rounded px-1.5 py-0.5 text-[11px] font-mono"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <label className="flex items-center gap-2 text-slate-700">
             <input

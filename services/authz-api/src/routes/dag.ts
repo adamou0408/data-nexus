@@ -16,6 +16,7 @@ import { runOperator, deriveOperatorResourceId, UpstreamFrame } from '../lib/dag
 import { emitPageSnapshot, deriveSinkUpstreamFn, SinkValidationError, SINK_KINDS, isSinkKind, type SinkKind } from '../lib/sink-runtime';
 import { findSingleLeaf, deriveFormSchema, executeDagAsPublished, PublishedDagSnapshot, DagNode, DagEdge } from '../lib/dag-exec';
 import { expandSubdags, SubdagExpansionError, EmbeddedSubdagRecord } from '../lib/dag-subdag-resolver';
+import { detectColumnConflicts, validatePublishPayload } from '../lib/dag-publish';
 import { requireRole } from '../middleware/authz';
 import { runOracleDirect, OracleDirectError } from '../lib/oracle-direct';
 import { pgTypeToLogical, LogicalType } from '../lib/db-driver';
@@ -385,15 +386,13 @@ dagRouter.post('/execute-node', async (req, res) => {
       }
       const childSnap = snapRes.rows[0].dag_snapshot as PublishedDagSnapshot;
 
-      // Same-datasource invariant — mirrors expandSubdags at publish. Different
-      // ds in composer test would mean we're querying the wrong PG cluster.
-      if (childSnap.data_source_id !== data_source_id) {
-        return res.status(400).json({
-          error: 'subdag cross-datasource',
-          detail: `child ds='${childSnap.data_source_id}' != parent ds='${data_source_id}'`,
-          node_id: node.id,
-        });
-      }
+      // XDB-TIER-B-L4: cross-DS subdag is now permitted. Each child node in
+      // the child snapshot already carries its own `data_source_id` (V086-FU
+      // L2), and `executeDagAsPublished` dispatches per-node on that field.
+      // The parent's `data_source_id` is just the dag-level default for nodes
+      // that don't stamp their own — it does NOT need to equal the child's.
+      // We keep the check as a soft-warn audit context (not a 4xx) so
+      // operators can still see when a subdag drifts to a foreign DS.
 
       // Surface bound_subdag_params as formInputs — these override child fn
       // user_input_param defaults exactly the way expandSubdags will demote
@@ -997,6 +996,7 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
   const {
     page_id, title, parent_page_id, parent_module_id, description,
     overwrite, grant_read_to_roles, display_mode,
+    render_mode, column_renames,
   } = req.body as {
     page_id?: string;
     title?: string;
@@ -1013,6 +1013,16 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
     // 'explorer' (multi-leaf navigable DAG). Validated as enum below; the
     // value is persisted in dag_snapshot for config-exec to surface back.
     display_mode?: 'tabular' | 'explorer';
+    // XDB-TIER-B-L4: orthogonal axis to display_mode.
+    //   'snapshot' = freeze DAG outputs at publish time, return verbatim on
+    //                render. Authz baked at freeze time. Fast, but stale.
+    //   'live'     = re-execute DAG at render time under caller's authz.
+    //                Slower but role-changes take effect immediately.
+    render_mode?: 'snapshot' | 'live';
+    // XDB-TIER-B-L4.3: cross-DS rename map.
+    //   Shape: { '<node_id>__<column_name>': '<new_flat_name>', ... }
+    //   Required when exposed nodes from different DSes share a column name.
+    column_renames?: Record<string, string>;
   };
   const userId = getUserId(req);
 
@@ -1031,6 +1041,16 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
   if (displayMode !== 'tabular' && displayMode !== 'explorer') {
     return res.status(400).json({ error: `display_mode must be 'tabular' or 'explorer'` });
   }
+  // XDB-TIER-B-L4: render_mode default = 'snapshot' (matches V092 column
+  // default + the publish-time freeze contract). Curators opt into 'live'
+  // when they want render-time authz re-checks at the cost of re-execution.
+  const renderMode: 'snapshot' | 'live' = render_mode ?? 'snapshot';
+  if (renderMode !== 'snapshot' && renderMode !== 'live') {
+    return res.status(400).json({ error: `render_mode must be 'snapshot' or 'live'` });
+  }
+  const columnRenames: Record<string, string> = (column_renames && typeof column_renames === 'object' && !Array.isArray(column_renames))
+    ? (column_renames as Record<string, string>)
+    : {};
 
   const grantRoles = Array.isArray(grant_read_to_roles) && grant_read_to_roles.length > 0
     ? grant_read_to_roles
@@ -1121,13 +1141,17 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       return res.status(400).json({ error: 'DAG validation failed', issues: errs });
     }
 
-    // 3. Derive form_schema. Refuse publish if no user_input_params anywhere
-    // (a published page with zero inputs would be redundant — that's a snapshot).
+    // 3. Derive form_schema. In LIVE mode we still require at least one form
+    // input — a parameterless live page would re-execute the same DAG every
+    // render with no user-controllable knobs, which is just an expensive
+    // snapshot. SNAPSHOT mode happily accepts zero form inputs (the frozen
+    // outputs ARE the page; "Save as Page" essentially becomes
+    // "publish + render_mode=snapshot + form_schema=[]"). XDB-TIER-B-L4.
     const formSchema = deriveFormSchema(nodes);
-    if (formSchema.length === 0) {
+    if (formSchema.length === 0 && renderMode === 'live') {
       await client.query('ROLLBACK');
       return res.status(400).json({
-        error: 'DAG has no user_input_params — nothing to render as a form. Mark at least one bound_param as form input in Composer, or use Save as Page (snapshot) instead.',
+        error: 'DAG has no user_input_params — a parameterless live page is just an expensive snapshot. Either mark at least one bound_param as a form input, or set render_mode=snapshot.',
       });
     }
 
@@ -1164,7 +1188,12 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
         exposedNodeIds.push(n.id);
       }
     }
-    const dagSnapshot = {
+    const dagSnapshotBase: PublishedDagSnapshot & {
+      embedded_subdags?: EmbeddedSubdagRecord[];
+      cached_outputs?: Record<string, unknown>;
+      cached_at?: string;
+      cached_columns?: Array<{ name: string; semantic_type?: string; dataTypeID?: number }>;
+    } = {
       data_source_id: dataSourceId,
       nodes,
       edges,
@@ -1178,6 +1207,83 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       // parent embeds at least one child; absent for plain DAGs.
       ...(embeddedSubdags.length > 0 ? { embedded_subdags: embeddedSubdags } : {}),
     };
+
+    // 4b. XDB-TIER-B-L4.3: column-conflict gate. When exposed nodes from
+    // different DSes (or even same DS) share a flat column name, the
+    // curator must supply column_renames so the consumer-side flat
+    // namespace is unambiguous. validatePublishPayload runs the conflict
+    // detection AND validates the rename map; we return 409 with the
+    // conflict list when the curator hasn't resolved them yet.
+    const validation409 = validatePublishPayload(dagSnapshotBase, renderMode, columnRenames);
+    if (!validation409.ok) {
+      await client.query('ROLLBACK');
+      const status = validation409.error === 'column_conflicts_unresolved' ? 409 : 400;
+      return res.status(status).json({
+        error: validation409.error,
+        detail: validation409.detail,
+        conflicts: validation409.error === 'column_conflicts_unresolved'
+          ? (validation409.detail as { conflicts: unknown }).conflicts
+          : undefined,
+      });
+    }
+
+    // 4c. XDB-TIER-B-L4.1: SNAPSHOT freeze step. When render_mode='snapshot',
+    // we run the DAG ONCE at publish time, under the curator's identity, and
+    // bake the full multi-output map into dag_snapshot.cached_outputs. The
+    // /config-exec render path then returns those frozen rows verbatim
+    // (with column_renames applied) — no per-render re-execution, and
+    // authz is implicitly the curator's at freeze time.
+    //
+    // Live mode skips this step; the executor runs every render under the
+    // caller's identity instead.
+    let cachedOutputs: Record<string, unknown> | undefined;
+    if (renderMode === 'snapshot') {
+      try {
+        // Resolve curator's groups for the freeze run (mirrors normal
+        // /config-exec behaviour but with userId = caller of /publish).
+        const grpRes = await client.query(
+          'SELECT authz_resolve_user_groups($1) AS groups',
+          [userId]
+        );
+        const groupRaw: string[] = grpRes.rows[0]?.groups || [];
+        const groups = groupRaw.map((g) => (g.startsWith('group:') ? g.slice('group:'.length) : g));
+
+        const formInputs: Record<string, unknown> = {};
+        for (const f of formSchema) {
+          if (f.default !== null && f.default !== undefined) formInputs[f.name] = f.default;
+        }
+        const result = await executeDagAsPublished({
+          dagSnapshot: dagSnapshotBase,
+          userId, groups,
+          formInputs,
+          publishedDagRid: `published_dag:${dagId}`,
+        });
+        cachedOutputs = {
+          outputs: result.outputs,
+          primary_output_node_id: result.primary_output_node_id,
+          frozen_form_inputs: formInputs,
+          row_count: result.row_count,
+          truncated: result.truncated,
+        };
+        dagSnapshotBase.cached_outputs = cachedOutputs;
+        dagSnapshotBase.cached_at = new Date().toISOString();
+        dagSnapshotBase.cached_columns = result.columns;
+      } catch (err) {
+        await client.query('ROLLBACK');
+        const msg = err instanceof Error ? err.message : String(err);
+        return res.status(400).json({
+          error: 'snapshot_freeze_failed',
+          detail: `render_mode='snapshot' requires the DAG to execute successfully at publish time so consumer-side renders can return the frozen outputs. The freeze run failed: ${msg}`,
+        });
+      }
+    }
+
+    // Re-publish flip: when overwriting and switching FROM snapshot TO live
+    // mode, the cached_outputs in the prior snapshot would be stale. We
+    // simply don't carry them over — `dagSnapshotBase` is built fresh each
+    // publish, so live mode's snapshot has no `cached_outputs` field.
+
+    const dagSnapshot = dagSnapshotBase;
 
     // 5. parent_page_id existence check (if provided).
     if (parent_page_id) {
@@ -1278,11 +1384,14 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
                 published_dag_id = $6,
                 dag_snapshot = $7::jsonb,
                 form_schema = $8::jsonb,
+                render_mode = $9,
+                column_renames = $10::jsonb,
                 is_active = TRUE
           WHERE page_id = $1`,
         [
           page_id, title, parent_page_id || null, description || null,
           publishedDagRid, dagId, JSON.stringify(dagSnapshot), JSON.stringify(formSchema),
+          renderMode, JSON.stringify(columnRenames),
         ]
       );
       pageStatus = 'overwritten';
@@ -1290,11 +1399,13 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       await client.query(
         `INSERT INTO authz_ui_page
            (page_id, title, layout, parent_page_id, description, icon,
-            resource_id, published_dag_id, dag_snapshot, form_schema, is_active)
-         VALUES ($1, $2, 'table', $3, $4, 'workflow', $5, $6, $7::jsonb, $8::jsonb, TRUE)`,
+            resource_id, published_dag_id, dag_snapshot, form_schema,
+            render_mode, column_renames, is_active)
+         VALUES ($1, $2, 'table', $3, $4, 'workflow', $5, $6, $7::jsonb, $8::jsonb, $9, $10::jsonb, TRUE)`,
         [
           page_id, title, parent_page_id || null, description || null,
           publishedDagRid, dagId, JSON.stringify(dagSnapshot), JSON.stringify(formSchema),
+          renderMode, JSON.stringify(columnRenames),
         ]
       );
       pageStatus = 'created';
@@ -1323,6 +1434,12 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
         // EXPLORER-MODE-V01: capture mode for forensics — same publish
         // primitive can now produce two renderer-distinct artifacts.
         display_mode: displayMode,
+        // XDB-TIER-B-L4: render_mode + cross-DS metadata so the audit row
+        // explains "snapshot frozen at this time" vs "live re-execute on
+        // every render", and how many DSes the DAG fans out to.
+        render_mode: renderMode,
+        column_renames_count: Object.keys(columnRenames).length,
+        cross_ds_count: new Set(nodes.map((n) => n.data?.data_source_id || dataSourceId)).size,
         embedded_subdag_rids: embeddedSubdags.map((e) => ({ subdag_node_id: e.subdag_node_id, rid: e.child_rid })),
         form_field_count: formSchema.length, granted_roles: grantRoles,
         page_status: pageStatus,
@@ -1355,6 +1472,12 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       embedded_subdags: embeddedSubdags,
       form_schema: formSchema,
       granted_read_to: grantRoles,
+      // XDB-TIER-B-L4: echo the chosen render_mode + final column rename
+      // map back so the front-end can show "Published as snapshot" badges
+      // immediately without re-fetching the page detail.
+      render_mode: renderMode,
+      column_renames: columnRenames,
+      display_mode: displayMode,
     });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch { /* noop */ }

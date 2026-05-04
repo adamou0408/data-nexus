@@ -115,13 +115,13 @@ export async function expandSubdags(opts: SubdagExpansionInput): Promise<SubdagE
       );
     }
 
-    // Same-datasource constraint (Fork D — v01 disallows cross-ds).
-    if (childSnap.data_source_id !== parentDataSourceId) {
-      throw new SubdagExpansionError(
-        subdag.id, 'cross_ds',
-        `child data_source_id='${childSnap.data_source_id}' != parent='${parentDataSourceId}'`
-      );
-    }
+    // XDB-TIER-B-L4: cross-DS subdag is now permitted. We don't reject when
+    // child.data_source_id differs from parent's. Per-node DS stamping (L2)
+    // lets the executor route each fn against the right pool, so a subdag
+    // that lives on ds_a can embed cleanly into a parent on ds_b — the
+    // child's nodes keep their own data_source_id stamp. We keep the
+    // 'cross_ds' reason in the enum for telemetry but never throw it now;
+    // future stricter modes (e.g. project-level isolation) can re-enable.
 
     // Defense in depth: child snapshots are always flat post-publish, so
     // an unresolved subdag inside should be impossible. If it shows up,
@@ -169,6 +169,16 @@ export async function expandSubdags(opts: SubdagExpansionInput): Promise<SubdagE
       if (cn.type === 'sink') continue;                           // sinks don't replay at runtime
 
       const newData: DagNode['data'] = { ...cn.data };
+
+      // XDB-TIER-B-L4: stamp child-DAG DS onto the embedded child node when
+      // it lacks its own data_source_id. Without this, a cross-DS embed
+      // would fall back to the *parent* dag's data_source_id at run time
+      // (executor's `||` chain) and query the wrong pool. Pre-L2 child
+      // snapshots may not have per-node DS, so backfill from the child's
+      // dag-level default to keep them on their original DS.
+      if ((cn.type === 'fn' || !cn.type) && !newData.data_source_id && childSnap.data_source_id) {
+        newData.data_source_id = childSnap.data_source_id;
+      }
 
       if ((cn.type === 'fn' || !cn.type) && Array.isArray(cn.data?.user_input_params)) {
         const origInputs = cn.data.user_input_params || [];

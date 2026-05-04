@@ -85,6 +85,21 @@ export function PageInspector({ target, onClose, onOpen }: InspectorRendererProp
   const parentModuleId =
     state.kind === 'ready' ? state.detail.page.parent_module_id : null;
 
+  // XDB-TIER-B-L4: helper — derive cross-DS / render-mode chip metadata so
+  // the header can show them at-a-glance without scrolling into the body.
+  const xdbBadges = (() => {
+    if (state.kind !== 'ready') return null;
+    const p = state.detail.page;
+    const dsCount = (p.data_source_ids || []).length;
+    const isCrossDs = dsCount > 1;
+    return {
+      isCrossDs,
+      dsCount,
+      renderMode: p.render_mode,
+      cachedAt: p.snapshot_cached_at,
+    };
+  })();
+
   return (
     <div className="flex flex-col h-full bg-white dark:bg-zinc-900">
       {/* Header */}
@@ -105,6 +120,38 @@ export function PageInspector({ target, onClose, onOpen }: InspectorRendererProp
           modules={modules}
           leaf={{ label: headerTitle }}
         />
+        {/* XDB-TIER-B-L4: at-a-glance chips for the new render_mode axis     */}
+        {/* + cross-DS shape.  Snapshot chip surfaces cached_at; live chip    */}
+        {/* says "re-runs each render".  Cross-DS badge appears when the     */}
+        {/* snapshot's nodes touch >1 distinct data_source_id.               */}
+        {xdbBadges && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            <span
+              className={
+                xdbBadges.renderMode === 'live'
+                  ? 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 border border-emerald-300 text-emerald-800'
+                  : 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-sky-50 border border-sky-300 text-sky-800'
+              }
+              title={
+                xdbBadges.renderMode === 'live'
+                  ? 'Re-executes the DAG under the caller authz on every render'
+                  : `Frozen at publish time${xdbBadges.cachedAt ? ` (${xdbBadges.cachedAt})` : ''}`
+              }
+              data-testid="page-inspector-render-mode"
+            >
+              {xdbBadges.renderMode === 'live' ? 'Live' : 'Snapshot'}
+            </span>
+            {xdbBadges.isCrossDs && (
+              <span
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 border border-amber-300 text-amber-800"
+                title={`This DAG fans out across ${xdbBadges.dsCount} data sources`}
+                data-testid="page-inspector-cross-ds"
+              >
+                Cross-DS · {xdbBadges.dsCount} sources
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Body */}

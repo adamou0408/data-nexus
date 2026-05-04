@@ -73,6 +73,22 @@ function stripLeadingSqlComments(sql: string): string {
   }
 }
 
+// XDB-TIER-B-L4.3: ApiError carries structured response so callers can
+// branch on `.status` (e.g. 409 column-conflict) and read `.body` for
+// the structured payload (e.g. `body.conflicts`).  Pre-existing call
+// sites that just `String(err)` keep working because `.message` is
+// still the human-readable head + detail combo they got before.
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    public body: { error?: string; detail?: unknown; [k: string]: unknown },
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -96,7 +112,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     // underlying PG / connection error there. Keeping it out of the toast forced curators
     // to open DevTools to diagnose run-all failures (see Q2 redesign 2026-04-29).
     const head = body.error || `API error: ${res.status}`;
-    throw new Error(body.detail ? `${head}: ${body.detail}` : head);
+    const message = body.detail
+      ? `${head}: ${typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail)}`
+      : head;
+    throw new ApiError(res.status, body, message);
   }
   return res.json();
 }
@@ -701,6 +720,14 @@ export const api = {
     // 'explorer' (multi-leaf navigable DAG). Server validates the enum and
     // applies different leaf + exposed_node_ids semantics per mode.
     display_mode?: 'tabular' | 'explorer';
+    // XDB-TIER-B-L4.1: 'snapshot' (default, freeze outputs at publish) or
+    // 'live' (re-execute under caller's authz on every render).  Orthogonal
+    // to display_mode — both axes compose freely.
+    render_mode?: 'snapshot' | 'live';
+    // XDB-TIER-B-L4.3: cross-DS column-rename map.  Keys are
+    // `${node_id}__${column_name}`; values are the new flat name shown to
+    // the consumer.  Required when exposed nodes share a column name.
+    column_renames?: Record<string, string>;
   }) =>
     request<{
       status: 'created' | 'overwritten';
@@ -710,6 +737,9 @@ export const api = {
       output_node_id: string;
       form_schema: Array<{ name: string; type: string; pg_type?: string; required: boolean; default: unknown; help_text?: string; source_node_id: string }>;
       granted_read_to: string[];
+      render_mode?: 'snapshot' | 'live';
+      column_renames?: Record<string, string>;
+      display_mode?: 'tabular' | 'explorer';
     }>(
       `/dag/${encodeURIComponent(resource_id)}/publish`,
       { method: 'POST', body: JSON.stringify(payload) }
@@ -1635,7 +1665,17 @@ export type PagesAdminRow = {
 
 /** PUB-PAGES-ADMIN-V01 Part E: row-expand detail. */
 export type PagesAdminDetail = {
-  page: Omit<PagesAdminRow, 'embedders_count' | 'last_published_at' | 'last_published_by'>;
+  page: Omit<PagesAdminRow, 'embedders_count' | 'last_published_at' | 'last_published_by'> & {
+    // XDB-TIER-B-L4: orthogonal axes for cross-DS publish + render-time
+    // behaviour.  render_mode = freeze-vs-live; display_mode =
+    // tabular-vs-explorer; data_source_ids = every DS the snapshot's nodes
+    // touch (length>1 ⇒ cross-DS badge in the inspector).
+    render_mode: 'snapshot' | 'live';
+    display_mode: 'tabular' | 'explorer';
+    column_renames: Record<string, string>;
+    data_source_ids: string[];
+    snapshot_cached_at: string | null;
+  };
   snapshot_meta: {
     node_count: number;
     output_node_id: string | null;
