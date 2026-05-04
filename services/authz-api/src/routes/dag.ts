@@ -14,7 +14,7 @@ import { validateDag, DagDoc } from '../lib/dag-validate';
 import { applyAutoCasts, AutoCastInsert } from '../lib/dag-auto-cast';
 import { runOperator, deriveOperatorResourceId, UpstreamFrame } from '../lib/dag-operators';
 import { emitPageSnapshot, deriveSinkUpstreamFn, SinkValidationError, SINK_KINDS, isSinkKind, type SinkKind } from '../lib/sink-runtime';
-import { findSingleLeaf, deriveFormSchema, DagNode, DagEdge } from '../lib/dag-exec';
+import { findSingleLeaf, deriveFormSchema, executeDagAsPublished, PublishedDagSnapshot, DagNode, DagEdge } from '../lib/dag-exec';
 import { expandSubdags, SubdagExpansionError, EmbeddedSubdagRecord } from '../lib/dag-subdag-resolver';
 import { requireRole } from '../middleware/authz';
 
@@ -74,11 +74,58 @@ dagRouter.get('/', async (req, res) => {
   }
 });
 
+// GET /published-list?data_source_id=<id>
+// Lists published_dag rids the caller can read, filtered to one ds (subdag
+// requires same-ds). Used by DagTab Inspector dropdown.
+//
+// MUST be registered before `/:id` — Express matches in order, and `/:id`
+// would otherwise capture `/published-list` with id='published-list' and 404.
+dagRouter.get('/published-list', async (req, res) => {
+  const userId = getUserId(req);
+  const dsId = req.query.data_source_id as string | undefined;
+  try {
+    const grpRes = await authzPool.query('SELECT authz_resolve_user_groups($1) AS groups', [userId]);
+    const groupsRaw: string[] = grpRes.rows[0]?.groups || [];
+    const groups = groupsRaw.map((g) => (g.startsWith('group:') ? g.slice('group:'.length) : g));
+
+    const params: unknown[] = [];
+    let sql = `SELECT page.resource_id AS rid,
+                      page.published_dag_id,
+                      page.title,
+                      page.dag_snapshot->>'data_source_id' AS data_source_id,
+                      page.dag_snapshot->>'output_node_id' AS output_node_id,
+                      page.dag_snapshot->'exposed_node_ids' AS exposed_node_ids
+                 FROM authz_ui_page page
+                WHERE page.is_active = TRUE
+                  AND page.published_dag_id IS NOT NULL`;
+    if (dsId) {
+      params.push(dsId);
+      sql += ` AND page.dag_snapshot->>'data_source_id' = $${params.length}`;
+    }
+    sql += ` ORDER BY page.title`;
+    const { rows } = await authzPool.query(sql, params);
+
+    // App-level authz filter — typical published_dag count is dozens, so
+    // N round-trips is fine; revisit if the catalog grows.
+    const allowed: typeof rows = [];
+    for (const row of rows) {
+      const chk = await authzPool.query(
+        'SELECT authz_check($1, $2, $3, $4) AS allowed',
+        [userId, groups, 'read', row.rid]
+      );
+      if (chk.rows[0]?.allowed) allowed.push(row);
+    }
+    res.json({ published_dags: allowed });
+  } catch (err) {
+    handleApiError(res, err);
+  }
+});
+
 // ─── Get one DAG ───
 dagRouter.get('/:id', async (req, res) => {
   try {
     const { rows } = await authzPool.query(
-      `SELECT resource_id, display_name, attributes
+      `SELECT resource_id, display_name, parent_id, attributes
        FROM authz_resource
        WHERE resource_id = $1 AND resource_type = 'dag' AND is_active = TRUE`,
       [req.params.id]
@@ -88,6 +135,7 @@ dagRouter.get('/:id', async (req, res) => {
     res.json({
       resource_id: r.resource_id,
       display_name: r.display_name,
+      parent_id: r.parent_id,
       ...r.attributes,
     });
   } catch (err) {
@@ -241,7 +289,7 @@ dagRouter.post('/execute-node', async (req, res) => {
         resource_id?: string;              // fn nodes only — operator nodes derive from upstream
         inputs?: Array<{ name: string; semantic_type?: string; hasDefault?: boolean }>;
         bound_params?: Record<string, unknown>;
-        op_kind?: 'literal' | 'filter' | 'cast' | 'aggregate';
+        op_kind?: 'literal' | 'filter' | 'cast' | 'aggregate' | 'sort' | 'limit' | 'projection';
         op_config?: Record<string, unknown>;
       };
     };
@@ -253,12 +301,119 @@ dagRouter.post('/execute-node', async (req, res) => {
   const userId = getUserId(req);
   const groups = (req.headers['x-user-groups'] as string || '').split(',').filter(Boolean);
 
+  // ── Sub-DAG dispatch (SUBDAG-HANDLE-V01) ──
+  // Composer pre-publish preview: load the child published_dag's snapshot and
+  // run it via the same executor BI users hit at runtime. Returns the chosen
+  // exposed output's frame so the parent's downstream nodes can chain on row0.
+  // Authz: caller must have `read` on the child rid (transitive — same gate
+  // expandSubdags applies at publish time).
+  if (node.type === 'subdag') {
+    const subData = node.data as DagNode['data'] & {
+      subdag_source_output_node_id?: string;
+      bound_subdag_params?: Record<string, unknown>;
+    };
+    const childRid = subData.resource_id || '';
+    if (!childRid.startsWith('published_dag:')) {
+      return res.status(400).json({
+        error: 'subdag misconfigured',
+        detail: `data.resource_id must start with 'published_dag:' (got: ${childRid || 'empty'}). Pick a published_dag in the Inspector.`,
+        node_id: node.id,
+      });
+    }
+
+    try {
+      const chk = await authzPool.query(
+        'SELECT authz_check($1, $2, $3, $4) AS allowed',
+        [userId, groups, 'read', childRid]
+      );
+      if (!chk.rows[0]?.allowed) {
+        audit({
+          access_path: 'B', subject_id: userId,
+          action_id: 'dag_subdag_exec', resource_id: childRid,
+          decision: 'deny', context: { node_id: node.id },
+        });
+        return res.status(403).json({ error: 'Forbidden', detail: `${userId} lacks read on ${childRid}` });
+      }
+
+      const snapRes = await authzPool.query(
+        `SELECT dag_snapshot FROM authz_ui_page WHERE resource_id = $1 AND is_active = TRUE`,
+        [childRid]
+      );
+      if (snapRes.rowCount === 0) {
+        return res.status(404).json({ error: 'published_dag not found', detail: childRid });
+      }
+      const childSnap = snapRes.rows[0].dag_snapshot as PublishedDagSnapshot;
+
+      // Same-datasource invariant — mirrors expandSubdags at publish. Different
+      // ds in composer test would mean we're querying the wrong PG cluster.
+      if (childSnap.data_source_id !== data_source_id) {
+        return res.status(400).json({
+          error: 'subdag cross-datasource',
+          detail: `child ds='${childSnap.data_source_id}' != parent ds='${data_source_id}'`,
+          node_id: node.id,
+        });
+      }
+
+      // Surface bound_subdag_params as formInputs — these override child fn
+      // user_input_param defaults exactly the way expandSubdags will demote
+      // non-surfaced inputs at publish. Surfaced inputs without a value here
+      // fall back to the child fn's own bound default (preview-only behaviour).
+      const formInputs: Record<string, unknown> = { ...(subData.bound_subdag_params || {}) };
+
+      const result = await executeDagAsPublished({
+        dagSnapshot: childSnap,
+        userId, groups,
+        formInputs,
+        publishedDagRid: childRid,
+      });
+
+      // Pick the chosen exposed output (defaults to leaf). Fall back to leaf
+      // if curator hasn't picked yet or the picked id was dropped from
+      // exposed_node_ids on a re-publish.
+      const chosenId = subData.subdag_source_output_node_id || childSnap.output_node_id;
+      const out = result.outputs[chosenId] || result.outputs[childSnap.output_node_id];
+      if (!out) {
+        return res.status(500).json({
+          error: 'subdag output missing',
+          detail: `no frame for exposed_node_id='${chosenId}' (child leaf='${childSnap.output_node_id}')`,
+          node_id: node.id,
+        });
+      }
+
+      audit({
+        access_path: 'B', subject_id: userId,
+        action_id: 'dag_subdag_exec', resource_id: childRid,
+        decision: 'allow',
+        context: {
+          data_source_id, node_id: node.id,
+          chosen_output: chosenId,
+          row_count: out.row_count, elapsed_ms: result.elapsed_ms,
+        },
+      });
+
+      return res.json({
+        status: 'ok',
+        node_id: node.id,
+        resource_id: childRid,
+        columns: out.columns,
+        rows: out.rows,
+        row_count: out.row_count,
+        truncated: out.truncated,
+        elapsed_ms: result.elapsed_ms,
+        lineage: result.lineage,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return res.status(400).json({ error: 'Subdag execution failed', detail: msg, node_id: node.id });
+    }
+  }
+
   // ── Operator dispatch (composer-operator-and-sink plan §3.3) ──
   // Operators inherit AuthZ from the upstream fn whose rows they shape; they
   // do not introduce new data access surface. Audit still fires under the
   // upstream's resource_id for forensic continuity.
   if (node.type && node.type !== 'fn') {
-    const opKind = node.data.op_kind || (node.type as 'literal' | 'filter' | 'cast' | 'aggregate');
+    const opKind = node.data.op_kind || (node.type as 'literal' | 'filter' | 'cast' | 'aggregate' | 'sort' | 'limit' | 'projection');
     const inbound = edges.filter((e) => e.target === node.id);
     const inheritedRid = deriveOperatorResourceId({
       op_kind: opKind,
@@ -697,12 +852,17 @@ dagRouter.post('/execute-sink', requirePageAuthor, async (req, res) => {
 dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
   const dagId = req.params.id;
   const {
-    page_id, title, parent_page_id, description,
+    page_id, title, parent_page_id, parent_module_id, description,
     overwrite, grant_read_to_roles,
   } = req.body as {
     page_id?: string;
     title?: string;
     parent_page_id?: string;
+    // PUB-PAGES-ADMIN-V01 Part A: catalog-tree parent for the page mirror
+    // (`authz_resource.parent_id`). Distinct from `parent_page_id` which is
+    // the legacy renderer drilldown (`authz_ui_page.parent_page_id`). When
+    // omitted, falls back to the DAG's own parent (existing behavior).
+    parent_module_id?: string;
     description?: string;
     overwrite?: boolean;
     grant_read_to_roles?: string[];
@@ -844,6 +1004,20 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       }
     }
 
+    // 5b. PUB-PAGES-ADMIN-V01 Part A: parent_module_id (catalog-tree parent
+    // for the page mirror). Validate it points at a real active module.
+    if (parent_module_id) {
+      const mCheck = await client.query(
+        `SELECT 1 FROM authz_resource
+          WHERE resource_id = $1 AND resource_type = 'module' AND is_active = TRUE`,
+        [parent_module_id]
+      );
+      if (mCheck.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `parent_module_id not found or inactive: ${parent_module_id}` });
+      }
+    }
+
     // 6. FK-safe ordering: insert authz_resource rows BEFORE the
     // authz_ui_page row that references them via resource_id +
     // published_dag_id. The publish-mode mutex constraint
@@ -851,7 +1025,9 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
     // enforces snapshot/published exclusivity.
     const publishedDagRid = `published_dag:${dagId}`;
     const pageRid = `page:${page_id}`;
-    const pageParent = dagParent || 'module:pg_tiptop_v1';
+    // Curator-chosen catalog parent wins; falls back to DAG's own parent;
+    // last-resort default keeps demo seed flow unchanged.
+    const pageParent = parent_module_id || dagParent || 'module:pg_tiptop_v1';
 
     const exists = await client.query(`SELECT 1 FROM authz_ui_page WHERE page_id = $1`, [page_id]);
     let pageStatus: 'created' | 'overwritten';
@@ -999,51 +1175,9 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
 });
 
 // ─── DAG-SUBDAG-EMBED-V01: discovery endpoints for the Composer subdag picker ───
-// All three are read-only, gated by per-resource authz_check (read).
-
-// GET /published-list?data_source_id=<id>
-// Lists published_dag rids the caller can read, filtered to one ds (subdag
-// requires same-ds). Used by DagTab Inspector dropdown.
-dagRouter.get('/published-list', async (req, res) => {
-  const userId = getUserId(req);
-  const dsId = req.query.data_source_id as string | undefined;
-  try {
-    const grpRes = await authzPool.query('SELECT authz_resolve_user_groups($1) AS groups', [userId]);
-    const groupsRaw: string[] = grpRes.rows[0]?.groups || [];
-    const groups = groupsRaw.map((g) => (g.startsWith('group:') ? g.slice('group:'.length) : g));
-
-    const params: unknown[] = [];
-    let sql = `SELECT page.resource_id AS rid,
-                      page.published_dag_id,
-                      page.title,
-                      page.dag_snapshot->>'data_source_id' AS data_source_id,
-                      page.dag_snapshot->>'output_node_id' AS output_node_id,
-                      page.dag_snapshot->'exposed_node_ids' AS exposed_node_ids
-                 FROM authz_ui_page page
-                WHERE page.is_active = TRUE
-                  AND page.published_dag_id IS NOT NULL`;
-    if (dsId) {
-      params.push(dsId);
-      sql += ` AND page.dag_snapshot->>'data_source_id' = $${params.length}`;
-    }
-    sql += ` ORDER BY page.title`;
-    const { rows } = await authzPool.query(sql, params);
-
-    // App-level authz filter — typical published_dag count is dozens, so
-    // N round-trips is fine; revisit if the catalog grows.
-    const allowed: typeof rows = [];
-    for (const row of rows) {
-      const chk = await authzPool.query(
-        'SELECT authz_check($1, $2, $3, $4) AS allowed',
-        [userId, groups, 'read', row.rid]
-      );
-      if (chk.rows[0]?.allowed) allowed.push(row);
-    }
-    res.json({ published_dags: allowed });
-  } catch (err) {
-    handleApiError(res, err);
-  }
-});
+// (See `/published-list` above — registered before `/:id` to avoid shadowing.)
+// The two routes below are safe here: their `/published/:rid/...` shape has a
+// trailing segment, so `/:id` cannot match.
 
 // GET /published/:rid/snapshot-meta
 // Returns metadata the Composer needs to wire a subdag node: data source,
@@ -1070,6 +1204,7 @@ dagRouter.get('/published/:rid/snapshot-meta', async (req, res) => {
               dag_snapshot->>'data_source_id' AS data_source_id,
               dag_snapshot->>'output_node_id' AS output_node_id,
               dag_snapshot->'exposed_node_ids' AS exposed_node_ids,
+              dag_snapshot AS dag_snapshot,
               form_schema
          FROM authz_ui_page
         WHERE resource_id = $1 AND is_active = TRUE`,
@@ -1078,7 +1213,30 @@ dagRouter.get('/published/:rid/snapshot-meta', async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ error: `published_dag not found: ${rid}` });
     }
-    res.json(rows[0]);
+    const row = rows[0];
+    // SUBDAG-HANDLE-V01: surface column-shaped outputs for each exposed node so
+    // the parent Composer can render per-column source handles on the subdag node
+    // (instead of the legacy single-`__downstream` placeholder). The parent
+    // curator wires column→fn-input edges; expandSubdags rewrites only `source`
+    // at publish time, leaving curator-supplied sourceHandle column names intact.
+    const snap = row.dag_snapshot || {};
+    const exposedIds: string[] = Array.isArray(snap.exposed_node_ids) && snap.exposed_node_ids.length > 0
+      ? snap.exposed_node_ids
+      : (snap.output_node_id ? [snap.output_node_id] : []);
+    const exposed_outputs: Record<string, Array<{ name: string; semantic_type?: string; pgType?: string }>> = {};
+    for (const id of exposedIds) {
+      const node = (snap.nodes || []).find((n: { id: string }) => n.id === id);
+      const outs = node?.data?.outputs || [];
+      exposed_outputs[id] = outs.map((o: { name: string; semantic_type?: string; pgType?: string }) => ({
+        name: o.name,
+        semantic_type: o.semantic_type,
+        pgType: o.pgType,
+      }));
+    }
+    // Strip dag_snapshot from response — it's an internal helper, not part of the
+    // external contract; clients should never read child internals directly.
+    const { dag_snapshot: _omit, ...rest } = row;
+    res.json({ ...rest, exposed_outputs });
   } catch (err) {
     handleApiError(res, err);
   }

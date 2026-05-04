@@ -6,7 +6,7 @@ import {
   type Node, type Edge, type NodeChange, type EdgeChange, type Connection, type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { api } from '../api';
+import { api, ModuleTreeNode } from '../api';
 import { isCompatibleHandle, checkHandleCompat } from '../utils/handleCompat';
 
 type DataSourceLite = { source_id: string; display_name: string; db_type: string };
@@ -14,11 +14,14 @@ import { useToast } from './Toast';
 import { useRenderTokens } from '../RenderTokensContext';
 import { PageHeader } from './shared/atoms/PageHeader';
 import { EmptyState } from './shared/atoms/EmptyState';
+import { ModuleBreadcrumb } from './shared/atoms/ModuleBreadcrumb';
 import {
   Workflow, Save, Trash2, Play, Plus, Search, CheckCircle2, AlertCircle,
   Loader2, Database, Sparkles, FileText, Undo2, Redo2, X,
   PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen,
   FileOutput, Upload,
+  Hash, Filter as FilterIcon, Replace, Sigma, ArrowDownAZ, Scissors, TableProperties,
+  type LucideIcon,
 } from 'lucide-react';
 
 // ── Types ──
@@ -50,14 +53,22 @@ type FnMeta = {
   return_shape: { shape: string; columns?: IO[] };
 };
 type ReturnShape = 'scalar' | 'table' | 'setof' | 'void' | 'unknown';
-type OpKind = 'literal' | 'filter' | 'cast' | 'aggregate';
-type AggregateFn = 'sum' | 'count' | 'min' | 'max' | 'avg';
+type OpKind = 'literal' | 'filter' | 'cast' | 'aggregate' | 'sort' | 'limit' | 'projection';
+type AggregateFn = 'sum' | 'count' | 'min' | 'max' | 'avg' | 'array_agg';
 type AggregateSpec = { fn: AggregateFn; column: string; alias?: string };
+// COMPOSER-OPS-V1-P0 — compound filter conditions. Backward compatible with the
+// legacy `{column, op, value}` single-cond payload; runtime detects shape.
+// Max nested depth 3 (enforced server-side in dag-operators.ts).
+type FilterLeaf = { column: string; op: 'eq' | 'ne' | 'in' | 'gt' | 'lt' | 'like'; value: string };
+type FilterCompound = FilterLeaf | { and: FilterCompound[] } | { or: FilterCompound[] };
 type OpConfig =
   | { kind: 'literal'; value: string; pgType: string; semantic_type?: string }
-  | { kind: 'filter'; column: string; op: 'eq' | 'ne' | 'in' | 'gt' | 'lt' | 'like'; value: string }
+  | ({ kind: 'filter' } & (FilterLeaf | { and: FilterCompound[] } | { or: FilterCompound[] }))
   | { kind: 'cast'; source_column: string; target_pgType: string; target_semantic_type?: string }
-  | { kind: 'aggregate'; group_by: string[]; aggregations: AggregateSpec[] };
+  | { kind: 'aggregate'; group_by: string[]; aggregations: AggregateSpec[] }
+  | { kind: 'sort'; order_by: Array<{ column: string; dir: 'asc' | 'desc' }> }
+  | { kind: 'limit'; n: number }
+  | { kind: 'projection'; keep?: string[]; rename?: Record<string, string>; add?: Array<{ name: string; expr: string; pgType?: string }> };
 
 type NodeData = {
   resource_id: string;
@@ -334,11 +345,14 @@ function FunctionNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
 // (`__upstream`) and one output (`__downstream` or `value` for literals).
 // Visual styling deliberately differs from fn nodes so curator sees at a
 // glance which nodes are platform primitives vs domain SQL fns.
-const OP_STYLES: Record<OpKind, { bg: string; accent: string; glyph: string }> = {
-  literal:   { bg: '#fff7ed', accent: '#ea580c', glyph: '◇' },
-  filter:    { bg: '#ecfdf5', accent: '#059669', glyph: '⚲' },
-  cast:      { bg: '#eff6ff', accent: '#2563eb', glyph: '⇄' },
-  aggregate: { bg: '#fffbeb', accent: '#b45309', glyph: 'Σ' },
+const OP_STYLES: Record<OpKind, { bg: string; accent: string; Icon: LucideIcon }> = {
+  literal:    { bg: '#fff7ed', accent: '#ea580c', Icon: Hash },
+  filter:     { bg: '#ecfdf5', accent: '#059669', Icon: FilterIcon },
+  cast:       { bg: '#eff6ff', accent: '#2563eb', Icon: Replace },
+  aggregate:  { bg: '#fffbeb', accent: '#b45309', Icon: Sigma },
+  sort:       { bg: '#faf5ff', accent: '#7c3aed', Icon: ArrowDownAZ },
+  limit:      { bg: '#fdf2f8', accent: '#be185d', Icon: Scissors },
+  projection: { bg: '#f0fdfa', accent: '#0d9488', Icon: TableProperties },
 };
 
 function OperatorNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
@@ -354,12 +368,28 @@ function OperatorNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
     const cfg = data.op_config as any;
     if (!cfg) return '(unconfigured)';
     if (opKind === 'literal') return `= ${cfg.value ?? '?'} :: ${cfg.pgType || 'text'}`;
-    if (opKind === 'filter') return `${cfg.column || '?'} ${cfg.op || 'eq'} ${cfg.value ?? '?'}`;
+    if (opKind === 'filter') {
+      // Compound shape detected by `and`/`or` keys; mirrors runtime detection.
+      if (Array.isArray(cfg.and)) return `AND (${cfg.and.length})`;
+      if (Array.isArray(cfg.or)) return `OR (${cfg.or.length})`;
+      return `${cfg.column || '?'} ${cfg.op || 'eq'} ${cfg.value ?? '?'}`;
+    }
     if (opKind === 'cast') return `${cfg.source_column || '?'} → ${cfg.target_pgType || 'text'}`;
     if (opKind === 'aggregate') {
       const grp = (cfg.group_by || []).length > 0 ? `by ${(cfg.group_by || []).join(',')}` : '(no groups)';
       const aggs = (cfg.aggregations || []).map((a: AggregateSpec) => `${a.fn}(${a.column || '?'})`).join(', ') || '(no aggs)';
       return `${grp} | ${aggs}`;
+    }
+    if (opKind === 'sort') {
+      const ob = (cfg.order_by || []) as Array<{ column?: string; dir?: string }>;
+      return ob.length > 0 ? ob.map((o) => `${o.column || '?'} ${o.dir || 'asc'}`).join(', ') : '(no keys)';
+    }
+    if (opKind === 'limit') return `n = ${cfg.n ?? '?'}`;
+    if (opKind === 'projection') {
+      const keep = Array.isArray(cfg.keep) ? cfg.keep.length : 'all';
+      const rename = cfg.rename ? Object.keys(cfg.rename).length : 0;
+      const add = Array.isArray(cfg.add) ? cfg.add.length : 0;
+      return `keep=${keep} rename=${rename} add=${add}`;
     }
     return '';
   })();
@@ -390,7 +420,7 @@ function OperatorNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
         }}
       >
         <span style={{ fontWeight: 600, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ color: s.accent, fontSize: 14 }}>{s.glyph}</span>
+          <s.Icon size={14} color={s.accent} strokeWidth={2.25} />
           {opKind}
         </span>
         <span
@@ -605,6 +635,7 @@ function SinkNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
 const SUBDAG_STYLE = { bg: '#eef2ff', accent: '#4338ca', glyph: '⤵', label: 'sub-DAG' };
 
 function SubdagNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
+  const colorFor = useColorFor();
   const dragSrc = useContext(DragSrcContext);
   const isSourceNode = dragSrc?.nodeId === id;
   const border = selected ? '#2563eb' : '#a5b4fc';
@@ -613,6 +644,10 @@ function SubdagNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
     ? childRid.slice('published_dag:'.length)
     : '(unconfigured)';
   const surfaced = data.subdag_user_inputs?.length || 0;
+  // SUBDAG-HANDLE-V01: render one source handle per child-output column so the
+  // parent Composer can wire `subdag.colA → fn.input` like any other fn. Empty
+  // outputs (curator hasn't picked a child yet) shows a placeholder row instead.
+  const outputs = data.outputs || [];
 
   return (
     <div
@@ -653,31 +688,66 @@ function SubdagNode({ id, data, selected }: NodeProps<Node<NodeData>>) {
 
       <div
         style={{
-          position: 'relative',
-          padding: '8px 14px',
+          padding: '6px 10px',
           color: '#475569',
           fontSize: 11,
           fontFamily: 'ui-monospace, monospace',
-          minHeight: ROW_H,
-          display: 'flex', alignItems: 'center',
+          borderBottom: '1px dashed rgba(99,102,241,0.18)',
+          background: 'rgba(255,255,255,0.45)',
         }}
       >
-        {/* No target handle — subdag inputs come from the published form/bound, not parent upstream */}
-        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          → {childLabel}
-        </span>
-        <Handle
-          type="source"
-          position={Position.Right}
-          id="__downstream"
-          style={{
-            background: SUBDAG_STYLE.accent,
-            width: 10, height: 10, border: '2px solid white',
-            boxShadow: dragSrc && !isSourceNode ? '0 0 0 3px rgba(34,197,94,0.45)' : 'none',
-            transition: 'box-shadow 120ms',
-          }}
-        />
+        → {childLabel}
       </div>
+
+      {/* No target handle — subdag inputs come from the published form/bound, not parent upstream. */}
+      {outputs.length === 0 ? (
+        <div
+          style={{
+            padding: '8px 14px', color: '#94a3b8', fontStyle: 'italic',
+            fontSize: 11, minHeight: ROW_H, display: 'flex', alignItems: 'center',
+          }}
+        >
+          (pick a published_dag to expose columns)
+        </div>
+      ) : (
+        <div className="nodrag nowheel" style={{ padding: '4px 0', maxHeight: 220, overflowY: 'auto' }}>
+          {outputs.map((o) => {
+            const dim = !!(dragSrc && isSourceNode && dragSrc.handleId !== o.name);
+            return (
+              <div
+                key={`subdag-out-${o.name}`}
+                style={{
+                  position: 'relative',
+                  height: ROW_H,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  padding: '0 14px 0 10px',
+                  color: '#334155',
+                  opacity: dim ? 0.5 : 1,
+                  transition: 'opacity 120ms',
+                }}
+              >
+                <span style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {o.name}
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: colorFor(o.semantic_type), display: 'inline-block' }} />
+                </span>
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={o.name}
+                  style={{
+                    background: colorFor(o.semantic_type),
+                    width: 10, height: 10, border: '2px solid white',
+                    opacity: dim ? 0.5 : 1,
+                    transition: 'opacity 120ms',
+                  }}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <div
         style={{
@@ -709,6 +779,9 @@ export function DagTab() {
   const [currentDagId, setCurrentDagId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('Untitled DAG');
   const [description, setDescription] = useState('');
+  // PUB-PAGES-ADMIN-V01 Part A: track DAG's catalog parent so PublishDagDialog
+  // can default its parent-module dropdown.
+  const [dagParentId, setDagParentId] = useState<string | null>(null);
   const [functions, setFunctions] = useState<FnMeta[]>([]);
   const [paletteFilter, setPaletteFilter] = useState('');
   const [nodes, setNodes] = useState<Node<NodeData>[]>([]);
@@ -840,6 +913,7 @@ export function DagTab() {
     setCurrentDagId(null);
     setDisplayName('Untitled DAG');
     setDescription('');
+    setDagParentId(null);
     setNodes([]);
     setEdges([]);
     setIssues([]);
@@ -854,6 +928,7 @@ export function DagTab() {
       setCurrentDagId(d.resource_id);
       setDisplayName(d.display_name);
       setDescription(d.description || '');
+      setDagParentId(d.parent_id);
       setNodes(d.nodes || []);
       setEdges(d.edges || []);
       setIssues([]);
@@ -869,6 +944,21 @@ export function DagTab() {
       showToast(String(e), 'error');
     }
   };
+
+  // PUB-PAGES-ADMIN-V01: deep-link from PagesTab "Republish" / lineage panel.
+  // PagesTab dispatches `navigate-tab` (handled in App.tsx) immediately followed
+  // by this event. We listen and auto-load the DAG so curators land on the
+  // canvas with the right graph already open.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ dag_id: string }>).detail;
+      if (detail?.dag_id) void loadDag(detail.dag_id);
+    };
+    window.addEventListener('flow-composer-load-dag', handler);
+    return () => window.removeEventListener('flow-composer-load-dag', handler);
+    // loadDag is stable (defined in render scope but only uses setters/api/refs).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const addFunctionNode = (fn: FnMeta) => {
     const id = nextNodeId();
@@ -913,7 +1003,10 @@ export function DagTab() {
       opKind === 'literal' ? { kind: 'literal', value: '', pgType: 'text' }
       : opKind === 'filter' ? { kind: 'filter', column: '', op: 'eq', value: '' }
       : opKind === 'cast' ? { kind: 'cast', source_column: '', target_pgType: 'text' }
-      : { kind: 'aggregate', group_by: [], aggregations: [{ fn: 'count', column: '' }] };
+      : opKind === 'aggregate' ? { kind: 'aggregate', group_by: [], aggregations: [{ fn: 'count', column: '' }] }
+      : opKind === 'sort' ? { kind: 'sort', order_by: [{ column: '', dir: 'asc' }] }
+      : opKind === 'limit' ? { kind: 'limit', n: 100 }
+      : { kind: 'projection', keep: undefined, rename: {}, add: [] };
     const node: Node<NodeData> = {
       id,
       type: opKind,
@@ -970,6 +1063,8 @@ export function DagTab() {
 
   // DAG-SUBDAG-EMBED-V01 — add an unconfigured subdag node. The published_dag
   // pick happens in the Inspector (via dagPublishedList filtered to dsId).
+  // SUBDAG-HANDLE-V01: starts with empty outputs — Inspector populates per-column
+  // outputs after curator picks a child published_dag.
   const addSubdagNode = () => {
     const id = nextNodeId();
     const node: Node<NodeData> = {
@@ -980,11 +1075,8 @@ export function DagTab() {
         resource_id: '',
         label: 'sub-DAG',
         subtype: 'subdag',
-        // No target handle on the rendered node, but expose a synthetic
-        // downstream handle so existing edge logic (isValidConnection,
-        // colorFor) treats it like other nodes.
         inputs: [],
-        outputs: [{ name: '__downstream', semantic_type: '__rowset' }],
+        outputs: [],
         bound_params: {},
         subdag_source_output_node_id: undefined,
         subdag_user_inputs: [],
@@ -998,8 +1090,10 @@ export function DagTab() {
 
   // DAG-SUBDAG-EMBED-V01 — patch persisted subdag fields. Caller passes only
   // resolver-consumed fields; snapshot meta stays in component-local cache.
+  // SUBDAG-HANDLE-V01: also accepts `outputs` so Inspector can mirror the
+  // chosen child output's column shape onto the subdag node (drives handles).
   const updateSubdagData = (patch: Partial<Pick<NodeData,
-    'resource_id' | 'label' | 'subdag_source_output_node_id' | 'subdag_user_inputs' | 'bound_subdag_params'
+    'resource_id' | 'label' | 'subdag_source_output_node_id' | 'subdag_user_inputs' | 'bound_subdag_params' | 'outputs'
   >>) => {
     if (!selected) return;
     pushHistory();
@@ -1221,7 +1315,9 @@ export function DagTab() {
     }
   };
 
-  const executeNode = async (nodeId: string) => {
+  // extraFrames: optional in-flight result map for runAll — lets iteration N read iteration N-1's
+  // fresh last_result without waiting for React to re-render the closure-captured `nodes`.
+  const executeNode = async (nodeId: string, extraFrames?: Map<string, NodeData['last_result']>) => {
     const node = nodes.find((n) => n.id === nodeId);
     if (!node) return;
     setRunning(nodeId);
@@ -1233,11 +1329,12 @@ export function DagTab() {
       const upstream: Record<string, any> = {};
       const upstream_resources: Record<string, string> = {};
       for (const n of nodes) {
-        if (n.data.last_result && n.data.last_result.rows.length > 0) {
+        const lr = extraFrames?.get(n.id) ?? n.data.last_result;
+        if (lr && lr.rows.length > 0) {
           upstream[n.id] = {
-            columns: n.data.last_result.columns,
-            row0: n.data.last_result.rows[0],
-            rows: n.data.last_result.rows,
+            columns: lr.columns,
+            row0: lr.rows[0],
+            rows: lr.rows,
           };
         }
         if (n.type === 'fn' && n.data.resource_id) {
@@ -1281,13 +1378,13 @@ export function DagTab() {
         edges: edges.map((e) => ({ source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
       };
       const r = await api.dagExecuteNode(payload);
+      const newLastResult = { columns: r.columns, rows: r.rows, row_count: r.row_count, elapsed_ms: r.elapsed_ms, lineage: r.lineage };
       setNodes((nds) => nds.map((n) => n.id === nodeId ? {
         ...n,
-        data: {
-          ...n.data,
-          last_result: { columns: r.columns, rows: r.rows, row_count: r.row_count, elapsed_ms: r.elapsed_ms, lineage: r.lineage },
-        },
+        data: { ...n.data, last_result: newLastResult },
       } : n));
+      // Mirror to extraFrames so subsequent runAll iterations read this without waiting for React commit.
+      extraFrames?.set(nodeId, newLastResult);
       showToast(`${node.data.label}: ${r.row_count} rows in ${r.elapsed_ms}ms`, 'success');
     } catch (e) {
       showToast(String(e), 'error');
@@ -1389,11 +1486,16 @@ export function DagTab() {
     }
     let ran = 0;
     let skipped = 0;
+    // In-flight frames map — accumulates last_result per node as iterations complete,
+    // so downstream iterations see upstream output without waiting for React re-render.
+    // (Stale-closure fix: setNodes scheduled in iteration N is not visible to iteration N+1's
+    // executeNode closure, which captured `nodes` at runAll's render time.)
+    const frames = new Map<string, NodeData['last_result']>();
     for (const id of order) {
       const n = nodes.find((nn) => nn.id === id);
       // Sinks are explicit (▶ Execute Sink) — skip in runAll. (sink-as-node-kind §D8)
       if (n?.type === 'sink') { skipped++; continue; }
-      await executeNode(id);
+      await executeNode(id, frames);
       ran++;
     }
     const suffix = skipped > 0 ? ` (skipped ${skipped} sink${skipped > 1 ? 's' : ''} — use ▶ Execute Sink)` : '';
@@ -1404,7 +1506,7 @@ export function DagTab() {
   const availableSemTypes = useMemo(() => {
     const s = new Set<string>();
     for (const n of nodes) {
-      for (const o of n.data.outputs) if (o.semantic_type && o.semantic_type !== 'unknown') s.add(o.semantic_type);
+      for (const o of n.data.outputs ?? []) if (o.semantic_type && o.semantic_type !== 'unknown') s.add(o.semantic_type);
     }
     return Array.from(s);
   }, [nodes]);
@@ -1522,11 +1624,21 @@ export function DagTab() {
         <button
           onClick={deleteSelected}
           disabled={selectionCount === 0}
-          title="Delete selected (Del / Backspace)"
+          title={
+            selectionCount === 0
+              ? 'Click a node first to delete it'
+              : selectionCount === 1 && selected
+                ? `Delete "${selected.data.label}" (Del / Backspace)`
+                : `Delete ${selectionCount} selected items (Del / Backspace)`
+          }
           data-testid="delete-selected"
           className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed text-red-600"
         >
-          <X size={14} /> Delete{selectionCount > 1 ? ` (${selectionCount})` : ''}
+          <X size={14} />
+          {selectionCount === 1 && selected
+            ? <>Delete <span className="font-mono text-xs opacity-80">"{selected.data.label}"</span></>
+            : <>Delete{selectionCount > 1 ? ` (${selectionCount})` : ''}</>
+          }
         </button>
 
         <button onClick={validate} className="btn-secondary text-sm flex items-center gap-1">
@@ -1670,7 +1782,7 @@ export function DagTab() {
               <Sparkles size={12} /> Operators
             </div>
             <div className="space-y-1">
-              {(['literal', 'filter', 'cast', 'aggregate'] as const).map((k) => {
+              {(['literal', 'filter', 'cast', 'aggregate', 'sort', 'limit', 'projection'] as const).map((k) => {
                 const style = OP_STYLES[k];
                 return (
                   <button
@@ -1680,12 +1792,15 @@ export function DagTab() {
                     className="w-full text-left text-xs px-2 py-1 rounded border border-orange-200 bg-orange-50 hover:bg-orange-100 text-slate-700 flex items-center gap-1.5"
                     title={
                       k === 'literal' ? 'Emit a typed constant'
-                      : k === 'filter' ? 'Filter upstream rows by predicate'
+                      : k === 'filter' ? 'Filter upstream rows by predicate (single or AND/OR group)'
                       : k === 'cast' ? 'Cast a column to a different pgType'
-                      : 'Group rows + sum/count/min/max/avg'
+                      : k === 'aggregate' ? 'Group rows + sum/count/min/max/avg/array_agg'
+                      : k === 'sort' ? 'Order rows by one or more columns'
+                      : k === 'limit' ? 'Keep first N rows'
+                      : 'Keep / rename / add columns (presentation layer)'
                     }
                   >
-                    <span style={{ color: style.accent, fontSize: 14 }}>{style.glyph}</span>
+                    <style.Icon size={14} color={style.accent} strokeWidth={2.25} />
                     <span className="font-medium">{k}</span>
                     <span className="text-[10px] text-slate-400 ml-auto">op</span>
                   </button>
@@ -1760,8 +1875,8 @@ export function DagTab() {
           {(() => {
             const present = new Set<string>();
             nodes.forEach((n) => {
-              n.data.inputs.forEach((i) => i.semantic_type && i.semantic_type !== 'unknown' && present.add(i.semantic_type));
-              n.data.outputs.forEach((o) => o.semantic_type && o.semantic_type !== 'unknown' && present.add(o.semantic_type));
+              (n.data.inputs ?? []).forEach((i) => i.semantic_type && i.semantic_type !== 'unknown' && present.add(i.semantic_type));
+              (n.data.outputs ?? []).forEach((o) => o.semantic_type && o.semantic_type !== 'unknown' && present.add(o.semantic_type));
             });
             const list = Array.from(present);
             if (list.length === 0) return null;
@@ -1830,12 +1945,7 @@ export function DagTab() {
               onSaved={(pid) => {
                 setSavePageOpenFor(null);
                 showToast(`Saved as page "${pid}". Opening it now…`, 'success');
-                // Re-use the BU-08 auto-page slot to land on the new page
-                // immediately. ModulesTab walks the resource tree, not
-                // authz_ui_page.parent_page_id, so a hand-attached snapshot
-                // is not yet auto-listed there. Auto-page tab is the
-                // cleanest existing surface for "open arbitrary page_id".
-                window.dispatchEvent(new CustomEvent('open-auto-page', { detail: { page_id: pid } }));
+                window.dispatchEvent(new CustomEvent('catalog-open-page', { detail: { page_id: pid } }));
               }}
             />
           );
@@ -1846,12 +1956,14 @@ export function DagTab() {
             dagId={currentDagId}
             displayName={displayName}
             description={description}
+            dagParentId={dagParentId}
             nodes={nodes}
+            onBeforeSubmit={save}
             onClose={() => setPublishOpen(false)}
             onPublished={(pid) => {
               setPublishOpen(false);
               showToast(`Published as page "${pid}". Opening it now…`, 'success');
-              window.dispatchEvent(new CustomEvent('open-auto-page', { detail: { page_id: pid } }));
+              window.dispatchEvent(new CustomEvent('catalog-open-page', { detail: { page_id: pid } }));
             }}
           />
         )}
@@ -2193,6 +2305,163 @@ export function DagTab() {
   );
 }
 
+// ── Compound filter helpers (COMPOSER-OPS-V1-P0) ──
+// findFirstLeaf walks down `and`/`or` trees to extract the first leaf condition;
+// used when curator switches "AND/OR group" → "single" so existing work isn't
+// silently nuked. Returns null if no leaf exists (empty group).
+function findFirstLeaf(node: any): { column: string; op: string; value: string } | null {
+  if (!node) return null;
+  if (typeof node === 'object' && 'column' in node) {
+    return { column: node.column || '', op: node.op || 'eq', value: node.value ?? '' };
+  }
+  const arr = Array.isArray(node?.and) ? node.and : Array.isArray(node?.or) ? node.or : null;
+  if (!arr) return null;
+  for (const child of arr) {
+    const leaf = findFirstLeaf(child);
+    if (leaf) return leaf;
+  }
+  return null;
+}
+
+// CompoundFilterGroup — recursive AND/OR builder. Depth cap (3) is enforced
+// at runtime in dag-operators.ts; UI surfaces the limit by disabling
+// "+ nested group" when depth + 1 would exceed 3.
+function CompoundFilterGroup({
+  node, upstreamColumns, depth, onChange,
+}: {
+  node: { and: any[] } | { or: any[] };
+  upstreamColumns: Array<{ name: string; semantic_type?: string; pgType?: string }>;
+  depth: number;
+  onChange: (next: { and: any[] } | { or: any[] }) => void;
+}) {
+  const isAnd = 'and' in node;
+  const conditions: any[] = isAnd ? (node as { and: any[] }).and : (node as { or: any[] }).or;
+  const setConditions = (next: any[]) => {
+    onChange(isAnd ? { and: next } : { or: next });
+  };
+  const colNames = upstreamColumns.map((col) => col.name);
+  const canNest = depth < 3;
+
+  return (
+    <div className="border border-emerald-300 bg-white rounded p-1.5 space-y-1">
+      <div className="flex items-center gap-1">
+        <select
+          data-testid={`op-filter-group-op-d${depth}`}
+          value={isAnd ? 'and' : 'or'}
+          onChange={(e) => {
+            const v = e.target.value;
+            onChange(v === 'and' ? { and: conditions } : { or: conditions });
+          }}
+          className="text-[10px] uppercase font-bold border border-emerald-300 rounded px-1 py-0.5 bg-emerald-50 text-emerald-800"
+        >
+          <option value="and">AND</option>
+          <option value="or">OR</option>
+        </select>
+        <span className="text-[10px] text-slate-500">({conditions.length} {conditions.length === 1 ? 'cond' : 'conds'}, depth {depth}/3)</span>
+      </div>
+      <div className="space-y-1 pl-2 border-l-2 border-emerald-200">
+        {conditions.map((cond, i) => {
+          const isGroup = cond && typeof cond === 'object' && (Array.isArray(cond.and) || Array.isArray(cond.or));
+          if (isGroup) {
+            return (
+              <div key={i} className="flex gap-1 items-start">
+                <div className="flex-1">
+                  <CompoundFilterGroup
+                    node={Array.isArray(cond.and) ? { and: cond.and } : { or: cond.or }}
+                    upstreamColumns={upstreamColumns}
+                    depth={depth + 1}
+                    onChange={(next) => {
+                      const arr = [...conditions];
+                      arr[i] = next;
+                      setConditions(arr);
+                    }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setConditions(conditions.filter((_, j) => j !== i))}
+                  className="text-xs px-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
+                  title="remove group"
+                >×</button>
+              </div>
+            );
+          }
+          // Leaf row
+          return (
+            <div key={i} className="grid grid-cols-[1fr_60px_1fr_auto] gap-1 items-center">
+              {colNames.length > 0 ? (
+                <select
+                  value={cond.column || ''}
+                  onChange={(e) => {
+                    const arr = [...conditions];
+                    arr[i] = { ...cond, column: e.target.value };
+                    setConditions(arr);
+                  }}
+                  className="text-xs border border-slate-200 rounded px-1 py-0.5 font-mono"
+                >
+                  <option value="">— col —</option>
+                  {colNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              ) : (
+                <input
+                  value={cond.column || ''}
+                  onChange={(e) => {
+                    const arr = [...conditions];
+                    arr[i] = { ...cond, column: e.target.value };
+                    setConditions(arr);
+                  }}
+                  placeholder="column"
+                  className="text-xs border border-slate-200 rounded px-1 py-0.5 font-mono"
+                />
+              )}
+              <select
+                value={cond.op || 'eq'}
+                onChange={(e) => {
+                  const arr = [...conditions];
+                  arr[i] = { ...cond, op: e.target.value };
+                  setConditions(arr);
+                }}
+                className="text-xs border border-slate-200 rounded px-1 py-0.5"
+              >
+                {['eq', 'ne', 'in', 'gt', 'lt', 'like'].map((op) => <option key={op} value={op}>{op}</option>)}
+              </select>
+              <input
+                value={cond.value ?? ''}
+                onChange={(e) => {
+                  const arr = [...conditions];
+                  arr[i] = { ...cond, value: e.target.value };
+                  setConditions(arr);
+                }}
+                placeholder="value"
+                className="text-xs border border-slate-200 rounded px-1 py-0.5 font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => setConditions(conditions.filter((_, j) => j !== i))}
+                className="text-xs px-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
+              >×</button>
+            </div>
+          );
+        })}
+        <div className="flex gap-1">
+          <button
+            type="button"
+            onClick={() => setConditions([...conditions, { column: '', op: 'eq', value: '' }])}
+            className="flex-1 text-[10px] uppercase tracking-wide px-2 py-0.5 rounded border border-dashed border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+          >+ condition</button>
+          <button
+            type="button"
+            onClick={() => setConditions([...conditions, { and: [{ column: '', op: 'eq', value: '' }] }])}
+            disabled={!canNest}
+            title={canNest ? 'add nested AND group' : 'depth cap (3) reached'}
+            className={`flex-1 text-[10px] uppercase tracking-wide px-2 py-0.5 rounded border border-dashed ${canNest ? 'border-emerald-300 text-emerald-700 hover:bg-emerald-50' : 'border-slate-200 text-slate-400 cursor-not-allowed'}`}
+          >+ nested group</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Operator inspector (composer-operator-and-sink §3.1) ──
 // Renders config form per op_kind. Upstream columns come from the connected
 // upstream node's last_result (so curator can dropdown-pick column names
@@ -2248,51 +2517,411 @@ function OperatorInspector({
   }
 
   if (opKind === 'filter') {
+    // COMPOSER-OPS-V1-P0 — compound filter (AND/OR groups, max depth 3).
+    // Mode detection mirrors runtime in dag-operators.ts: presence of `and` or
+    // `or` arrays switches to compound; otherwise legacy single-cond shape.
+    // UX: leaf inputs keyed by index path so React reconciliation is stable
+    // when curator deletes the middle of a list. Max depth 3 hint is shown
+    // inline next to "+ group" so curator sees the cap before hitting it.
+    const isCompound = Array.isArray(c.and) || Array.isArray(c.or);
     return (
       <div className="border border-emerald-200 bg-emerald-50 rounded p-2 space-y-2">
-        <div className="text-xs font-medium text-emerald-800">Filter config</div>
-        <div>
-          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Column</label>
-          {upstreamColumns.length > 0 ? (
-            <select
-              data-testid="op-filter-column"
-              value={c.column || ''}
-              onChange={(e) => onChange({ column: e.target.value })}
-              className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
-            >
-              <option value="">— pick column —</option>
-              {upstreamColumns.map((col) => <option key={col.name} value={col.name}>{col.name}</option>)}
-            </select>
-          ) : (
-            <input
-              data-testid="op-filter-column"
-              value={c.column || ''}
-              onChange={(e) => onChange({ column: e.target.value })}
-              placeholder="(connect upstream + run it to see columns)"
-              className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-medium text-emerald-800">Filter config</div>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              data-testid="op-filter-mode-single"
+              onClick={() => {
+                if (!isCompound) return;
+                // Convert: take the first leaf in any-depth tree, drop rest.
+                const firstLeaf = findFirstLeaf(c) || { column: '', op: 'eq', value: '' };
+                onChange({ and: undefined, or: undefined, ...firstLeaf });
+              }}
+              className={`text-[10px] px-2 py-0.5 rounded border ${!isCompound ? 'bg-emerald-700 text-white border-emerald-700' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+            >single</button>
+            <button
+              type="button"
+              data-testid="op-filter-mode-compound"
+              onClick={() => {
+                if (isCompound) return;
+                // Lift current single-cond into AND[firstLeaf]. Curator can switch to OR.
+                const leaf = { column: c.column || '', op: c.op || 'eq', value: c.value ?? '' };
+                onChange({ column: undefined, op: undefined, value: undefined, and: [leaf] });
+              }}
+              className={`text-[10px] px-2 py-0.5 rounded border ${isCompound ? 'bg-emerald-700 text-white border-emerald-700' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+            >AND/OR group</button>
+          </div>
+        </div>
+
+        {!isCompound ? (
+          <>
+            <div>
+              <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Column</label>
+              {upstreamColumns.length > 0 ? (
+                <select
+                  data-testid="op-filter-column"
+                  value={c.column || ''}
+                  onChange={(e) => onChange({ column: e.target.value })}
+                  className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+                >
+                  <option value="">— pick column —</option>
+                  {upstreamColumns.map((col) => <option key={col.name} value={col.name}>{col.name}</option>)}
+                </select>
+              ) : (
+                <input
+                  data-testid="op-filter-column"
+                  value={c.column || ''}
+                  onChange={(e) => onChange({ column: e.target.value })}
+                  placeholder="(connect upstream + run it to see columns)"
+                  className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+                />
+              )}
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Operator</label>
+              <select
+                data-testid="op-filter-op"
+                value={c.op || 'eq'}
+                onChange={(e) => onChange({ op: e.target.value })}
+                className="w-full text-xs border border-slate-200 rounded px-2 py-1"
+              >
+                {['eq', 'ne', 'in', 'gt', 'lt', 'like'].map((op) => <option key={op} value={op}>{op}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Value</label>
+              <input
+                data-testid="op-filter-value"
+                value={c.value ?? ''}
+                onChange={(e) => onChange({ value: e.target.value })}
+                placeholder={c.op === 'in' ? 'comma-separated, e.g. A,B,C' : c.op === 'like' ? 'SQL LIKE: % _ wildcards' : 'value'}
+                className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+              />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-[10px] text-emerald-700">
+              max nested depth: <span className="font-mono">3</span> (deeper trees blocked at runtime)
+            </div>
+            <CompoundFilterGroup
+              node={c.and ? { and: c.and } : { or: c.or || [] }}
+              upstreamColumns={upstreamColumns}
+              depth={1}
+              onChange={(next) => {
+                // Top-level: write the active key (and/or), null out the other.
+                if ('and' in next) onChange({ and: next.and, or: undefined });
+                else onChange({ or: next.or, and: undefined });
+              }}
             />
-          )}
-        </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  if (opKind === 'sort') {
+    // Sort UX: list of {column, dir} pairs. Multi-key tie-break runs in
+    // declared order (runtime uses stable Array.prototype.sort). Why list
+    // not key-value: order matters and key-value would lose ordering.
+    const orderBy: Array<{ column: string; dir: 'asc' | 'desc' }> = c.order_by || [];
+    const setOrderBy = (next: Array<{ column: string; dir: 'asc' | 'desc' }>) => onChange({ order_by: next });
+    const colNames = upstreamColumns.map((col) => col.name);
+    return (
+      <div className="border border-purple-200 bg-purple-50 rounded p-2 space-y-2">
+        <div className="text-xs font-medium text-purple-800">Sort config</div>
         <div>
-          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Operator</label>
-          <select
-            data-testid="op-filter-op"
-            value={c.op || 'eq'}
-            onChange={(e) => onChange({ op: e.target.value })}
-            className="w-full text-xs border border-slate-200 rounded px-2 py-1"
-          >
-            {['eq', 'ne', 'in', 'gt', 'lt', 'like'].map((op) => <option key={op} value={op}>{op}</option>)}
-          </select>
+          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Order by (in declared order)</label>
+          <div className="space-y-1">
+            {orderBy.length === 0 && (
+              <div className="text-[10px] text-slate-500 italic">at least one key required</div>
+            )}
+            {orderBy.map((k, i) => (
+              <div key={i} className="grid grid-cols-[1fr_70px_auto] gap-1 items-center">
+                {colNames.length > 0 ? (
+                  <select
+                    data-testid={`op-sort-col-${i}`}
+                    value={k.column}
+                    onChange={(e) => {
+                      const next = [...orderBy];
+                      next[i] = { ...k, column: e.target.value };
+                      setOrderBy(next);
+                    }}
+                    className="text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+                  >
+                    <option value="">— pick column —</option>
+                    {colNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    data-testid={`op-sort-col-${i}`}
+                    value={k.column}
+                    onChange={(e) => {
+                      const next = [...orderBy];
+                      next[i] = { ...k, column: e.target.value };
+                      setOrderBy(next);
+                    }}
+                    placeholder="column"
+                    className="text-xs border border-slate-200 rounded px-2 py-1 font-mono"
+                  />
+                )}
+                <select
+                  data-testid={`op-sort-dir-${i}`}
+                  value={k.dir}
+                  onChange={(e) => {
+                    const next = [...orderBy];
+                    next[i] = { ...k, dir: e.target.value as 'asc' | 'desc' };
+                    setOrderBy(next);
+                  }}
+                  className="text-xs border border-slate-200 rounded px-1 py-1"
+                >
+                  <option value="asc">asc</option>
+                  <option value="desc">desc</option>
+                </select>
+                <button
+                  type="button"
+                  data-testid={`op-sort-remove-${i}`}
+                  onClick={() => setOrderBy(orderBy.filter((_, j) => j !== i))}
+                  className="text-xs px-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
+                >×</button>
+              </div>
+            ))}
+            <button
+              type="button"
+              data-testid="op-sort-add"
+              onClick={() => setOrderBy([...orderBy, { column: '', dir: 'asc' }])}
+              className="w-full text-[10px] uppercase tracking-wide px-2 py-1 rounded border border-dashed border-purple-300 text-purple-700 hover:bg-purple-100"
+            >+ sort key</button>
+          </div>
+          <div className="text-[10px] text-slate-500 mt-1">
+            null values always sort last regardless of dir.
+          </div>
         </div>
+      </div>
+    );
+  }
+
+  if (opKind === 'limit') {
+    // Single integer field. n=0 is valid (returns empty rows, columns preserved).
+    return (
+      <div className="border border-pink-200 bg-pink-50 rounded p-2 space-y-2">
+        <div className="text-xs font-medium text-pink-800">Limit config</div>
         <div>
-          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Value</label>
+          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">N (rows to keep)</label>
           <input
-            data-testid="op-filter-value"
-            value={c.value ?? ''}
-            onChange={(e) => onChange({ value: e.target.value })}
-            placeholder={c.op === 'in' ? 'comma-separated, e.g. A,B,C' : c.op === 'like' ? 'SQL LIKE: % _ wildcards' : 'value'}
+            data-testid="op-limit-n"
+            type="number"
+            min={0}
+            step={1}
+            value={c.n ?? ''}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === '') { onChange({ n: undefined }); return; }
+              const n = parseInt(v, 10);
+              if (Number.isFinite(n) && n >= 0) onChange({ n });
+            }}
+            placeholder="e.g. 100"
             className="w-full text-xs border border-slate-200 rounded px-2 py-1 font-mono"
           />
+          <div className="text-[10px] text-slate-500 mt-1">
+            non-negative integer. n=0 → empty rows, columns preserved.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (opKind === 'projection') {
+    // Three sub-sections: keep / rename / add. Order at runtime: keep → rename
+    // → add. add.expr resolves against POST-rename column names.
+    // Layout choice: rename is rendered as a key-value table (not JSON
+    // textarea) — curators see typos immediately and dropdowns prevent typing
+    // a non-existent source column. Tradeoff: more screen height; OK because
+    // most curators only rename 2-3 columns at a time.
+    const keep: string[] | undefined = Array.isArray(c.keep) ? c.keep : undefined;
+    const rename: Record<string, string> = c.rename && typeof c.rename === 'object' ? c.rename : {};
+    const add: Array<{ name: string; expr: string; pgType?: string }> = Array.isArray(c.add) ? c.add : [];
+    const colNames = upstreamColumns.map((col) => col.name);
+    // Post-rename column names — what curator should reference in expr template.
+    const keptNames = keep ? keep : colNames;
+    const postRenameNames = keptNames.map((n) => rename[n] || n);
+    const PG_TYPES_FULL = ['text', 'integer', 'bigint', 'numeric', 'boolean', 'date', 'timestamp', 'jsonb'];
+    return (
+      <div className="border border-teal-200 bg-teal-50 rounded p-2 space-y-2">
+        <div className="text-xs font-medium text-teal-800">Projection config</div>
+
+        {/* Keep */}
+        <div>
+          <label className="flex items-center gap-2 text-[10px] uppercase text-slate-500 mb-0.5">
+            <input
+              type="checkbox"
+              data-testid="op-proj-keep-enable"
+              checked={keep !== undefined}
+              onChange={(e) => onChange({ keep: e.target.checked ? colNames : undefined })}
+              className="h-3 w-3"
+            />
+            Keep (uncheck → keep all upstream cols)
+          </label>
+          {keep !== undefined && (
+            <div className="space-y-1 mt-1">
+              {colNames.length === 0 ? (
+                <div className="text-[10px] text-slate-500 italic">connect upstream + run it to pick columns</div>
+              ) : (
+                colNames.map((n) => (
+                  <label key={n} className="flex items-center gap-2 text-xs text-slate-700 font-mono">
+                    <input
+                      type="checkbox"
+                      data-testid={`op-proj-keep-${n}`}
+                      checked={keep.includes(n)}
+                      onChange={(e) => {
+                        const next = e.target.checked ? [...keep, n] : keep.filter((k) => k !== n);
+                        onChange({ keep: next });
+                      }}
+                      className="h-3 w-3"
+                    />
+                    {n}
+                  </label>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Rename */}
+        <div>
+          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Rename (old → new)</label>
+          <div className="space-y-1">
+            {Object.entries(rename).map(([oldN, newN], i) => (
+              <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-1 items-center">
+                {colNames.length > 0 ? (
+                  <select
+                    data-testid={`op-proj-rename-old-${i}`}
+                    value={oldN}
+                    onChange={(e) => {
+                      const next = { ...rename };
+                      delete next[oldN];
+                      next[e.target.value] = newN;
+                      onChange({ rename: next });
+                    }}
+                    className="text-xs border border-slate-200 rounded px-1 py-1 font-mono"
+                  >
+                    {colNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    data-testid={`op-proj-rename-old-${i}`}
+                    value={oldN}
+                    onChange={(e) => {
+                      const next = { ...rename };
+                      delete next[oldN];
+                      next[e.target.value] = newN;
+                      onChange({ rename: next });
+                    }}
+                    placeholder="old name"
+                    className="text-xs border border-slate-200 rounded px-1 py-1 font-mono"
+                  />
+                )}
+                <input
+                  data-testid={`op-proj-rename-new-${i}`}
+                  value={newN}
+                  onChange={(e) => {
+                    onChange({ rename: { ...rename, [oldN]: e.target.value } });
+                  }}
+                  placeholder="new name"
+                  className="text-xs border border-slate-200 rounded px-1 py-1 font-mono"
+                />
+                <button
+                  type="button"
+                  data-testid={`op-proj-rename-remove-${i}`}
+                  onClick={() => {
+                    const next = { ...rename };
+                    delete next[oldN];
+                    onChange({ rename: next });
+                  }}
+                  className="text-xs px-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
+                >×</button>
+              </div>
+            ))}
+            <button
+              type="button"
+              data-testid="op-proj-rename-add"
+              onClick={() => {
+                // Pick first upstream col not yet renamed; fall back to empty.
+                const used = new Set(Object.keys(rename));
+                const firstFree = colNames.find((n) => !used.has(n)) || '';
+                onChange({ rename: { ...rename, [firstFree]: '' } });
+              }}
+              className="w-full text-[10px] uppercase tracking-wide px-2 py-1 rounded border border-dashed border-teal-300 text-teal-700 hover:bg-teal-100"
+            >+ rename</button>
+          </div>
+        </div>
+
+        {/* Add */}
+        <div>
+          <label className="block text-[10px] uppercase text-slate-500 mb-0.5">Add (computed columns)</label>
+          <div className="space-y-1">
+            {add.map((a, i) => (
+              <div key={i} className="space-y-1 border border-teal-200 bg-white rounded p-1.5">
+                <div className="grid grid-cols-[1fr_90px_auto] gap-1 items-center">
+                  <input
+                    data-testid={`op-proj-add-name-${i}`}
+                    value={a.name}
+                    onChange={(e) => {
+                      const next = [...add];
+                      next[i] = { ...a, name: e.target.value };
+                      onChange({ add: next });
+                    }}
+                    placeholder="column name"
+                    className="text-xs border border-slate-200 rounded px-1 py-1 font-mono"
+                  />
+                  <select
+                    data-testid={`op-proj-add-pgtype-${i}`}
+                    value={a.pgType || 'text'}
+                    onChange={(e) => {
+                      const next = [...add];
+                      next[i] = { ...a, pgType: e.target.value };
+                      onChange({ add: next });
+                    }}
+                    className="text-xs border border-slate-200 rounded px-1 py-1"
+                  >
+                    {PG_TYPES_FULL.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <button
+                    type="button"
+                    data-testid={`op-proj-add-remove-${i}`}
+                    onClick={() => onChange({ add: add.filter((_, j) => j !== i) })}
+                    className="text-xs px-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
+                  >×</button>
+                </div>
+                <input
+                  data-testid={`op-proj-add-expr-${i}`}
+                  value={a.expr}
+                  onChange={(e) => {
+                    const next = [...add];
+                    next[i] = { ...a, expr: e.target.value };
+                    onChange({ add: next });
+                  }}
+                  placeholder={postRenameNames.length > 0
+                    ? `reference renamed columns: \${${postRenameNames[0]}}`
+                    : 'reference renamed columns: ${customer_name}'
+                  }
+                  className="w-full text-xs border border-slate-200 rounded px-1 py-1 font-mono"
+                />
+              </div>
+            ))}
+            <button
+              type="button"
+              data-testid="op-proj-add-add"
+              onClick={() => onChange({ add: [...add, { name: '', expr: '', pgType: 'text' }] })}
+              className="w-full text-[10px] uppercase tracking-wide px-2 py-1 rounded border border-dashed border-teal-300 text-teal-700 hover:bg-teal-100"
+            >+ computed column</button>
+          </div>
+          {postRenameNames.length > 0 && (
+            <div className="text-[10px] text-slate-500 mt-1">
+              expr resolves POST-rename: <span className="font-mono">${'{'}name{'}'}</span> where name ∈ {postRenameNames.slice(0, 3).map((n) => `\${${n}}`).join(', ')}{postRenameNames.length > 3 ? '…' : ''}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -2375,7 +3004,7 @@ function OperatorInspector({
                   }}
                   className="text-xs border border-slate-200 rounded px-1 py-1"
                 >
-                  {(['sum', 'count', 'min', 'max', 'avg'] as const).map((fn) => <option key={fn} value={fn}>{fn}</option>)}
+                  {(['sum', 'count', 'min', 'max', 'avg', 'array_agg'] as const).map((fn) => <option key={fn} value={fn}>{fn}</option>)}
                 </select>
                 {colNames.length > 0 ? (
                   <select
@@ -2508,11 +3137,16 @@ function OperatorInspector({
 // the first time, pre-tick *all* its user_input_params as surfaced. "All
 // surfaced" is the safer non-destructive default — curator can untick later
 // to demote into bound_subdag_params.
+// SUBDAG-HANDLE-V01: SnapshotMeta now also caches `exposed_outputs` so the
+// Inspector can mirror per-column outputs onto the parent subdag node when
+// curator picks a child or switches the chosen output. Outputs flow:
+//   meta.exposed_outputs[chosenId]  →  patch.outputs  →  SubdagNode handles.
 type SnapshotMeta = {
   data_source_id: string;
   output_node_id: string;
   exposed_node_ids: string[] | null;
   form_schema: Array<{ name: string; type: string; pg_type?: string; required: boolean; default: unknown; help_text?: string; source_node_id: string }>;
+  exposed_outputs: Record<string, IO[]>;
 };
 
 function SubdagInspector({
@@ -2522,7 +3156,7 @@ function SubdagInspector({
   data: NodeData;
   dataSourceId: string;
   onChange: (patch: Partial<Pick<NodeData,
-    'resource_id' | 'label' | 'subdag_source_output_node_id' | 'subdag_user_inputs' | 'bound_subdag_params'
+    'resource_id' | 'label' | 'subdag_source_output_node_id' | 'subdag_user_inputs' | 'bound_subdag_params' | 'outputs'
   >>) => void;
 }) {
   const [available, setAvailable] = useState<Array<{ rid: string; title: string; output_node_id: string; exposed_node_ids: string[] | null }>>([]);
@@ -2561,6 +3195,11 @@ function SubdagInspector({
   }, [dataSourceId]);
 
   // Load snapshot meta for the picked rid.
+  // SUBDAG-HANDLE-V01: also auto-migrates legacy nodes whose outputs are still
+  // [{__downstream, __rowset}] (or empty) — once meta arrives, mirror the
+  // chosen exposed_outputs onto the parent node so handles render per-column.
+  // The migration fires only when the cached column shape differs from
+  // node.data.outputs to avoid an infinite onChange loop.
   useEffect(() => {
     if (!childRid) return;
     if (metaCache[childRid]) return;
@@ -2577,6 +3216,7 @@ function SubdagInspector({
             output_node_id: r.output_node_id,
             exposed_node_ids: r.exposed_node_ids,
             form_schema: r.form_schema || [],
+            exposed_outputs: r.exposed_outputs || {},
           },
         }));
       })
@@ -2585,16 +3225,37 @@ function SubdagInspector({
     return () => { cancelled = true; };
   }, [childRid, metaCache]);
 
+  // Auto-migrate / refresh outputs when meta is loaded for the current rid.
+  // Runs whenever cached meta or chosen output id changes — and patches
+  // n.data.outputs only if the column shape actually differs (deep-ish check).
+  useEffect(() => {
+    if (!childRid) return;
+    const m = metaCache[childRid];
+    if (!m) return;
+    const chosenId = data.subdag_source_output_node_id || m.output_node_id;
+    const want = m.exposed_outputs[chosenId] || [];
+    const have = data.outputs || [];
+    const sameShape =
+      have.length === want.length &&
+      have.every((h, i) => h.name === want[i]?.name &&
+        h.semantic_type === want[i]?.semantic_type &&
+        h.pgType === want[i]?.pgType);
+    if (!sameShape) onChange({ outputs: want });
+    // We deliberately skip onChange in deps — it's a setState wrapper that
+    // the caller redefines per render and would re-fire this every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [childRid, metaCache, data.subdag_source_output_node_id]);
+
   const surfacedSet = new Set(data.subdag_user_inputs || []);
   const boundOverrides = (data.bound_subdag_params || {}) as Record<string, unknown>;
 
   const pickRid = (rid: string) => {
     if (!rid) {
-      onChange({ resource_id: '', label: 'sub-DAG', subdag_source_output_node_id: undefined, subdag_user_inputs: [], bound_subdag_params: {} });
+      onChange({ resource_id: '', label: 'sub-DAG', subdag_source_output_node_id: undefined, subdag_user_inputs: [], bound_subdag_params: {}, outputs: [] });
       return;
     }
     const picked = available.find((a) => a.rid === rid);
-    const defaultOutput = picked?.output_node_id;
+    const defaultOutput = picked?.output_node_id || '';
     // Pre-fetch meta to seed default surfacing — but if we already have meta
     // cached from a prior pick, use it directly.
     const cached = metaCache[rid];
@@ -2606,6 +3267,7 @@ function SubdagInspector({
         subdag_source_output_node_id: defaultOutput,
         subdag_user_inputs: allInputs,
         bound_subdag_params: {},
+        outputs: cached.exposed_outputs[defaultOutput] || [],
       });
     } else {
       // Fetch then seed.
@@ -2617,6 +3279,7 @@ function SubdagInspector({
             output_node_id: r.output_node_id,
             exposed_node_ids: r.exposed_node_ids,
             form_schema: r.form_schema || [],
+            exposed_outputs: r.exposed_outputs || {},
           };
           setMetaCache((prev) => ({ ...prev, [rid]: seeded }));
           onChange({
@@ -2625,6 +3288,7 @@ function SubdagInspector({
             subdag_source_output_node_id: defaultOutput,
             subdag_user_inputs: seeded.form_schema.map((f) => f.name),
             bound_subdag_params: {},
+            outputs: seeded.exposed_outputs[defaultOutput] || [],
           });
         })
         .catch((e) => setMetaError(String(e)))
@@ -2954,18 +3618,31 @@ function SaveAsPageDialog({
 // derives form_schema from user_input_params, registers the bless gate
 // `published_dag:<rid>`, and grants `read` to BI_USER. End-user form rendering
 // happens in ConfigEngine.
+// PUB-PAGES-ADMIN-V01 Part A: localStorage key for remembering the curator's
+// last parent-module choice across publish sessions.
+const PUBLISH_LAST_PARENT_KEY = 'nexus.publish.last_parent_module';
+
 function PublishDagDialog({
   dagId,
   displayName,
   description: initialDescription,
+  dagParentId,
   nodes,
+  onBeforeSubmit,
   onClose,
   onPublished,
 }: {
   dagId: string;
   displayName: string;
   description: string;
+  // PUB-PAGES-ADMIN-V01 Part A: DAG's own catalog parent — used as the
+  // first-choice default for the parent-module dropdown.
+  dagParentId: string | null;
   nodes: Node<NodeData>[];
+  // Auto-save on Publish so server reads the current in-memory state, not
+  // a stale DB row. Curator sees a single button do "save + publish" — the
+  // implementation detail that publish reads from DB stays hidden.
+  onBeforeSubmit?: () => Promise<void>;
   onClose: () => void;
   onPublished: (pageId: string) => void;
 }) {
@@ -2982,11 +3659,42 @@ function PublishDagDialog({
   const defaultPageId = dagId.replace(/^dag:/, '').toLowerCase().replace(/[^a-z0-9_]/g, '_');
   const [pageId, setPageId] = useState(defaultPageId);
   const [title, setTitle] = useState(displayName);
-  const [parentPageId, setParentPageId] = useState('modules_home');
   const [description, setDescription] = useState(initialDescription || `Published from ${dagId}`);
   const [overwrite, setOverwrite] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // PUB-PAGES-ADMIN-V01 Part A: parent-module dropdown sourced from
+  // `/api/modules/tree`. Default precedence:
+  //   1. localStorage `nexus.publish.last_parent_module` (sticky across sessions)
+  //   2. DAG's own catalog parent (`authz_resource.parent_id`)
+  //   3. first module the user can write into
+  // Curator no longer touches `parent_page_id` — server fills it via
+  // existing `'modules_home'` fallback.
+  const [moduleNodes, setModuleNodes] = useState<ModuleTreeNode[]>([]);
+  const [parentModuleId, setParentModuleId] = useState<string>('');
+
+  useEffect(() => {
+    let cancelled = false;
+    api.moduleTree().then((tree) => {
+      if (cancelled) return;
+      // Only modules the user can curate are useful targets. SYSADMIN /
+      // AUTHZ_ADMIN / DATA_STEWARD already see `['read','write','admin']`
+      // here (modules.ts:64); BI_USER would never reach this dialog (gate
+      // is requireDagPublisher).
+      const writable = tree.filter(m => m.is_active && m.user_actions.includes('write'));
+      setModuleNodes(writable);
+      // Pick default the first time the dropdown gets data.
+      let stored: string | null = null;
+      try { stored = localStorage.getItem(PUBLISH_LAST_PARENT_KEY); } catch { /* ignore */ }
+      const candidate =
+        (stored && writable.some(m => m.resource_id === stored) ? stored : null) ||
+        (dagParentId && writable.some(m => m.resource_id === dagParentId) ? dagParentId : null) ||
+        writable[0]?.resource_id || '';
+      setParentModuleId(candidate);
+    }).catch(() => { /* surfaced via error state on submit */ });
+    return () => { cancelled = true; };
+  }, [dagParentId]);
 
   const submit = async () => {
     setError(null);
@@ -3002,15 +3710,21 @@ function PublishDagDialog({
       setError('No params marked as form inputs. Tick "Expose as form input" on at least one bound param before publishing.');
       return;
     }
+    if (!parentModuleId) {
+      setError('Pick a parent module — the page needs to land somewhere in Catalog → Modules.');
+      return;
+    }
     setSubmitting(true);
     try {
+      if (onBeforeSubmit) await onBeforeSubmit();
       const r = await api.dagPublish(dagId, {
         page_id: pageId,
         title: title.trim(),
-        parent_page_id: parentPageId.trim() || undefined,
+        parent_module_id: parentModuleId,
         description: description.trim() || undefined,
         overwrite,
       });
+      try { localStorage.setItem(PUBLISH_LAST_PARENT_KEY, parentModuleId); } catch { /* non-fatal */ }
       onPublished(r.page_id);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -3077,14 +3791,36 @@ function PublishDagDialog({
           </div>
 
           <div>
-            <label className="block text-slate-700 font-medium mb-1">Parent page</label>
-            <input
-              data-testid="publish-page-parent"
-              value={parentPageId}
-              onChange={(e) => setParentPageId(e.target.value)}
-              className="w-full border border-slate-200 rounded px-2 py-1 font-mono"
-              placeholder="modules_home"
-            />
+            <label className="block text-slate-700 font-medium mb-1">Publish under module</label>
+            <select
+              data-testid="publish-page-parent-module"
+              value={parentModuleId}
+              onChange={(e) => setParentModuleId(e.target.value)}
+              className="w-full border border-slate-200 rounded px-2 py-1 font-mono bg-white"
+              disabled={moduleNodes.length === 0}
+            >
+              {moduleNodes.length === 0 ? (
+                <option value="">Loading modules…</option>
+              ) : (
+                moduleNodes.map(m => (
+                  <option key={m.resource_id} value={m.resource_id}>
+                    {m.resource_id} — {m.display_name}
+                  </option>
+                ))
+              )}
+            </select>
+            {parentModuleId && (
+              <ModuleBreadcrumb
+                moduleId={parentModuleId}
+                modules={moduleNodes}
+                leaf={{ label: title || 'this page' }}
+                className="text-[10px] mt-1"
+                data-testid="publish-page-breadcrumb"
+              />
+            )}
+            <div className="text-[10px] text-slate-500 mt-0.5">
+              Sets where the page appears in <span className="font-mono">Catalog → Modules</span>. Defaults to the DAG's own module.
+            </div>
           </div>
 
           <div>

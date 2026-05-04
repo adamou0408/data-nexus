@@ -41,7 +41,7 @@ function quoteIdent(s: string): string {
 
 export interface DagNode {
   id: string;
-  type?: string;                                                // 'fn' (default) | 'literal' | 'filter' | 'cast' | 'aggregate' | 'sink'
+  type?: string;                                                // 'fn' (default) | 'literal' | 'filter' | 'cast' | 'aggregate' | 'sort' | 'limit' | 'projection' | 'sink'
   data: {
     resource_id?: string;                                       // 'function:<schema>.<name>' for fn nodes
     inputs?: Array<{ name: string; semantic_type?: string; kind?: string; pgType?: string; hasDefault?: boolean }>;
@@ -49,7 +49,7 @@ export interface DagNode {
     bound_params?: Record<string, unknown>;
     user_input_params?: string[];                               // names of bound_params exposed as form inputs
     expose_output?: boolean;                                    // DAG-PUBLISH-V01-FU: surface this node's frame as an extra output block on the published page (leaf is implicitly always exposed)
-    op_kind?: 'literal' | 'filter' | 'cast' | 'aggregate';
+    op_kind?: 'literal' | 'filter' | 'cast' | 'aggregate' | 'sort' | 'limit' | 'projection';
     op_config?: Record<string, unknown>;
     arguments?: string;                                         // pg_get_function_arguments output, frozen at save time
   };
@@ -293,7 +293,7 @@ export async function executeDagAsPublished(opts: {
 
     // ─ Operator branch (literal / filter / cast / aggregate) ─
     if (node.type && node.type !== 'fn') {
-      const opKind = node.data?.op_kind || (node.type as 'literal' | 'filter' | 'cast' | 'aggregate');
+      const opKind = node.data?.op_kind || (node.type as 'literal' | 'filter' | 'cast' | 'aggregate' | 'sort' | 'limit' | 'projection');
       try {
         const result = runOperator({
           op_kind: opKind,
