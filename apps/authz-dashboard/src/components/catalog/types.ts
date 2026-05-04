@@ -125,6 +125,26 @@ export type DetailViewState = {
   formValues?: Record<string, unknown>;
   // Sub-tab id, if the detail body has tabs (e.g. ModuleDetail tables/functions/pages).
   subTab?: string;
+  // EXPLORER-MODE-V01 Phase B: explorer drill stack inside a published_dag
+  // page-detail frame. Independent of the outer catalog frame stack — index
+  // 0 is the root entry node, growing as the user drills. Empty/undefined =
+  // not in explorer mode (or not yet entered).
+  explorerStack?: ExplorerFrame[];
+};
+
+// EXPLORER-MODE-V01 Phase B: one breadcrumb entry inside the explorer stack.
+// `seededParams` is the merged map of (formValues + ancestor cell drill
+// values) that will be submitted to /api/config-exec when this frame
+// re-executes. `origin` describes the click that created this frame (null
+// for the root entry node).
+export type ExplorerFrame = {
+  nodeId: string;
+  seededParams: Record<string, unknown>;
+  origin: {
+    fromNodeId: string;
+    rowKey: string;
+    columnName: string;
+  } | null;
 };
 
 export type SchemaViewState = {

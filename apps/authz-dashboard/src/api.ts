@@ -158,6 +158,30 @@ export const api = {
         truncated?: boolean;
         elapsed_ms?: number;
         lineage?: Array<{ node_id: string; detail: string }>;
+        // EXPLORER-MODE-V01: surfaced by config-exec on both form_load and
+        // exec stages. Phase A: front-end ignores the value (renderer split
+        // lands in Phase B). Optional + `'tabular' | 'explorer'` to keep
+        // V086 callers strict-mode clean.
+        display_mode?: 'tabular' | 'explorer';
+        // EXPLORER-MODE-V01 Phase B: edge list (verbatim from snapshot) and
+        // exposed-node set, surfaced ONLY when display_mode === 'explorer'.
+        // Used client-side to compute drill candidates per cell — see
+        // PublishedDagExplorer.tsx. Tabular pages do not include these.
+        edges?: Array<{
+          source: string;
+          target: string;
+          sourceHandle?: string | null;
+          targetHandle?: string | null;
+        }>;
+        exposed_node_ids?: string[];
+        // Multi-output map (already documented in PageMeta in DetailView).
+        outputs?: Record<string, {
+          columns: Array<{ name: string; semantic_type?: string; dataTypeID?: number }>;
+          rows: Record<string, unknown>[];
+          row_count: number;
+          truncated: boolean;
+        }>;
+        primary_output_node_id?: string;
       };
     }>('/config-exec', {
       method: 'POST',
@@ -673,6 +697,10 @@ export const api = {
     description?: string;
     overwrite?: boolean;
     grant_read_to_roles?: string[];
+    // EXPLORER-MODE-V01: 'tabular' (default, single-leaf table renderer) or
+    // 'explorer' (multi-leaf navigable DAG). Server validates the enum and
+    // applies different leaf + exposed_node_ids semantics per mode.
+    display_mode?: 'tabular' | 'explorer';
   }) =>
     request<{
       status: 'created' | 'overwritten';

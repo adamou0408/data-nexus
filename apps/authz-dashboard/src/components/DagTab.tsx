@@ -3767,6 +3767,11 @@ function PublishDagDialog({
   const [title, setTitle] = useState(displayName);
   const [description, setDescription] = useState(initialDescription || `Published from ${dagId}`);
   const [overwrite, setOverwrite] = useState(false);
+  // EXPLORER-MODE-V01: render-mode picker. Default 'tabular' preserves the
+  // V086 single-leaf-table experience curators already know. 'explorer' is
+  // opt-in for multi-leaf DAGs whose value is "navigate every node" rather
+  // than "view one final result table".
+  const [displayMode, setDisplayMode] = useState<'tabular' | 'explorer'>('tabular');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -3829,6 +3834,7 @@ function PublishDagDialog({
         parent_module_id: parentModuleId,
         description: description.trim() || undefined,
         overwrite,
+        display_mode: displayMode,
       });
       try { localStorage.setItem(PUBLISH_LAST_PARENT_KEY, parentModuleId); } catch { /* non-fatal */ }
       onPublished(r.page_id);
@@ -3937,6 +3943,50 @@ function PublishDagDialog({
               rows={2}
               className="w-full border border-slate-200 rounded px-2 py-1"
             />
+          </div>
+
+          {/* EXPLORER-MODE-V01: render-mode selector. Phase A persists the */}
+          {/* choice through publish + audit; the front-end renderer split */}
+          {/* lands in Phase B, so the helper text frames this as "future" */}
+          {/* without overpromising delivery to curators today. */}
+          <div>
+            <label className="block text-slate-700 font-medium mb-1">Display mode</label>
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-start gap-2 text-slate-700">
+                <input
+                  type="radio"
+                  name="publish-display-mode"
+                  value="tabular"
+                  checked={displayMode === 'tabular'}
+                  onChange={() => setDisplayMode('tabular')}
+                  data-testid="publish-display-mode-tabular"
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">Tabular</span>
+                  <span className="text-[10px] text-slate-500 block">
+                    Single result table (current default). Requires a single output leaf.
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-slate-700">
+                <input
+                  type="radio"
+                  name="publish-display-mode"
+                  value="explorer"
+                  checked={displayMode === 'explorer'}
+                  onChange={() => setDisplayMode('explorer')}
+                  data-testid="publish-display-mode-explorer"
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">Explorer</span>
+                  <span className="text-[10px] text-slate-500 block">
+                    Multi-leaf navigable DAG; every non-sink node is browsable. Renderer ships in a follow-up.
+                  </span>
+                </span>
+              </label>
+            </div>
           </div>
 
           <label className="flex items-center gap-2 text-slate-700">

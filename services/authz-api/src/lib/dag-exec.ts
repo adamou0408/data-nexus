@@ -68,6 +68,10 @@ export interface PublishedDagSnapshot {
   edges: DagEdge[];
   output_node_id: string;                                       // primary leaf — back-compat
   exposed_node_ids?: string[];                                  // DAG-PUBLISH-V01-FU: leaf + admin-flagged intermediate nodes (dedup, ordered: leaf first). Missing → fall back to [output_node_id] for V086 pages.
+  // EXPLORER-MODE-V01: 'tabular' = single-leaf result table (V086 default,
+  // assumed when missing); 'explorer' = multi-leaf navigable DAG. The field
+  // is read by config-exec.ts to surface meta.display_mode to the front-end.
+  display_mode?: 'tabular' | 'explorer';
 }
 
 // Per-node frame as surfaced to the published page. Same fields as the

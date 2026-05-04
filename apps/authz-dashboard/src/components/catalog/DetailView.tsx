@@ -40,6 +40,7 @@ import { MetadataGrid } from '../shared/MetadataGrid';
 import { EmptyState } from '../shared/atoms/EmptyState';
 import { ModuleBreadcrumb } from '../shared/atoms/ModuleBreadcrumb';
 import { HandlerHost } from './HandlerHost';
+import { PublishedDagExplorer } from './PublishedDagExplorer';
 import { loadModuleTreeCached, peekModuleTreeCache } from './moduleTreeCache';
 import type {
   CatalogStackAPI, ModuleDetailFrame, PageDetailFrame, DetailViewState,
@@ -119,6 +120,15 @@ type PageMeta = {
   lineage?: Array<{ node_id: string; detail: string }>;
   outputs?: Record<string, PublishedDagOutput>;
   primary_output_node_id?: string;
+  // EXPLORER-MODE-V01 Phase B
+  display_mode?: 'tabular' | 'explorer';
+  edges?: Array<{
+    source: string;
+    target: string;
+    sourceHandle?: string | null;
+    targetHandle?: string | null;
+  }>;
+  exposed_node_ids?: string[];
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -526,6 +536,11 @@ function PageDetailBody({
 
   // Published-DAG page → form + multi-output renderer.
   if (config.published_dag_id || meta?.published_dag) {
+    // EXPLORER-MODE-V01 Phase B: branch on display_mode. Tabular path is
+    // unchanged; explorer takes over the same slot with stack-based drill
+    // navigation. We hand the explorer its own re-exec authority because
+    // drill-on-cell-click is its private concern.
+    const isExplorer = meta?.display_mode === 'explorer';
     return (
       <div>
         <div className="px-4 pt-3">
@@ -538,26 +553,37 @@ function PageDetailBody({
         <div className="p-4">
           <h2 className="text-xl font-bold text-slate-900 mb-1">{config.title}</h2>
           {config.subtitle && <p className="text-sm text-slate-500 mb-4">{config.subtitle}</p>}
-          <PublishedDagBody
-            pageId={frame.pageId}
-            schema={config.form_schema || meta?.form_schema || []}
-            initialFormValues={persistedFormValues ?? frame.params}
-            data={data}
-            meta={meta}
-            onSubmit={async (values) => {
-              setPersistedFormValues(values);
-              try {
-                const result = await api.configExecPage(frame.pageId, values);
-                setLoaded({
-                  config: result.config as unknown as PageConfig,
-                  data: (result.data as Record<string, unknown>[]) || [],
-                  meta: result.meta as unknown as PageMeta | undefined,
-                });
-              } catch (e) {
-                setError(e instanceof Error ? e.message : String(e));
-              }
-            }}
-          />
+          {isExplorer ? (
+            <PublishedDagExplorer
+              pageId={frame.pageId}
+              schema={config.form_schema || meta?.form_schema || []}
+              initialFormValues={persistedFormValues ?? frame.params}
+              initialMeta={meta}
+              initialOutputs={meta?.outputs}
+              stackApi={stackApi}
+            />
+          ) : (
+            <PublishedDagBody
+              pageId={frame.pageId}
+              schema={config.form_schema || meta?.form_schema || []}
+              initialFormValues={persistedFormValues ?? frame.params}
+              data={data}
+              meta={meta}
+              onSubmit={async (values) => {
+                setPersistedFormValues(values);
+                try {
+                  const result = await api.configExecPage(frame.pageId, values);
+                  setLoaded({
+                    config: result.config as unknown as PageConfig,
+                    data: (result.data as Record<string, unknown>[]) || [],
+                    meta: result.meta as unknown as PageMeta | undefined,
+                  });
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e));
+                }
+              }}
+            />
+          )}
         </div>
       </div>
     );

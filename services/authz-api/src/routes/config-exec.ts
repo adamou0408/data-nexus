@@ -108,6 +108,24 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
       const formInputs = (params && typeof params === 'object') ? params : {};
       const hasInputs = Object.keys(formInputs).length > 0;
 
+      // EXPLORER-MODE-V01 Phase B: explorer renderer needs the edge list and
+      // exposed-node set client-side to compute drill candidates per cell.
+      // We surface them only when display_mode === 'explorer' so V086
+      // tabular pages stay byte-cheap. snapshot.edges is already the
+      // frozen, sanitised shape we want to pass through verbatim.
+      const isExplorer = snapshot.display_mode === 'explorer';
+      const explorerMeta = isExplorer
+        ? {
+            edges: (snapshot.edges || []).map((e) => ({
+              source: e.source,
+              target: e.target,
+              sourceHandle: e.sourceHandle ?? null,
+              targetHandle: e.targetHandle ?? null,
+            })),
+            exposed_node_ids: snapshot.exposed_node_ids || [snapshot.output_node_id],
+          }
+        : {};
+
       if (!hasInputs) {
         // First-load: hand the form schema back, rows empty.
         audit({
@@ -125,6 +143,11 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
             published_dag: true,
             stage: 'form_load',
             form_schema: config.form_schema || [],
+            // EXPLORER-MODE-V01: surface mode at form_load so the front-end
+            // can choose its renderer before the user submits. V086 snapshots
+            // lack the field — default to 'tabular' (the historical behavior).
+            display_mode: snapshot.display_mode || 'tabular',
+            ...explorerMeta,
           },
         });
       }
@@ -168,6 +191,13 @@ configExecRouter.post('/', async (req: Request, res: Response) => {
             // post-FU, but kept for resilience).
             outputs: result.outputs,
             primary_output_node_id: result.primary_output_node_id,
+            // EXPLORER-MODE-V01: same default-to-'tabular' rule as form_load
+            // so the front-end's exec-stage renderer matches the form-stage
+            // choice without a second source of truth.
+            display_mode: snapshot.display_mode || 'tabular',
+            // Phase B: surface edges + exposed_node_ids only for explorer
+            // pages — tabular renderer doesn't read them.
+            ...explorerMeta,
           },
         });
       } catch (err) {

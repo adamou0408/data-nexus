@@ -51,6 +51,24 @@ const requireDagPublisher = requireRole('DATA_STEWARD');
 
 const MAX_ROWS = 1000;
 
+// EXPLORER-MODE-V01: tolerant leaf-picker for explorer publish. Tabular still
+// uses `findSingleLeaf` (rejects multi-leaf — single result table is the
+// renderer contract). Explorer accepts any leaf because `output_node_id`
+// becomes vestigial under the explorer renderer (it navigates via
+// `exposed_node_ids`); we still need *some* leaf to populate the field for
+// type back-compat with V086 consumers. Throws on zero leaves (cycle of
+// sinks or empty graph) — that's still a publish-blocking invariant.
+// Inlined here per plan §5.2 to avoid widening the dag-exec.ts surface area.
+function pickFirstLeafOrThrow(nodes: DagNode[], edges: DagEdge[]): string {
+  const hasOutgoing = new Set<string>();
+  for (const e of edges) hasOutgoing.add(e.source);
+  const leaves = nodes.filter((n) => !hasOutgoing.has(n.id) && n.type !== 'sink');
+  if (leaves.length === 0) {
+    throw new Error('DAG has no leaf node (every node has an outgoing edge or is a sink)');
+  }
+  return leaves[0].id;
+}
+
 function quoteIdent(s: string): string {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)) throw new Error(`Invalid identifier: ${s}`);
   return '"' + s.replace(/"/g, '""') + '"';
@@ -926,7 +944,7 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
   const dagId = req.params.id;
   const {
     page_id, title, parent_page_id, parent_module_id, description,
-    overwrite, grant_read_to_roles,
+    overwrite, grant_read_to_roles, display_mode,
   } = req.body as {
     page_id?: string;
     title?: string;
@@ -939,6 +957,10 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
     description?: string;
     overwrite?: boolean;
     grant_read_to_roles?: string[];
+    // EXPLORER-MODE-V01: 'tabular' (default, V086 single-leaf table) or
+    // 'explorer' (multi-leaf navigable DAG). Validated as enum below; the
+    // value is persisted in dag_snapshot for config-exec to surface back.
+    display_mode?: 'tabular' | 'explorer';
   };
   const userId = getUserId(req);
 
@@ -950,6 +972,12 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
   }
   if (!title || title.trim().length === 0) {
     return res.status(400).json({ error: 'title is required' });
+  }
+  // EXPLORER-MODE-V01: enum validation. Default 'tabular' keeps V086 publish
+  // semantics (single-leaf table) — explorer is opt-in only.
+  const displayMode: 'tabular' | 'explorer' = display_mode ?? 'tabular';
+  if (displayMode !== 'tabular' && displayMode !== 'explorer') {
+    return res.status(400).json({ error: `display_mode must be 'tabular' or 'explorer'` });
   }
 
   const grantRoles = Array.isArray(grant_read_to_roles) && grant_read_to_roles.length > 0
@@ -1012,10 +1040,20 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       throw err;
     }
 
-    // 2. Single-leaf invariant + structural validation (refuses cycle).
+    // 2. Output-leaf resolution + structural validation (refuses cycle).
+    // EXPLORER-MODE-V01: tabular keeps the V086 single-leaf invariant (so the
+    // existing table renderer always has one definitive output). Explorer
+    // tolerates multiple leaves — we only need *some* leaf to populate the
+    // legacy `output_node_id` slot (vestigial for explorer; the renderer
+    // navigates via `exposed_node_ids` instead). Both modes still reject
+    // a leafless graph (which means a cycle of sinks or empty DAG).
     let outputNodeId: string;
     try {
-      outputNodeId = findSingleLeaf(nodes, edges);
+      if (displayMode === 'tabular') {
+        outputNodeId = findSingleLeaf(nodes, edges);
+      } else {
+        outputNodeId = pickFirstLeafOrThrow(nodes, edges);
+      }
     } catch (err) {
       await client.query('ROLLBACK');
       const msg = err instanceof Error ? err.message : String(err);
@@ -1042,19 +1080,37 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
     }
 
     // 4. Build dag_snapshot (frozen).
-    // DAG-PUBLISH-V01-FU: union the leaf with admin-flagged intermediate
-    // nodes (`expose_output: true`) into `exposed_node_ids`. Filter to
-    // present node ids to defend against ghost flags from a stale client
-    // payload, and skip sink nodes (sinks are publish-time artifacts, not
-    // runtime outputs).
+    // Tabular (DAG-PUBLISH-V01-FU): opt-in — leaf + admin-flagged intermediate
+    // nodes (`expose_output: true`).
+    // Explorer (EXPLORER-MODE-V01): opt-out — every non-sink node is exposed
+    // unless explicitly hidden via `expose_output === false`. The two modes
+    // share the same `exposed_node_ids` field shape but have inverted defaults
+    // because explorer's UX is "navigate any node" while tabular is "view a
+    // single result table with optional drill-ins".
+    // Filter to present node ids to defend against ghost flags from a stale
+    // client payload, and skip sinks (publish-time artifacts, not runtime
+    // outputs) in both modes.
     const presentNodeIds = new Set(nodes.map((n) => n.id));
     const exposedNodeIds: string[] = [outputNodeId];
-    for (const n of nodes) {
-      if (n.id === outputNodeId) continue;
-      if (n.type === 'sink') continue;
-      if (!n.data?.expose_output) continue;
-      if (!presentNodeIds.has(n.id)) continue;
-      exposedNodeIds.push(n.id);
+    if (displayMode === 'tabular') {
+      for (const n of nodes) {
+        if (n.id === outputNodeId) continue;
+        if (n.type === 'sink') continue;
+        if (!n.data?.expose_output) continue;
+        if (!presentNodeIds.has(n.id)) continue;
+        exposedNodeIds.push(n.id);
+      }
+    } else {
+      for (const n of nodes) {
+        if (n.id === outputNodeId) continue;
+        if (n.type === 'sink') continue;
+        // Opt-out: only `expose_output === false` hides the node. `undefined`
+        // and `true` both expose, matching explorer's "show everything by
+        // default" intent.
+        if (n.data?.expose_output === false) continue;
+        if (!presentNodeIds.has(n.id)) continue;
+        exposedNodeIds.push(n.id);
+      }
     }
     const dagSnapshot = {
       data_source_id: dataSourceId,
@@ -1062,6 +1118,9 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       edges,
       output_node_id: outputNodeId,
       exposed_node_ids: exposedNodeIds,
+      // EXPLORER-MODE-V01: persist the mode so config-exec can surface
+      // `meta.display_mode` to the front-end without re-deriving from edges.
+      display_mode: displayMode,
       // SUBDAG-EMBED-V01: current-state index for inverse lookup
       // (`/api/dag/published/:rid/embedders`). Populated only when this
       // parent embeds at least one child; absent for plain DAGs.
@@ -1209,6 +1268,9 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       context: {
         dag_id: dagId, page_id, output_node_id: outputNodeId,
         exposed_node_ids: exposedNodeIds,
+        // EXPLORER-MODE-V01: capture mode for forensics — same publish
+        // primitive can now produce two renderer-distinct artifacts.
+        display_mode: displayMode,
         embedded_subdag_rids: embeddedSubdags.map((e) => ({ subdag_node_id: e.subdag_node_id, rid: e.child_rid })),
         form_field_count: formSchema.length, granted_roles: grantRoles,
         page_status: pageStatus,
@@ -1222,6 +1284,9 @@ dagRouter.post('/:id/publish', requireDagPublisher, async (req, res) => {
       details: {
         dag_id: dagId, page_id, output_node_id: outputNodeId,
         exposed_node_ids: exposedNodeIds,
+        // EXPLORER-MODE-V01: parallels the audit() context above. Mirrored
+        // into the admin-action ledger so audit dashboards can filter on it.
+        display_mode: displayMode,
         embedded_subdag_rids: embeddedSubdags.map((e) => ({ subdag_node_id: e.subdag_node_id, rid: e.child_rid })),
         form_field_count: formSchema.length, granted_roles: grantRoles,
       },
