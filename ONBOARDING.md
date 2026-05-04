@@ -19,16 +19,18 @@ Go to **http://localhost:13173**
 
 ### 3. Select a User
 
-Use the **user selector** at the bottom of the sidebar. Start with `sys_admin` to see all admin features.
+Use the **user selector** at the bottom of the sidebar. Start with `adam_ou` (SYSADMIN — bypasses all role checks) to see every feature, or `sys_admin` for a realistic AUTHZ_ADMIN view.
 
 | User | Role | Description |
 |------|------|-------------|
-| `sys_admin` | ADMIN, AUTHZ_ADMIN | System administrator (full access) |
-| `wang_pe` | PE | Product engineer |
-| `chen_sales` | SALES | Sales |
-| `liu_qa` | QA | Quality assurance |
-| `lin_op` | OP | Operations |
-| `chang_vp` | VP | VP / Management |
+| `adam_ou` | SYSADMIN | Tech lead / full bypass (use for first-run smoke) |
+| `sys_admin` | AUTHZ_ADMIN | Authorization administrator |
+| `steward_test` | DATA_STEWARD | Data steward — Catalog / Datasource curator |
+| `auth_admin_test` | AUTHZ_ADMIN | Secondary admin for two-account scenarios |
+| `adam_npi_pe` | PE | Product engineer (NPI workflow) |
+| `adam_npi_qa` | QA | Quality assurance (NPI workflow) |
+| `adam_npi_vp` | VP | VP / Management (NPI workflow) |
+| `tsai_bi` | BI_USER | Path C / Metabase BI consumer |
 
 ---
 
@@ -41,11 +43,11 @@ Use the **user selector** at the bottom of the sidebar. Start with `sys_admin` t
 
 ### Step 2: Feel the Difference Between Roles
 
-Switch to `wang_pe` in the sidebar. Notice:
+Switch to `adam_npi_pe` in the sidebar. Notice:
 - Admin-only tabs disappear (Check, RLS, Functions, Raw Tables, Browser, Pool, Audit)
 - Overview shows fewer permissions and accessible resources
 
-Switch back to `sys_admin` to continue.
+Switch back to `adam_ou` to continue.
 
 ### Step 3: Test Permissions
 
