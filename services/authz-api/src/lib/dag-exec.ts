@@ -20,6 +20,7 @@
 // Plan: .claude/plans/v3-phase-1/dag-publish-v01-plan.md §7
 // ============================================================
 
+import { Pool } from 'pg';
 import { pool as authzPool, getDataSourcePool } from '../db';
 import { parseFunctionArgs, ParsedArg, classifyType } from './function-metadata';
 import { runOperator, UpstreamFrame, OperatorColumn } from './dag-operators';
@@ -44,6 +45,11 @@ export interface DagNode {
   type?: string;                                                // 'fn' (default) | 'literal' | 'filter' | 'cast' | 'aggregate' | 'sort' | 'limit' | 'projection' | 'sink'
   data: {
     resource_id?: string;                                       // 'function:<schema>.<name>' for fn nodes
+    // XDB-TIER-B-L2: per-node DS binding. Source-emitting nodes (fn,
+    // oracle-source) carry their own DS so a single DAG can fan out to
+    // multiple databases. Missing → executor falls back to the
+    // top-level dagSnapshot.data_source_id (legacy DAGs predating L2).
+    data_source_id?: string;
     inputs?: Array<{ name: string; semantic_type?: string; kind?: string; pgType?: string; hasDefault?: boolean }>;
     outputs?: Array<{ name: string; semantic_type?: string }>;
     bound_params?: Record<string, unknown>;
@@ -283,7 +289,25 @@ export async function executeDagAsPublished(opts: {
 }): Promise<DagExecResult> {
   const t0 = Date.now();
   const { dagSnapshot, formInputs } = opts;
-  const dsPool = await getDataSourcePool(dagSnapshot.data_source_id);
+
+  // XDB-TIER-B-L2: per-node DS dispatch with read-time fan-out.
+  //   * Source-emitting nodes (fn) may carry node.data.data_source_id.
+  //   * Legacy snapshots (pre-L2) have no per-node ds — fallback to the
+  //     top-level dagSnapshot.data_source_id mirrors original behavior.
+  //   * Pools are cached per ds_id so a 100-node DAG against one DS opens
+  //     only one pool, while a fan-out DAG opens N (one per distinct ds).
+  const dsPoolCache = new Map<string, Pool>();
+  const resolveNodeDsId = (node: DagNode): string => node.data?.data_source_id || dagSnapshot.data_source_id;
+  const getNodePool = async (node: DagNode): Promise<Pool> => {
+    const dsId = resolveNodeDsId(node);
+    let p = dsPoolCache.get(dsId);
+    if (!p) {
+      p = await getDataSourcePool(dsId);
+      dsPoolCache.set(dsId, p);
+    }
+    return p;
+  };
+
   const order = topoSort(dagSnapshot.nodes, dagSnapshot.edges);
   const frames: Record<string, UpstreamFrame> = {};
   const lineage: Array<{ node_id: string; detail: string }> = [];
@@ -346,7 +370,11 @@ export async function executeDagAsPublished(opts: {
 
     let qres;
     try {
-      qres = await dsPool.query(sql, values);
+      // XDB-TIER-B-L2: dispatch on the node's own ds_id (with fallback to
+      // the dag-level default), so cross-DS DAGs run each fn against the
+      // right pool.
+      const nodePool = await getNodePool(node);
+      qres = await nodePool.query(sql, values);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       throw new DagExecError(node.id, `PG error: ${msg}`);

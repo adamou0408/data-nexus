@@ -317,12 +317,16 @@ dagRouter.post('/validate', (req, res) => {
 //   3. first upstream column matching by semantic_type
 dagRouter.post('/execute-node', async (req, res) => {
   const { data_source_id, node, upstream = {}, edges = [], upstream_resources = {} } = req.body as {
-    data_source_id: string;
+    data_source_id: string;                          // dag-level default DS (legacy fallback / inspector prefill)
     node: {
       id: string;
       type?: string;                       // 'fn' (default) | 'literal' | 'filter' | 'cast'
       data: {
         resource_id?: string;              // fn nodes only — operator nodes derive from upstream
+        // XDB-TIER-B-L2: per-node DS binding. Source-emitting nodes carry
+        // their own DS so a single DAG can fan out to multiple databases.
+        // Missing → fall back to the top-level data_source_id (legacy).
+        data_source_id?: string;
         inputs?: Array<{ name: string; semantic_type?: string; hasDefault?: boolean }>;
         bound_params?: Record<string, unknown>;
         op_kind?: 'literal' | 'filter' | 'cast' | 'aggregate' | 'sort' | 'limit' | 'projection';
@@ -455,9 +459,12 @@ dagRouter.post('/execute-node', async (req, res) => {
     if (!rid) {
       return res.status(400).json({ error: 'oracle-source requires node.data.resource_id', node_id: node.id });
     }
+    // XDB-TIER-B-L2: read-time fan-out for oracle-source — node carries its
+    // own ds when present (multi-DS DAG), otherwise the dag-level default.
+    const oracleDsId = node.data.data_source_id || data_source_id;
     try {
       const result = await runOracleDirect({
-        sourceId: data_source_id,
+        sourceId: oracleDsId,
         resourceId: rid,
         params: (node.data.bound_params || {}) as Record<string, unknown>,
         limit: MAX_ROWS,
@@ -574,13 +581,22 @@ dagRouter.post('/execute-node', async (req, res) => {
     return res.status(400).json({ error: 'data_source_id and node.data.resource_id required' });
   }
 
+  // XDB-TIER-B-L2: per-node DS resolution (read-time fan-out).
+  //   * fn nodes carrying node.data.data_source_id execute against that DS
+  //     and have their metadata looked up there.
+  //   * Legacy fn nodes (pre-L2) fall back to the dag-level default.
+  // The dag-level data_source_id remains required so legacy DAGs without
+  // any per-node ds fields still resolve to a single pool.
+  const nodeDsId = node.data.data_source_id || data_source_id;
+
   try {
-    // Fetch function metadata
+    // Fetch function metadata — scoped to the node's resolved ds (so a fn
+    // existing in DS A but not DS B 404s correctly when the node binds to B).
     const metaResult = await authzPool.query(
       `SELECT resource_id, attributes FROM authz_resource
        WHERE resource_id = $1 AND resource_type = 'function' AND is_active = TRUE
          AND attributes->>'data_source_id' = $2`,
-      [node.data.resource_id, data_source_id]
+      [node.data.resource_id, nodeDsId]
     );
     if (metaResult.rows.length === 0) {
       return res.status(404).json({ error: 'Function not found', detail: node.data.resource_id });
@@ -595,7 +611,7 @@ dagRouter.post('/execute-node', async (req, res) => {
       audit({
         access_path: 'B', subject_id: userId,
         action_id: 'dag_node_exec', resource_id: node.data.resource_id,
-        decision: 'deny', context: { data_source_id },
+        decision: 'deny', context: { data_source_id: nodeDsId, dag_data_source_id: data_source_id },
       });
       return res.status(403).json({ error: 'Forbidden', detail: `${userId} lacks execute on ${node.data.resource_id}` });
     }
@@ -668,7 +684,7 @@ dagRouter.post('/execute-node', async (req, res) => {
     const [schema, fnName] = schemaAndName.split('.');
     const sql = `SELECT * FROM (SELECT * FROM ${quoteIdent(schema)}.${quoteIdent(fnName)}(${bindList.join(', ')})) _inner LIMIT ${MAX_ROWS + 1}`;
 
-    const dsPool = await getDataSourcePool(data_source_id);
+    const dsPool = await getDataSourcePool(nodeDsId);
     const t0 = Date.now();
     const qres = await dsPool.query(sql, values);
     const elapsedMs = Date.now() - t0;
@@ -691,7 +707,9 @@ dagRouter.post('/execute-node', async (req, res) => {
       access_path: 'B', subject_id: userId,
       action_id: 'dag_node_exec', resource_id: node.data.resource_id,
       decision: 'allow',
-      context: { data_source_id, node_id: node.id, row_count: rows.length, elapsed_ms: elapsedMs },
+      // XDB-TIER-B-L2: log both resolved (node) and dag-level ds so cross-DS
+      // forensics can tell which actual cluster served the row.
+      context: { data_source_id: nodeDsId, dag_data_source_id: data_source_id, node_id: node.id, row_count: rows.length, elapsed_ms: elapsedMs },
     });
 
     res.json({

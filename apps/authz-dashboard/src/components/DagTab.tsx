@@ -82,6 +82,12 @@ type NodeData = {
   inputs: IO[];
   outputs: IO[];
   bound_params: Record<string, unknown>;
+  // XDB-TIER-B-L2: per-node DS binding. Source-emitting nodes (fn,
+  // oracle-source) record the ds they were authored under so a single
+  // DAG can fan out across multiple databases. Operator/sink/subdag
+  // nodes inherit upstream and leave this undefined. Legacy DAGs (pre-L2
+  // saves) lack this field and the executor falls back to dag-level ds.
+  data_source_id?: string;
   user_input_params?: string[];     // DAG-PUBLISH-V01: bound_param names exposed as form inputs at publish
   expose_output?: boolean;          // DAG-PUBLISH-V01-FU: admin flag — surface this node's frame as an extra output block on the published page (leaf is auto-exposed regardless)
   return_shape?: ReturnShape;       // fn nodes only — surfaces multiplicity badge
@@ -987,6 +993,13 @@ export function DagTab() {
       setDisplayName(d.display_name);
       setDescription(d.description || '');
       setDagParentId(d.parent_id);
+      // XDB-TIER-B-L2: snap the palette DS to the DAG's saved data_source_id so
+      // legacy nodes (which lack node.data.data_source_id) fall back to the DAG's
+      // own DS rather than whatever the curator had on the palette previously.
+      // For new (post-L2) DAGs, every fn/oracle-source node carries its own
+      // data_source_id, so this only matters for the legacy-fallback path —
+      // but the chip in the inspector also reads from `dsId` for legacy nodes.
+      if (d.data_source_id) setDsId(d.data_source_id);
       setNodes(d.nodes || []);
       setEdges(d.edges || []);
       setIssues([]);
@@ -1034,6 +1047,10 @@ export function DagTab() {
       position: { x: 80 + (nodes.length % 4) * 280, y: 80 + Math.floor(nodes.length / 4) * 260 },
       data: {
         resource_id: fn.resource_id,
+        // XDB-TIER-B-L2: stamp the active palette DS so cross-DS DAGs route
+        // each fn back to its origin database at exec time. Curators switch
+        // DS → keep adding nodes → each new fn carries its own ds_id.
+        data_source_id: dsId,
         label: fn.function_name,
         subtype: fn.subtype,
         inputs, outputs,
@@ -1062,6 +1079,9 @@ export function DagTab() {
       position: { x: 80 + (nodes.length % 4) * 280, y: 80 + Math.floor(nodes.length / 4) * 260 },
       data: {
         resource_id: r.resource_id,
+        // XDB-TIER-B-L2: stamp the active palette DS — Oracle nodes always
+        // need their own ds_id since the dag-level default may point at PG.
+        data_source_id: dsId,
         label: `${r.oracle_owner}.${r.oracle_object}`,
         subtype: 'oracle',
         inputs, outputs,
@@ -1453,6 +1473,10 @@ export function DagTab() {
           type: node.type,
           data: {
             resource_id: node.data.resource_id,
+            // XDB-TIER-B-L2: surface the node's own ds (when it has one)
+            // so the server dispatches against the right pool. Falls back
+            // to the dag-level dsId for nodes that pre-date this stamp.
+            data_source_id: node.data.data_source_id || dsId,
             inputs: node.data.inputs,
             bound_params: node.data.bound_params,
             op_kind: node.data.op_kind,
@@ -1667,7 +1691,12 @@ export function DagTab() {
         <select
           aria-label="Data source"
           value={dsId}
-          onChange={(e) => { resetCanvas(); setDsId(e.target.value); }}
+          // XDB-TIER-B-L2: switching DS no longer resets the canvas — curators
+          // can flip DS, add more nodes, and each new fn/oracle-source carries
+          // its own data_source_id. Existing nodes keep their ds_id stamp.
+          // The active palette DS becomes the "default for next added node"
+          // and the prefill for the dag-level default at save time.
+          onChange={(e) => setDsId(e.target.value)}
           className="border border-slate-300 rounded px-2 py-1 text-sm"
         >
           {dataSources.map((d) => <option key={d.source_id} value={d.source_id}>{d.display_name || d.source_id}</option>)}
@@ -2117,6 +2146,19 @@ export function DagTab() {
                   <div className="font-semibold text-slate-900 truncate">{selected.data.label}</div>
                   <div className="text-xs text-slate-500 truncate">{selected.data.resource_id}</div>
                   <div className="text-[10px] uppercase text-slate-400 mt-1">{selected.data.subtype}</div>
+                  {/* XDB-TIER-B-L2: read-only ds chip for source-emitting nodes
+                      (fn / oracle-source). Operators inherit upstream and have
+                      no ds of their own; we keep the chip absent for them so
+                      the Inspector doesn't lie about a non-existent binding.
+                      A node lacking ds_id is a legacy DAG row; we show the
+                      dag-level fallback explicitly so curators see what the
+                      executor will use. */}
+                  {(selected.type === 'fn' || selected.type === 'oracle-source' || (!selected.type && selected.data.resource_id?.startsWith('function:'))) && (
+                    <div className="mt-1 inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700" title="Data source bound at authoring time. Edit by re-adding the node from the palette under a different DS.">
+                      <Database size={10} className="text-slate-500" />
+                      <span className="font-mono">{selected.data.data_source_id || `${dsId} (legacy)`}</span>
+                    </div>
+                  )}
                 </div>
                 <button
                   onClick={deleteSelected}
