@@ -291,6 +291,133 @@ dataQueryRouter.post('/functions/exec', async (req, res) => {
   }
 });
 
+// ─── Fetch live DDL for a deployed function ───
+// Lets curators load a deployed fn back into AuthorPanel for Edit / Duplicate.
+// Closes the "AI Refine needs current_sql" loop — admin can pull the on-disk
+// body, hand it to AI Refine, deploy a revised version.
+//
+// Permissioning is stricter than exec: in addition to authz_check(execute),
+// the caller must hold DATA_STEWARD (SYSADMIN bypasses). DDL exposes business
+// rules embedded in the body (joins, filtering predicates) — exec only
+// exposes output rows that already pass column-mask. Stricter gate justified.
+//
+// Errors:
+//   404 'resource not found / inactive'           — no row in authz_resource
+//   404 { error: 'orphaned' }                     — pg_proc row dropped on remote
+//   422 { error: 'cannot_serialize_function' }    — pg_get_functiondef raises 42704
+//   403                                           — non-steward, or no execute permission
+dataQueryRouter.get('/functions/:resource_id/ddl', async (req, res) => {
+  const resource_id = req.params.resource_id;
+  const dsId = req.query.data_source_id as string;
+  const userId = getUserId(req);
+  const groups = (req.headers['x-user-groups'] as string || '').split(',').filter(Boolean);
+
+  if (!dsId) return res.status(400).json({ error: 'data_source_id is required' });
+
+  try {
+    // Resource lookup — same shape as /functions/exec
+    const resRow = await authzPool.query(
+      `SELECT resource_id, attributes
+         FROM authz_resource
+        WHERE resource_id = $1
+          AND resource_type = 'function'
+          AND is_active = TRUE
+          AND attributes->>'data_source_id' = $2`,
+      [resource_id, dsId]
+    );
+    if (resRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Function not found or inactive' });
+    }
+
+    // execute permission gate (mirrors /functions/exec line ~210)
+    const checkResult = await authzPool.query(
+      'SELECT authz_check($1, $2, $3, $4) AS allowed',
+      [userId, groups, 'execute', resource_id]
+    );
+    if (!checkResult.rows[0].allowed) {
+      audit({
+        access_path: 'B', subject_id: userId,
+        action_id: 'data_function_ddl', resource_id,
+        decision: 'deny', context: { data_source_id: dsId, reason: 'no_execute_permission' },
+      });
+      return res.status(403).json({
+        error: 'Forbidden',
+        detail: `${userId} lacks execute access to ${resource_id}`,
+      });
+    }
+
+    // Steward role gate (DDL > exec sensitivity). SYSADMIN bypasses (mirrors requireRole).
+    const rolesRes = await authzPool.query(
+      'SELECT _authz_resolve_roles($1, $2) AS roles',
+      [userId, groups]
+    );
+    const userRoles: string[] = rolesRes.rows[0]?.roles || [];
+    const isSysadmin = userRoles.includes('SYSADMIN');
+    const isSteward = userRoles.includes('DATA_STEWARD');
+    if (!isSysadmin && !isSteward) {
+      audit({
+        access_path: 'B', subject_id: userId,
+        action_id: 'data_function_ddl', resource_id,
+        decision: 'deny', context: { data_source_id: dsId, reason: 'role_check_failed', user_roles: userRoles },
+      });
+      return res.status(403).json({
+        error: 'Forbidden',
+        detail: 'Requires role: DATA_STEWARD',
+      });
+    }
+
+    // Parse (schema, function_name) from resource_id (function:schema.name)
+    const fq = resource_id.startsWith('function:') ? resource_id.slice('function:'.length) : resource_id;
+    const dot = fq.indexOf('.');
+    const schema = dot > 0 ? fq.slice(0, dot) : 'public';
+    const function_name = dot > 0 ? fq.slice(dot + 1) : fq;
+
+    // Connect to remote DS, fetch pg_get_functiondef
+    const dsPool = await getDataSourcePool(dsId);
+    let defRow;
+    try {
+      defRow = await dsPool.query(
+        `SELECT pg_get_functiondef(p.oid) AS def
+           FROM pg_proc p
+           JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = $1 AND p.proname = $2`,
+        [schema, function_name]
+      );
+    } catch (err: any) {
+      if (err && err.code === '42704') {
+        return res.status(422).json({
+          error: 'cannot_serialize_function',
+          detail: 'pg_get_functiondef rejected this function (likely an extension type it cannot serialize). Fetch the DDL manually from the remote DB.',
+        });
+      }
+      throw err;
+    }
+
+    if (defRow.rows.length === 0) {
+      // Resource is registered but pg_proc row gone — orphaned registry entry.
+      return res.status(404).json({
+        error: 'orphaned',
+        detail: `${schema}.${function_name} is registered in authz_resource but no longer exists in pg_proc. Re-run discovery or delete the registry entry.`,
+      });
+    }
+
+    audit({
+      access_path: 'B', subject_id: userId,
+      action_id: 'data_function_ddl', resource_id,
+      decision: 'allow', context: { data_source_id: dsId },
+    });
+
+    res.json({
+      resource_id,
+      schema,
+      function_name,
+      ddl: defRow.rows[0].def as string,
+    });
+  } catch (err) {
+    handleApiError(res, err);
+  }
+});
+
 // ─── Validate-only: parse SQL + run through target DB without committing ───
 const CREATE_FN_RE = /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\.\s*)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\(/i;
 

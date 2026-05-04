@@ -16,6 +16,7 @@ import { pool as authzPool } from '../db';
 
 const MAX_TABLES = 50;
 const MAX_COLUMNS_PER_TABLE = 30;
+const MAX_FUNCTIONS = 50;
 
 interface RawColumn {
   parent_id: string;
@@ -31,10 +32,20 @@ interface RawTable {
   table_name: string;
 }
 
+interface RawFunction {
+  resource_id: string;
+  fn_schema: string;
+  fn_name: string;
+  arguments: string | null;
+  return_type: string | null;
+}
+
 export interface SchemaContext {
   text: string;
   table_count: number;
   truncated: boolean;
+  function_count?: number;
+  functions_truncated?: boolean;
 }
 
 function bareName(resourceId: string): { schema: string; name: string } {
@@ -134,6 +145,49 @@ export async function buildSchemaContext(opts: {
       lines.push(`- ${t.table_schema}.${t.table_name} (${colDescs.join(', ')})`);
     }
   }
+  // -- Functions section -------------------------------------------------
+  // List existing functions on the same data source so the LLM can reuse /
+  // compose them. Signatures only — bodies are NOT exposed (stewards can
+  // pull DDL via the dedicated endpoint when they need to refactor).
+  const fnRes = await authzPool.query<RawFunction>(
+    `SELECT resource_id,
+            COALESCE(attributes->>'function_schema', split_part(regexp_replace(resource_id, '^function:', ''), '.', 1)) AS fn_schema,
+            COALESCE(attributes->>'function_name', regexp_replace(resource_id, '^function:[^.]+\\.', '')) AS fn_name,
+            attributes->>'arguments' AS arguments,
+            attributes->>'return_type' AS return_type
+     FROM authz_resource
+     WHERE resource_type = 'function'
+       AND is_active = TRUE
+       AND attributes->>'data_source_id' = $1
+     ORDER BY resource_id
+     LIMIT 200`,
+    [opts.dataSourceId],
+  );
+
+  const visibleFns: RawFunction[] = [];
+  for (const row of fnRes.rows) {
+    const allowed = await authzPool.query<{ allowed: boolean }>(
+      'SELECT authz_check($1, $2, $3, $4) AS allowed',
+      [opts.userId, groups, 'execute', row.resource_id],
+    );
+    if (!allowed.rows[0]?.allowed) continue;
+    visibleFns.push(row);
+    if (visibleFns.length >= MAX_FUNCTIONS) break;
+  }
+  const functionsTruncated =
+    fnRes.rows.length > visibleFns.length && fnRes.rows.length > MAX_FUNCTIONS;
+
+  if (visibleFns.length > 0) {
+    lines.push('');
+    lines.push(`--- FUNCTIONS AVAILABLE (showing ${visibleFns.length}${functionsTruncated ? `, ${fnRes.rows.length - visibleFns.length} more hidden` : ''}) ---`);
+    for (const fn of visibleFns) {
+      const args = (fn.arguments ?? '').trim();
+      const ret = (fn.return_type ?? 'unknown').trim();
+      lines.push(`- ${fn.fn_schema}.${fn.fn_name}(${args}) -> ${ret}`);
+    }
+    lines.push('You may CALL these via SELECT ... FROM <schema>.<fn>(...); do not redefine them unless explicitly asked.');
+  }
+
   lines.push('');
   lines.push('Conventions you must follow when drafting functions:');
   lines.push('- Top-level statement: CREATE OR REPLACE FUNCTION <schema>.<name>(...) RETURNS TABLE(...) LANGUAGE sql STABLE AS $$ ... $$;');
@@ -147,5 +201,7 @@ export async function buildSchemaContext(opts: {
     text: lines.join('\n'),
     table_count: visible.length,
     truncated,
+    function_count: visibleFns.length,
+    functions_truncated: functionsTruncated,
   };
 }

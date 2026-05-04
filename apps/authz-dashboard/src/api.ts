@@ -493,6 +493,16 @@ export const api = {
       body: JSON.stringify({ data_source_id, sql: stripLeadingSqlComments(sql) }),
     }),
 
+  /** UX-V2-FN-EDIT: pull live `pg_get_functiondef` so a steward can edit or
+   *  duplicate an existing function. Steward-only on the API side. */
+  dataQueryFunctionDdl: (data_source_id: string, resource_id: string) =>
+    request<{
+      resource_id: string;
+      schema: string;
+      function_name: string;
+      ddl: string;
+    }>(`/data-query/functions/${encodeURIComponent(resource_id)}/ddl?data_source_id=${encodeURIComponent(data_source_id)}`),
+
   // ── DAG (Flow Composer) ──
   dagList: (data_source_id?: string) =>
     request<{ resource_id: string; display_name: string; data_source_id: string; node_count: number; edge_count: number; updated_at: string; created_at: string }[]>(

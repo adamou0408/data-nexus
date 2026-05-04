@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../api';
+import { useAuthz } from '../AuthzContext';
 
 type DataSourceLite = { source_id: string; display_name: string; db_type: string };
 import { useToast } from './Toast';
@@ -40,6 +41,13 @@ type ExecResult = {
   max_rows: number;
   elapsed_ms: number;
 };
+
+// UX-V2-FN-EDIT: escape user-controlled identifiers before stitching them
+// into a RegExp. Names come from authz_resource so they're tame in practice
+// but `.` and `$` would still mis-match without escaping.
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 function classifyType(pgType: string): 'text' | 'number' | 'date' | 'datetime' | 'bool' | 'array' | 'json' {
   const t = pgType.toLowerCase();
@@ -128,6 +136,7 @@ function SubtypeBadge({ subtype }: { subtype?: Subtype }) {
 
 export function DataQueryTab() {
   const toast = useToast();
+  const { isSteward } = useAuthz();
   const [dataSources, setDataSources] = useState<DataSourceLite[]>([]);
   const [dsId, setDsId] = useState<string>('');
   const [functions, setFunctions] = useState<FunctionMeta[]>([]);
@@ -139,6 +148,11 @@ export function DataQueryTab() {
   const [loadingFns, setLoadingFns] = useState(false);
   const [subtypeFilter, setSubtypeFilter] = useState<Subtype | 'all'>('all');
   const [mode, setMode] = useState<'run' | 'author'>('run');
+  // UX-V2-FN-EDIT: Edit/Duplicate hand off DDL + banner spec to AuthorPanel.
+  // Cleared when AuthorPanel deploys or user manually switches to Run.
+  const [authorInitialSql, setAuthorInitialSql] = useState<string>('');
+  const [authorBanner, setAuthorBanner] = useState<{ schema: string; function_name: string; mode: 'edit' | 'duplicate' } | null>(null);
+  const [ddlLoading, setDdlLoading] = useState<'edit' | 'duplicate' | null>(null);
   // FN-QUALITY-LINT-V02: per-fn quality summary, indexed by resource_id.
   // Empty map ≡ not loaded yet ≡ no badge (better than mis-labelling fns
   // as clean before lint-all returns).
@@ -198,6 +212,60 @@ export function DataQueryTab() {
       initial[a.name] = classifyType(a.pgType) === 'bool' ? false : '';
     }
     setParamValues(initial);
+  };
+
+  // UX-V2-FN-EDIT: open AuthorPanel pre-filled with the live DDL for editing.
+  // Steward-only on both client and API. CREATE OR REPLACE preserves the
+  // function name, so the existing resource_id round-trips on deploy.
+  const handleEditFn = async () => {
+    if (!selectedFn || !dsId) return;
+    setDdlLoading('edit');
+    try {
+      const r = await api.dataQueryFunctionDdl(dsId, selectedFn.resource_id);
+      setAuthorInitialSql(r.ddl);
+      setAuthorBanner({ schema: r.schema, function_name: r.function_name, mode: 'edit' });
+      setMode('author');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to load function DDL');
+    } finally {
+      setDdlLoading(null);
+    }
+  };
+
+  // UX-V2-FN-EDIT: open AuthorPanel pre-filled with a renamed clone of the
+  // DDL. Suffix `_copy` (then `_copy2`, `_copy3`...) until the candidate name
+  // doesn't collide with anything already in the in-memory `functions` list.
+  // Server-side validate will catch any race-condition collision.
+  const handleDuplicateFn = async () => {
+    if (!selectedFn || !dsId) return;
+    setDdlLoading('duplicate');
+    try {
+      const r = await api.dataQueryFunctionDdl(dsId, selectedFn.resource_id);
+      const existingNames = new Set(
+        functions.filter(f => f.schema === r.schema).map(f => f.function_name.toLowerCase())
+      );
+      let candidate = `${r.function_name}_copy`;
+      let n = 2;
+      while (existingNames.has(candidate.toLowerCase())) {
+        candidate = `${r.function_name}_copy${n++}`;
+      }
+      // Rewrite only the FUNCTION header — body references stay intact so the
+      // duplicate compiles. Schema-qualified or bare, with optional quoting.
+      const headerRe = new RegExp(
+        `(CREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+(?:"?${escapeRegex(r.schema)}"?\\.)?)("?)${escapeRegex(r.function_name)}("?)(\\s*\\()`,
+        'i'
+      );
+      const rewritten = r.ddl.replace(headerRe, (_m, prefix, q1, q2, paren) => {
+        return `${prefix}${q1}${candidate}${q2}${paren}`;
+      });
+      setAuthorInitialSql(rewritten);
+      setAuthorBanner({ schema: r.schema, function_name: candidate, mode: 'duplicate' });
+      setMode('author');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to load function DDL');
+    } finally {
+      setDdlLoading(null);
+    }
   };
 
   const handleRun = async () => {
@@ -265,7 +333,7 @@ export function DataQueryTab() {
         {loadingFns && <Loader2 size={14} className="animate-spin text-slate-400" />}
         <div className="ml-auto inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
           <button
-            onClick={() => setMode('run')}
+            onClick={() => { setMode('run'); setAuthorInitialSql(''); setAuthorBanner(null); }}
             className={`px-3 py-1 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
               mode === 'run' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
             }`}
@@ -273,7 +341,7 @@ export function DataQueryTab() {
             <Play size={12} /> Run
           </button>
           <button
-            onClick={() => setMode('author')}
+            onClick={() => { setMode('author'); setAuthorInitialSql(''); setAuthorBanner(null); }}
             className={`px-3 py-1 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
               mode === 'author' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
             }`}
@@ -286,8 +354,12 @@ export function DataQueryTab() {
       {mode === 'author' ? (
         <AuthorPanel
           dsId={dsId}
+          initialSql={authorInitialSql}
+          editBanner={authorBanner}
           onDeployed={(resourceId) => {
             setMode('run');
+            setAuthorInitialSql('');
+            setAuthorBanner(null);
             reloadFunctions(resourceId);
             // FN-QUALITY-LINT-V02-FU2: refresh quality badges after deploy so
             // the just-shipped fn shows up with the right dot + Quality
@@ -477,6 +549,31 @@ export function DataQueryTab() {
                     {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
                     {running ? 'Running...' : 'Run'}
                   </button>
+                  {/* UX-V2-FN-EDIT: Steward+ shortcuts to author flow with the
+                      live DDL pre-filled. Hidden for non-stewards because the
+                      API gate would 403 anyway. */}
+                  {isSteward && (
+                    <>
+                      <button
+                        onClick={handleEditFn}
+                        disabled={ddlLoading !== null}
+                        title="Load this function's live DDL into Author for editing (CREATE OR REPLACE)"
+                        className="btn btn-sm bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        {ddlLoading === 'edit' ? <Loader2 size={13} className="animate-spin" /> : <Pencil size={13} />}
+                        Edit
+                      </button>
+                      <button
+                        onClick={handleDuplicateFn}
+                        disabled={ddlLoading !== null}
+                        title="Open Author with a renamed copy of this function's DDL (CREATE)"
+                        className="btn btn-sm bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        {ddlLoading === 'duplicate' ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
+                        Duplicate
+                      </button>
+                    </>
+                  )}
                   {result && (
                     <>
                       <span className="text-xs text-slate-600 flex items-center gap-1"><Clock size={12} /> {result.elapsed_ms} ms</span>
@@ -644,12 +741,25 @@ type LintIssue = {
   context?: string;
 };
 
-function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resourceId: string) => void }) {
+function AuthorPanel({
+  dsId,
+  onDeployed,
+  initialSql,
+  editBanner,
+}: {
+  dsId: string;
+  onDeployed: (resourceId: string) => void;
+  // UX-V2-FN-EDIT: when DataQueryTab pushes a function in via Edit/Duplicate,
+  // these props seed the editor and render the contextual banner. Both stay
+  // undefined for the green-field "create new function" flow.
+  initialSql?: string;
+  editBanner?: { schema: string; function_name: string; mode: 'edit' | 'duplicate' } | null;
+}) {
   const toast = useToast();
   const [tables, setTables] = useState<TableMeta[]>([]);
   const [loadingTables, setLoadingTables] = useState(false);
   const [selectedTable, setSelectedTable] = useState<TableMeta | null>(null);
-  const [sql, setSql] = useState<string>('');
+  const [sql, setSql] = useState<string>(initialSql ?? '');
   const [validating, setValidating] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [validateResult, setValidateResult] = useState<any>(null);
@@ -784,6 +894,37 @@ function AuthorPanel({ dsId, onDeployed }: { dsId: string; onDeployed: (resource
 
       {/* Right: SQL editor + validate/deploy */}
       <div className="col-span-8 space-y-3">
+        {/* UX-V2-FN-EDIT: contextual banner when DataQueryTab pushed an
+            existing fn in for editing or duplication. Tells the curator what
+            statement will hit the remote DB on Deploy. */}
+        {editBanner && (
+          <div
+            className={`border rounded-lg p-3 text-xs ${
+              editBanner.mode === 'edit'
+                ? 'bg-amber-50 border-amber-300 text-amber-900'
+                : 'bg-blue-50 border-blue-300 text-blue-900'
+            }`}
+          >
+            {editBanner.mode === 'edit' ? (
+              <>
+                <span className="font-medium">編輯模式</span>
+                ：將以 <code className="font-mono px-1 bg-white/70 rounded">CREATE OR REPLACE FUNCTION</code>
+                {' '}覆寫
+                <code className="font-mono px-1 mx-1 bg-white/70 rounded">{editBanner.schema}.{editBanner.function_name}</code>
+                。請保留函式名稱不變，否則會新建一支函式。
+              </>
+            ) : (
+              <>
+                <span className="font-medium">複製模式</span>
+                ：將以 <code className="font-mono px-1 bg-white/70 rounded">CREATE FUNCTION</code>
+                {' '}建立新函式
+                <code className="font-mono px-1 mx-1 bg-white/70 rounded">{editBanner.schema}.{editBanner.function_name}</code>
+                。可自由調整名稱與內容。
+              </>
+            )}
+          </div>
+        )}
+
         {selectedTable && (
           <div className="border border-slate-200 rounded-lg bg-white p-3">
             <div className="text-[11px] font-medium text-slate-600 mb-1.5">
