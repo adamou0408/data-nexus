@@ -2,13 +2,58 @@ import { keycloak, ssoEnabled, ensureFreshToken } from './lib/keycloak';
 
 const BASE = '/api';
 
-// Current user context for authenticated API calls (X-User-Id fallback path)
+// Current user context for authenticated API calls (X-User-Id fallback path).
+// Persisted to localStorage so:
+//   (a) browser refresh keeps the picker selection, and
+//   (b) Vite HMR module replacement (which discards module-scoped state)
+//       can rehydrate without forcing the user to re-pick.
+const AUTH_STORAGE_KEY = 'nx_auth_v1';
+
 let _currentUserId = '';
 let _currentGroups: string[] = [];
+
+function readPersistedAuth(): { id: string; groups: string[] } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as { id?: unknown; groups?: unknown };
+    const id = typeof p?.id === 'string' ? p.id : '';
+    const groups = Array.isArray(p?.groups) ? (p.groups as unknown[]).filter((g): g is string => typeof g === 'string') : [];
+    return id ? { id, groups } : null;
+  } catch {
+    return null;
+  }
+}
+
+// Hydrate on module load. Runs again whenever Vite HMR replaces this module.
+{
+  const persisted = readPersistedAuth();
+  if (persisted) {
+    _currentUserId = persisted.id;
+    _currentGroups = persisted.groups;
+  }
+}
+
+/** Read the persisted user id without subscribing — used by AuthzContext to
+ *  rehydrate React state after a refresh. Returns null if nothing persisted. */
+export function getPersistedUserId(): string | null {
+  return readPersistedAuth()?.id ?? null;
+}
 
 export function setApiUser(userId: string, groups: string[]) {
   _currentUserId = userId;
   _currentGroups = groups;
+  if (typeof window === 'undefined') return;
+  try {
+    if (userId) {
+      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ id: userId, groups }));
+    } else {
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    }
+  } catch {
+    // localStorage can throw on quota / privacy mode — best-effort only.
+  }
 }
 
 /** Strip leading -- and /* ... *\/ comments so server-side CREATE FUNCTION regex matches. */

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
-import { api, setApiUser, UserProfile } from './api';
+import { api, setApiUser, getPersistedUserId, UserProfile } from './api';
 import { ssoEnabled, ssoUserProfile, ssoLogout, keycloak } from './lib/keycloak';
 
 // Resolved config from authz_resolve() — sanitized by API (SEC-01)
@@ -89,6 +89,27 @@ export function AuthzProvider({ children }: { children: ReactNode }) {
       void login(profile);
     }
   }, [login]);
+
+  // POC mode: rehydrate React state from the persisted picker selection once
+  // `users` has loaded. api.ts itself rehydrates `_currentUserId` on module
+  // load, so API calls already work post-refresh — this effect just brings
+  // user/config state in line so the UI shows the right identity and gates
+  // (isAdmin etc.) resolve correctly.
+  useEffect(() => {
+    if (ssoEnabled) return;
+    if (usersLoading || users.length === 0) return;
+    if (user) return;
+    const persistedId = getPersistedUserId();
+    if (!persistedId) return;
+    const found = users.find(u => u.id === persistedId);
+    if (found) {
+      void login(found);
+    } else {
+      // Persisted id no longer matches a known subject (seed reset, user
+      // deleted, etc.) — clear it so the picker can start fresh.
+      setApiUser('', []);
+    }
+  }, [users, usersLoading, user, login]);
 
   const logout = useCallback(() => {
     setUser(null);
